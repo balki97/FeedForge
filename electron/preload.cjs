@@ -17,9 +17,9 @@ window.addEventListener("drop", (event) => {
 }, true);
 
 contextBridge.exposeInMainWorld("feedbackConverter", {
-  pickPsarc: () => ipcRenderer.invoke("dialog:pickPsarc"),
-  pickFolder: () => ipcRenderer.invoke("dialog:pickFolder"),
-  pickOutput: () => ipcRenderer.invoke("dialog:pickOutput"),
+  pickPsarc: (options) => ipcRenderer.invoke("dialog:pickPsarc", options),
+  pickFolder: (options) => ipcRenderer.invoke("dialog:pickFolder", options),
+  pickOutput: (options) => ipcRenderer.invoke("dialog:pickOutput", options),
   expandPaths: (paths) => ipcRenderer.invoke("files:expandPaths", paths),
   onDroppedPaths: (callback) => {
     const listener = (event) => callback(event.detail);

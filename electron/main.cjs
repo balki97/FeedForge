@@ -59,18 +59,20 @@ app.on("activate", () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
 });
 
-ipcMain.handle("dialog:pickPsarc", async () => {
+ipcMain.handle("dialog:pickPsarc", async (_event, options = {}) => {
   const result = await dialog.showOpenDialog(mainWindow, {
     title: "Choose PSARC CDLC files",
+    defaultPath: validDefaultPath(options.defaultPath),
     properties: ["openFile", "multiSelections"],
     filters: [{ name: "PSARC files", extensions: ["psarc"] }]
   });
   return result.canceled ? [] : result.filePaths;
 });
 
-ipcMain.handle("dialog:pickFolder", async () => {
+ipcMain.handle("dialog:pickFolder", async (_event, options = {}) => {
   const result = await dialog.showOpenDialog(mainWindow, {
     title: "Choose a CDLC folder",
+    defaultPath: validDefaultPath(options.defaultPath),
     properties: ["openDirectory"]
   });
   if (result.canceled || !result.filePaths[0]) return [];
@@ -94,9 +96,10 @@ ipcMain.handle("files:expandPaths", async (_event, inputPaths) => {
   return found;
 });
 
-ipcMain.handle("dialog:pickOutput", async () => {
+ipcMain.handle("dialog:pickOutput", async (_event, options = {}) => {
   const result = await dialog.showOpenDialog(mainWindow, {
     title: "Choose output folder",
+    defaultPath: validDefaultPath(options.defaultPath),
     properties: ["openDirectory", "createDirectory"]
   });
   return result.canceled ? null : result.filePaths[0];
@@ -154,6 +157,15 @@ function converterCommand() {
     prefix: ["-m", "feedback_converter.cli"],
     cwd: app.getAppPath()
   };
+}
+
+function validDefaultPath(defaultPath) {
+  if (typeof defaultPath !== "string" || !defaultPath) return undefined;
+  try {
+    return fs.existsSync(defaultPath) ? defaultPath : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function runConverter(args) {

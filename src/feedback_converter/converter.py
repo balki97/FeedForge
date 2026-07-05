@@ -92,6 +92,7 @@ def convert_psarc(
         raise ValueError("No decrypted SNG arrangements found in PSARC.")
 
     arrangements: list[dict[str, Any]] = []
+    rig_entries: dict[str, dict[str, Any]] = {}
     first_song: Any | None = None
     lyric_song: Any | None = None
     used_ids: set[str] = set()
@@ -121,6 +122,8 @@ def convert_psarc(
         except ValueError as exc:
             warnings.append(ConversionWarning(f"Skipped SNG {path}: {exc}"))
             continue
+        for rig in arrangement.pop("_rigs", []):
+            rig_entries.setdefault(str(rig["id"]), rig)
         arr_file = f"arrangements/{arr_id}.json"
         _write_json(package_dir / arr_file, arrangement)
         arrangements.append(
@@ -182,6 +185,13 @@ def convert_psarc(
         manifest["song_timeline"] = timeline_path
     if cover_path:
         manifest["cover"] = cover_path
+    if rig_entries:
+        rigs_path = "rigs.json"
+        manifest["rigs"] = rigs_path
+        _write_json(
+            package_dir / rigs_path,
+            {"version": 1, "rigs": sorted(rig_entries.values(), key=lambda item: item["id"])},
+        )
 
     _write_manifest(package_dir / "manifest.yaml", manifest)
 
@@ -224,6 +234,7 @@ def _extract_metadata(content: dict[str, bytes]) -> dict[str, Any]:
         "year": _first_key(flat, "SongYear", "Year"),
         "duration": _first_key(flat, "SongLength", "Duration", "SongLengthSeconds"),
         "arrangement_names": _arrangement_names(flat),
+        "tone_definitions": _tone_definitions(flat),
     }
 
 
@@ -258,11 +269,36 @@ def _arrangement_names(dicts: list[dict[str, Any]]) -> dict[str, str]:
     return names
 
 
+def _tone_definitions(dicts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    definitions: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in dicts:
+        name = item.get("Name") or item.get("ToneName") or item.get("name")
+        key = item.get("Key") or item.get("ToneKey") or item.get("key")
+        looks_like_tone = bool(
+            name
+            and (
+                "GearList" in item
+                or "KnobValues" in item
+                or str(key).lower().startswith("tone")
+                or any(str(field).lower().startswith("tone") for field in item)
+            )
+        )
+        if not looks_like_tone:
+            continue
+        dedupe_key = f"{key or ''}:{name}"
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        definitions.append(_json_safe(item))
+    return definitions
+
+
 def _song_to_arrangement(song: Any, source_path: str, metadata: dict[str, Any]) -> dict[str, Any]:
     tuning = [int(x) for x in list(song.metadata.tuning or [])]
     templates = [_template_to_feedpak(t) for t in song.chordTemplates]
     chart = _song_chart_data(song, templates)
-    return {
+    arrangement = {
         "name": _display_name(_arrangement_id(source_path, metadata)),
         "tuning": tuning,
         "capo": max(0, int(song.metadata.capo or 0)),
@@ -275,6 +311,11 @@ def _song_to_arrangement(song: Any, source_path: str, metadata: dict[str, Any]) 
         "beats": [_beat_to_feedpak(b) for b in song.beats],
         "sections": [_section_to_feedpak(s) for s in song.sections],
     }
+    tones = _song_tones_to_feedpak(song, metadata)
+    if tones:
+        arrangement["tones"] = tones["tones"]
+        arrangement["_rigs"] = tones["rigs"]
+    return arrangement
 
 
 def _highest_level(song: Any) -> Any:
@@ -305,6 +346,96 @@ def _song_chart_data(song: Any, templates: list[dict[str, Any]]) -> dict[str, An
         "handshapes": highest["handshapes"],
         "phrases": phrases,
     }
+
+
+def _song_tones_to_feedpak(song: Any, metadata: dict[str, Any]) -> dict[str, Any] | None:
+    tone_events = sorted(
+        [tone for tone in getattr(song, "tones", []) if _finite_number(getattr(tone, "time", None))],
+        key=lambda tone: float(tone.time),
+    )
+    definitions = list(metadata.get("tone_definitions") or [])
+    if not tone_events and not definitions:
+        return None
+
+    def tone_name(tone_id: int) -> str:
+        if 0 <= tone_id < len(definitions):
+            name = definitions[tone_id].get("Name") or definitions[tone_id].get("ToneName")
+            if name:
+                return str(name)
+        for definition in definitions:
+            key = str(definition.get("Key") or definition.get("ToneKey") or "")
+            if key.lower() in {f"tone_{tone_id}".lower(), f"tone{tone_id}".lower()}:
+                name = definition.get("Name") or definition.get("ToneName")
+                if name:
+                    return str(name)
+        return f"Tone {tone_id}"
+
+    event_ids = [tone_id for tone_id in (_tone_id(tone) for tone in tone_events) if tone_id is not None]
+    if not event_ids and definitions:
+        event_ids = list(range(len(definitions)))
+    if not event_ids:
+        return None
+
+    base_id = event_ids[0]
+    base_name = tone_name(base_id)
+    changes = []
+    for tone in tone_events:
+        tone_id = _tone_id(tone)
+        if tone_id is None:
+            continue
+        name = tone_name(tone_id)
+        changes.append({"t": _num(tone.time), "name": name, "rig": _rig_id(name, tone_id)})
+
+    tones: dict[str, Any] = {
+        "base": base_name,
+        "base_rig": _rig_id(base_name, base_id),
+    }
+    if changes:
+        tones["changes"] = changes
+    if definitions:
+        tones["definitions"] = definitions
+
+    rig_ids = sorted(set(event_ids))
+    rigs = [_tone_rig(tone_name(tone_id), tone_id) for tone_id in rig_ids]
+    return {"tones": tones, "rigs": rigs}
+
+
+def _tone_rig(name: str, tone_id: int) -> dict[str, Any]:
+    return {
+        "id": _rig_id(name, tone_id),
+        "name": name,
+        "instrument": "guitar",
+        "blocks": [
+            {
+                "id": "source-tone",
+                "role": "amp",
+                "name": name,
+                "intent": {
+                    "kind": "source-tone",
+                    "family": "imported",
+                    "tags": ["psarc", "tone"],
+                },
+                "params": {"sourceToneId": tone_id},
+            }
+        ],
+        "graph": {
+            "nodes": ["input", "source-tone", "output"],
+            "edges": [["input", "source-tone"], ["source-tone", "output"]],
+        },
+    }
+
+
+def _tone_id(tone: Any) -> int | None:
+    try:
+        tone_id = int(getattr(tone, "id"))
+    except (TypeError, ValueError):
+        return None
+    return tone_id if tone_id >= 0 else None
+
+
+def _rig_id(name: str, tone_id: int) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+    return f"tone-{tone_id}-{slug or 'imported'}"
 
 
 def _phrase_ladder_to_feedpak(
@@ -797,6 +928,28 @@ def _slug(value: str) -> str:
 
 def _num(value: Any) -> float:
     return round(float(value), 6)
+
+
+def _finite_number(value: Any) -> bool:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return False
+    return number == number and number not in (float("inf"), float("-inf"))
+
+
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, tuple):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, (str, int, bool)) or value is None:
+        return value
+    if isinstance(value, float):
+        return value if _finite_number(value) else None
+    return str(value)
 
 
 def _write_json(path: Path, data: Any) -> None:

@@ -28,6 +28,10 @@ class FakePSARC:
                     "AlbumName": "Test Album",
                     "SongYear": 2026,
                     "SongLength": 12.5,
+                    "Tones": [
+                        {"Name": "Clean", "Key": "Tone_0", "GearList": {"Amp": "clean"}},
+                        {"Name": "Drive", "Key": "Tone_1", "GearList": {"Amp": "drive"}},
+                    ],
                 }
             ).encode(),
             "songs/bin/generic/test_lead.sng": b"fake-sng",
@@ -118,6 +122,7 @@ def fake_song():
             )
         ],
         beats=[ns(time=0.0, measure=1), ns(time=0.5, measure=0)],
+        tones=[ns(time=0.0, id=0), ns(time=5.0, id=1)],
         sections=[ns(name="intro", number=1, startTime=0.0)],
         phraseIterations=[ns(phraseId=0, time=0.0, endTime=12.5)],
         phrases=[ns(maxDifficulty=3)],
@@ -146,8 +151,19 @@ def test_convert_psarc_writes_valid_feedpak_directory(tmp_path, monkeypatch):
     assert manifest["artist"] == "Test Artist"
     assert manifest["stems"][0]["codec"] == "wem"
     assert manifest["lyrics"] == "lyrics.json"
+    assert manifest["rigs"] == "rigs.json"
     assert (output / "arrangements" / "lead.json").is_file()
+    rigs = json.loads((output / "rigs.json").read_text(encoding="utf-8"))
+    assert [rig["name"] for rig in rigs["rigs"]] == ["Clean", "Drive"]
     arrangement = json.loads((output / "arrangements" / "lead.json").read_text(encoding="utf-8"))
+    assert "_rigs" not in arrangement
+    assert arrangement["tones"]["base"] == "Clean"
+    assert arrangement["tones"]["base_rig"] == "tone-0-clean"
+    assert arrangement["tones"]["changes"] == [
+        {"t": 0.0, "name": "Clean", "rig": "tone-0-clean"},
+        {"t": 5.0, "name": "Drive", "rig": "tone-1-drive"},
+    ]
+    assert [tone["Name"] for tone in arrangement["tones"]["definitions"]] == ["Clean", "Drive"]
     single_note = arrangement["notes"][0]
     assert single_note["pm"] is True
     assert single_note["hp"] is True

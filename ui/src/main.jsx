@@ -21,11 +21,18 @@ const api = window.feedbackConverter;
 const INSPECTION_WORKERS = 2;
 const QUEUE_RENDER_LIMIT = 500;
 const DEFAULT_CONVERSION_WORKERS = 2;
+const SETTINGS_KEY = "feedforge:desktop-settings";
 
 function App() {
+  const initialSettingsRef = useRef(null);
+  if (initialSettingsRef.current === null) {
+    initialSettingsRef.current = readSettings();
+  }
+
   const [items, setItems] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
-  const [outputDir, setOutputDir] = useState(null);
+  const [outputDir, setOutputDir] = useState(() => initialSettingsRef.current.outputDir || null);
+  const [lastSourcePath, setLastSourcePath] = useState(() => initialSettingsRef.current.lastSourcePath || null);
   const [overwrite, setOverwrite] = useState(false);
   const [conversionWorkers, setConversionWorkers] = useState(DEFAULT_CONVERSION_WORKERS);
   const [query, setQuery] = useState("");
@@ -43,8 +50,13 @@ function App() {
   }, [items]);
 
   useEffect(() => {
+    writeSettings({ outputDir, lastSourcePath });
+  }, [outputDir, lastSourcePath]);
+
+  useEffect(() => {
     return api.onDroppedPaths(async (paths) => {
       const expanded = await api.expandPaths(paths);
+      rememberSourcePath(paths[0]);
       addFiles(expanded);
     });
   }, []);
@@ -87,6 +99,7 @@ function App() {
         error: null
     }));
     if (!incoming.length) return;
+    rememberSourcePath(incoming[0].path);
     const nextItems = [...itemsRef.current, ...incoming];
     itemsRef.current = nextItems;
     setItems(nextItems);
@@ -141,18 +154,25 @@ function App() {
   }
 
   async function chooseFiles() {
-    const paths = await api.pickPsarc();
+    const paths = await api.pickPsarc({ defaultPath: lastSourcePath || outputDir || undefined });
+    rememberSourcePath(paths[0]);
     addFiles(paths);
   }
 
   async function chooseFolder() {
-    const paths = await api.pickFolder();
+    const paths = await api.pickFolder({ defaultPath: lastSourcePath || outputDir || undefined });
+    rememberSourcePath(paths[0]);
     addFiles(paths);
   }
 
   async function chooseOutput() {
-    const folder = await api.pickOutput();
+    const folder = await api.pickOutput({ defaultPath: outputDir || lastSourcePath || undefined });
     if (folder) setOutputDir(folder);
+  }
+
+  function rememberSourcePath(filePath) {
+    const sourcePath = parentDir(filePath);
+    if (sourcePath) setLastSourcePath(sourcePath);
   }
 
   async function convertQueue() {
@@ -420,6 +440,25 @@ function duration(value) {
   const minutes = Math.floor(value / 60);
   const seconds = Math.floor(value % 60).toString().padStart(2, "0");
   return `${minutes}:${seconds}`;
+}
+
+function readSettings() {
+  try {
+    return JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function writeSettings(settings) {
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+}
+
+function parentDir(filePath) {
+  if (!filePath || typeof filePath !== "string") return null;
+  const normalized = filePath.replace(/[\\/]+$/, "");
+  const index = Math.max(normalized.lastIndexOf("\\"), normalized.lastIndexOf("/"));
+  return index > 0 ? normalized.slice(0, index) : normalized;
 }
 
 createRoot(document.getElementById("root")).render(<App />);
