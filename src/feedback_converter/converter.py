@@ -234,7 +234,7 @@ def _extract_metadata(content: dict[str, bytes]) -> dict[str, Any]:
         "year": _first_key(flat, "SongYear", "Year"),
         "duration": _first_key(flat, "SongLength", "Duration", "SongLengthSeconds"),
         "arrangement_names": _arrangement_names(flat),
-        "tone_definitions": _tone_definitions(flat),
+        "arrangement_tones": _arrangement_tones(flat),
     }
 
 
@@ -269,29 +269,49 @@ def _arrangement_names(dicts: list[dict[str, Any]]) -> dict[str, str]:
     return names
 
 
-def _tone_definitions(dicts: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    definitions: list[dict[str, Any]] = []
-    seen: set[str] = set()
+def _arrangement_tones(dicts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    arrangement_tones: list[dict[str, Any]] = []
     for item in dicts:
-        name = item.get("Name") or item.get("ToneName") or item.get("name")
-        key = item.get("Key") or item.get("ToneKey") or item.get("key")
-        looks_like_tone = bool(
-            name
-            and (
-                "GearList" in item
-                or "KnobValues" in item
-                or str(key).lower().startswith("tone")
-                or any(str(field).lower().startswith("tone") for field in item)
-            )
+        tones = item.get("Tones")
+        slot_names = {
+            0: item.get("Tone_A"),
+            1: item.get("Tone_B"),
+            2: item.get("Tone_C"),
+            3: item.get("Tone_D"),
+        }
+        has_slots = any(isinstance(value, str) and value for value in slot_names.values())
+        if not has_slots and not isinstance(tones, list):
+            continue
+
+        raw_match_keys = [
+            item.get("SongXml"),
+            item.get("PersistentID"),
+            item.get("MasterID_RDV"),
+            item.get("ArrangementName"),
+            item.get("ArrangementType"),
+        ]
+        match_keys = []
+        for key in raw_match_keys:
+            if key in (None, ""):
+                continue
+            key_text = str(key).lower()
+            match_keys.append(key_text)
+            stem = Path(key_text.replace("\\", "/")).stem
+            if stem:
+                match_keys.append(stem)
+        if not match_keys:
+            continue
+
+        definitions = [_json_safe(tone) for tone in tones if isinstance(tone, dict)] if isinstance(tones, list) else []
+        arrangement_tones.append(
+            {
+                "match_keys": match_keys,
+                "base": item.get("Tone_Base") or item.get("Tone_A"),
+                "slots": {slot: value for slot, value in slot_names.items() if isinstance(value, str) and value},
+                "definitions": definitions,
+            }
         )
-        if not looks_like_tone:
-            continue
-        dedupe_key = f"{key or ''}:{name}"
-        if dedupe_key in seen:
-            continue
-        seen.add(dedupe_key)
-        definitions.append(_json_safe(item))
-    return definitions
+    return arrangement_tones
 
 
 def _song_to_arrangement(song: Any, source_path: str, metadata: dict[str, Any]) -> dict[str, Any]:
@@ -311,7 +331,7 @@ def _song_to_arrangement(song: Any, source_path: str, metadata: dict[str, Any]) 
         "beats": [_beat_to_feedpak(b) for b in song.beats],
         "sections": [_section_to_feedpak(s) for s in song.sections],
     }
-    tones = _song_tones_to_feedpak(song, metadata)
+    tones = _song_tones_to_feedpak(song, source_path, metadata)
     if tones:
         arrangement["tones"] = tones["tones"]
         arrangement["_rigs"] = tones["rigs"]
@@ -348,36 +368,46 @@ def _song_chart_data(song: Any, templates: list[dict[str, Any]]) -> dict[str, An
     }
 
 
-def _song_tones_to_feedpak(song: Any, metadata: dict[str, Any]) -> dict[str, Any] | None:
+def _song_tones_to_feedpak(song: Any, source_path: str, metadata: dict[str, Any]) -> dict[str, Any] | None:
     tone_events = sorted(
         [tone for tone in getattr(song, "tones", []) if _finite_number(getattr(tone, "time", None))],
         key=lambda tone: float(tone.time),
     )
-    definitions = list(metadata.get("tone_definitions") or [])
-    if not tone_events and not definitions:
+    tone_info = _tone_info_for_arrangement(source_path, metadata)
+    definitions = list(tone_info.get("definitions") or []) if tone_info else []
+    slot_names = dict(tone_info.get("slots") or {}) if tone_info else {}
+    if not tone_events and not definitions and not slot_names:
         return None
 
     def tone_name(tone_id: int) -> str:
-        if 0 <= tone_id < len(definitions):
-            name = definitions[tone_id].get("Name") or definitions[tone_id].get("ToneName")
-            if name:
-                return str(name)
+        slot_name = slot_names.get(tone_id)
+        if slot_name:
+            return str(slot_name)
         for definition in definitions:
             key = str(definition.get("Key") or definition.get("ToneKey") or "")
-            if key.lower() in {f"tone_{tone_id}".lower(), f"tone{tone_id}".lower()}:
-                name = definition.get("Name") or definition.get("ToneName")
-                if name:
-                    return str(name)
+            name = _tone_definition_name(definition)
+            if key.lower() in {f"tone_{tone_id}".lower(), f"tone{tone_id}".lower()} and name:
+                return name
+        if 0 <= tone_id < len(definitions):
+            name = _tone_definition_name(definitions[tone_id])
+            if name:
+                return name
         return f"Tone {tone_id}"
 
     event_ids = [tone_id for tone_id in (_tone_id(tone) for tone in tone_events) if tone_id is not None]
-    if not event_ids and definitions:
-        event_ids = list(range(len(definitions)))
-    if not event_ids:
+    known_ids = sorted(set(event_ids) | set(slot_names))
+    if not known_ids and definitions:
+        known_ids = list(range(len(definitions)))
+    if not known_ids:
         return None
 
-    base_id = event_ids[0]
-    base_name = tone_name(base_id)
+    base_name = str(tone_info.get("base") or "").strip() if tone_info else ""
+    base_id = _tone_id_for_name(base_name, slot_names, definitions)
+    if base_id is None:
+        base_id = 0 if 0 in known_ids else known_ids[0]
+    if not base_name:
+        base_name = tone_name(base_id)
+
     changes = []
     for tone in tone_events:
         tone_id = _tone_id(tone)
@@ -386,26 +416,82 @@ def _song_tones_to_feedpak(song: Any, metadata: dict[str, Any]) -> dict[str, Any
         name = tone_name(tone_id)
         changes.append({"t": _num(tone.time), "name": name, "rig": _rig_id(name, tone_id)})
 
-    tones: dict[str, Any] = {
-        "base": base_name,
-        "base_rig": _rig_id(base_name, base_id),
-    }
+    tones: dict[str, Any] = {"base": base_name, "base_rig": _rig_id(base_name, base_id)}
     if changes:
         tones["changes"] = changes
     if definitions:
         tones["definitions"] = definitions
 
-    rig_ids = sorted(set(event_ids))
-    rigs = [_tone_rig(tone_name(tone_id), tone_id) for tone_id in rig_ids]
+    rig_ids = sorted(set(event_ids) | set(slot_names) | {base_id})
+    instrument = "bass" if "bass" in source_path.lower() else "guitar"
+    rigs = [
+        _tone_rig(
+            tone_name(tone_id),
+            tone_id,
+            _definition_for_tone(tone_id, tone_name(tone_id), definitions),
+            instrument,
+        )
+        for tone_id in rig_ids
+    ]
     return {"tones": tones, "rigs": rigs}
 
 
-def _tone_rig(name: str, tone_id: int) -> dict[str, Any]:
-    return {
-        "id": _rig_id(name, tone_id),
-        "name": name,
-        "instrument": "guitar",
-        "blocks": [
+def _tone_info_for_arrangement(source_path: str, metadata: dict[str, Any]) -> dict[str, Any]:
+    source = source_path.lower()
+    arrangement_id = _arrangement_id(source_path, metadata)
+    for entry in metadata.get("arrangement_tones", []):
+        keys = entry.get("match_keys") or []
+        if any(key and key in source for key in keys):
+            return entry
+    for entry in metadata.get("arrangement_tones", []):
+        keys = entry.get("match_keys") or []
+        if arrangement_id and any(_slug(key) == arrangement_id for key in keys):
+            return entry
+    arrangement_tones = metadata.get("arrangement_tones", [])
+    return arrangement_tones[0] if len(arrangement_tones) == 1 else {}
+
+
+def _tone_definition_name(definition: dict[str, Any]) -> str:
+    value = definition.get("Name") or definition.get("ToneName") or definition.get("name")
+    return str(value).strip() if value not in (None, "") else ""
+
+
+def _tone_id_for_name(
+    name: str, slot_names: dict[int, str], definitions: list[dict[str, Any]]
+) -> int | None:
+    normalized = name.strip().lower()
+    if not normalized:
+        return None
+    for tone_id, slot_name in slot_names.items():
+        if str(slot_name).strip().lower() == normalized:
+            return int(tone_id)
+    for index, definition in enumerate(definitions):
+        if _tone_definition_name(definition).lower() == normalized:
+            return index
+    return None
+
+
+def _definition_for_tone(
+    tone_id: int, name: str, definitions: list[dict[str, Any]]
+) -> dict[str, Any] | None:
+    normalized = name.strip().lower()
+    for definition in definitions:
+        if _tone_definition_name(definition).lower() == normalized:
+            return definition
+    if 0 <= tone_id < len(definitions):
+        return definitions[tone_id]
+    return None
+
+
+def _tone_rig(
+    name: str,
+    tone_id: int,
+    definition: dict[str, Any] | None = None,
+    instrument: str = "guitar",
+) -> dict[str, Any]:
+    blocks = _tone_blocks_from_definition(definition)
+    if not blocks:
+        blocks = [
             {
                 "id": "source-tone",
                 "role": "amp",
@@ -417,12 +503,124 @@ def _tone_rig(name: str, tone_id: int) -> dict[str, Any]:
                 },
                 "params": {"sourceToneId": tone_id},
             }
-        ],
-        "graph": {
-            "nodes": ["input", "source-tone", "output"],
-            "edges": [["input", "source-tone"], ["source-tone", "output"]],
+        ]
+
+    rig: dict[str, Any] = {
+        "id": _rig_id(name, tone_id),
+        "name": name,
+        "instrument": instrument,
+        "channels": 1,
+        "blocks": blocks,
+        "ext": {
+            "source": {
+                "format": "psarc-tone2014",
+                "tone_id": tone_id,
+                **({"definition": definition} if definition else {}),
+            },
         },
     }
+    node_ids = [block.get("id") for block in blocks if isinstance(block.get("id"), str)]
+    if node_ids:
+        rig["graph"] = {
+            "nodes": ["input", *node_ids, "output"],
+            "edges": _serial_edges(node_ids),
+        }
+    return rig
+
+
+def _tone_blocks_from_definition(definition: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not isinstance(definition, dict):
+        return []
+    gear = definition.get("GearList")
+    if not isinstance(gear, dict):
+        return []
+    blocks: list[dict[str, Any]] = []
+    for slot in (
+        "PrePedal1",
+        "PrePedal2",
+        "PrePedal3",
+        "PrePedal4",
+        "Amp",
+        "Cabinet",
+        "PostPedal1",
+        "PostPedal2",
+        "PostPedal3",
+        "PostPedal4",
+        "Rack1",
+        "Rack2",
+        "Rack3",
+        "Rack4",
+    ):
+        pedal = gear.get(slot)
+        if not isinstance(pedal, dict):
+            continue
+        block = _pedal_to_rig_block(slot, pedal)
+        if block:
+            blocks.append(block)
+    return blocks
+
+
+def _pedal_to_rig_block(slot: str, pedal: dict[str, Any]) -> dict[str, Any] | None:
+    pedal_type = pedal.get("Type") or pedal.get("PedalKey") or pedal.get("Key") or pedal.get("Category")
+    knobs = pedal.get("KnobValues")
+    if pedal_type in (None, "") and not isinstance(knobs, dict):
+        return None
+    role = _gear_slot_role(slot, pedal)
+    name = str(pedal_type or role).strip()
+    return {
+        "id": _slug(slot) or "effect",
+        "role": role,
+        "name": name,
+        "intent": {
+            "kind": role,
+            "family": _slug(str(pedal_type or role)),
+            "tags": ["psarc", _slug(slot)],
+        },
+        "params": _rig_params(knobs if isinstance(knobs, dict) else {}),
+        "ext": {"source": {"slot": slot, "pedal": _json_safe(pedal)}},
+    }
+
+
+def _gear_slot_role(slot: str, pedal: dict[str, Any]) -> str:
+    if slot == "Amp":
+        return "amp"
+    if slot == "Cabinet":
+        return "cab"
+    category = str(pedal.get("Category") or "").lower()
+    pedal_type = str(pedal.get("Type") or pedal.get("PedalKey") or pedal.get("Key") or "").lower()
+    text = f"{category} {pedal_type}"
+    if "delay" in text or "echo" in text:
+        return "delay"
+    if "reverb" in text:
+        return "reverb"
+    if any(token in text for token in ("chorus", "flanger", "phaser", "rotary", "vibrato")):
+        return "modulation"
+    if any(token in text for token in ("dist", "drive", "fuzz", "overdrive")):
+        return "drive"
+    if any(token in text for token in ("compress", "gate", "limiter")):
+        return "dynamics"
+    if any(token in text for token in ("eq", "filter", "wah")):
+        return "filter"
+    if "pitch" in text or "octave" in text:
+        return "pitch"
+    if slot.startswith("Rack"):
+        return "utility"
+    return "effect"
+
+
+def _rig_params(values: dict[str, Any]) -> dict[str, Any]:
+    params: dict[str, Any] = {}
+    for key, value in values.items():
+        if isinstance(value, (int, float)) and _finite_number(value):
+            params[str(key)] = float(value)
+        elif isinstance(value, (str, bool)):
+            params[str(key)] = value
+    return params
+
+
+def _serial_edges(node_ids: list[str]) -> list[list[str]]:
+    nodes = ["input", *node_ids, "output"]
+    return [[nodes[index], nodes[index + 1]] for index in range(len(nodes) - 1)]
 
 
 def _tone_id(tone: Any) -> int | None:

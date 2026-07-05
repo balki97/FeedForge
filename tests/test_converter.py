@@ -28,9 +28,36 @@ class FakePSARC:
                     "AlbumName": "Test Album",
                     "SongYear": 2026,
                     "SongLength": 12.5,
+                    "ArrangementName": "Lead",
+                    "SongXml": "songs/arr/test_lead.xml",
+                    "Tone_Base": "Clean",
+                    "Tone_A": "Clean",
+                    "Tone_B": "Drive",
                     "Tones": [
-                        {"Name": "Clean", "Key": "Tone_0", "GearList": {"Amp": "clean"}},
-                        {"Name": "Drive", "Key": "Tone_1", "GearList": {"Amp": "drive"}},
+                        {
+                            "Name": "Clean",
+                            "Key": "Tone_0",
+                            "GearList": {
+                                "Amp": {
+                                    "Type": "Amp_Clean",
+                                    "Category": "Amp",
+                                    "KnobValues": {"Gain": 0.2, "Bass": 0.5},
+                                },
+                                "Cabinet": {"Type": "Cab_212", "KnobValues": {}},
+                            },
+                        },
+                        {
+                            "Name": "Drive",
+                            "Key": "Tone_1",
+                            "GearList": {
+                                "PrePedal1": {
+                                    "Type": "Pedal_Overdrive",
+                                    "Category": "Distortion",
+                                    "KnobValues": {"Drive": 0.7},
+                                },
+                                "Amp": {"Type": "Amp_HighGain", "KnobValues": {"Gain": 0.8}},
+                            },
+                        },
                     ],
                 }
             ).encode(),
@@ -155,6 +182,11 @@ def test_convert_psarc_writes_valid_feedpak_directory(tmp_path, monkeypatch):
     assert (output / "arrangements" / "lead.json").is_file()
     rigs = json.loads((output / "rigs.json").read_text(encoding="utf-8"))
     assert [rig["name"] for rig in rigs["rigs"]] == ["Clean", "Drive"]
+    assert rigs["rigs"][0]["blocks"][0]["role"] == "amp"
+    assert rigs["rigs"][0]["blocks"][0]["params"]["Gain"] == 0.2
+    assert rigs["rigs"][0]["blocks"][1]["role"] == "cab"
+    assert rigs["rigs"][1]["blocks"][0]["role"] == "drive"
+    assert rigs["rigs"][1]["ext"]["source"]["definition"]["Name"] == "Drive"
     arrangement = json.loads((output / "arrangements" / "lead.json").read_text(encoding="utf-8"))
     assert "_rigs" not in arrangement
     assert arrangement["tones"]["base"] == "Clean"
