@@ -242,3 +242,26 @@ def test_convert_psarc_writes_valid_feedpak_directory(tmp_path, monkeypatch):
         check=False,
     )
     assert validation.returncode == 0, validation.stdout
+
+
+def test_convert_psarc_can_skip_tones(tmp_path, monkeypatch):
+    class FakeSong:
+        @staticmethod
+        def parse(_data):
+            return fake_song()
+
+    monkeypatch.setattr(converter, "PSARC", FakePSARC)
+    monkeypatch.setattr(converter, "Song", FakeSong)
+
+    psarc = tmp_path / "input.psarc"
+    psarc.write_bytes(b"fake")
+    output = tmp_path / "converted.feedpak"
+
+    converter.convert_psarc(psarc, output, archive=False, include_tones=False)
+
+    manifest = yaml.safe_load((output / "manifest.yaml").read_text(encoding="utf-8"))
+    arrangement = json.loads((output / "arrangements" / "lead.json").read_text(encoding="utf-8"))
+
+    assert "rigs" not in manifest
+    assert "tones" not in arrangement
+    assert not (output / "rigs.json").exists()

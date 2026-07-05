@@ -54,6 +54,7 @@ def convert_psarc(
     archive: bool | None = None,
     overwrite: bool = False,
     keep_workdir: bool = False,
+    include_tones: bool = True,
 ) -> ConversionResult:
     input_psarc = Path(input_psarc)
     if not input_psarc.is_file():
@@ -118,7 +119,7 @@ def convert_psarc(
 
         arr_id = _unique_id(_arrangement_id(path, metadata), used_ids)
         try:
-            arrangement = _song_to_arrangement(song, path, metadata)
+            arrangement = _song_to_arrangement(song, path, metadata, include_tones=include_tones)
         except ValueError as exc:
             warnings.append(ConversionWarning(f"Skipped SNG {path}: {exc}"))
             continue
@@ -318,7 +319,13 @@ def _arrangement_tones(dicts: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return arrangement_tones
 
 
-def _song_to_arrangement(song: Any, source_path: str, metadata: dict[str, Any]) -> dict[str, Any]:
+def _song_to_arrangement(
+    song: Any,
+    source_path: str,
+    metadata: dict[str, Any],
+    *,
+    include_tones: bool = True,
+) -> dict[str, Any]:
     tuning = [int(x) for x in list(song.metadata.tuning or [])]
     templates = [_template_to_feedpak(t) for t in song.chordTemplates]
     chart = _song_chart_data(song, templates)
@@ -335,10 +342,11 @@ def _song_to_arrangement(song: Any, source_path: str, metadata: dict[str, Any]) 
         "beats": [_beat_to_feedpak(b) for b in song.beats],
         "sections": [_section_to_feedpak(s) for s in song.sections],
     }
-    tones = _song_tones_to_feedpak(song, source_path, metadata)
-    if tones:
-        arrangement["tones"] = tones["tones"]
-        arrangement["_rigs"] = tones["rigs"]
+    if include_tones:
+        tones = _song_tones_to_feedpak(song, source_path, metadata)
+        if tones:
+            arrangement["tones"] = tones["tones"]
+            arrangement["_rigs"] = tones["rigs"]
     return arrangement
 
 

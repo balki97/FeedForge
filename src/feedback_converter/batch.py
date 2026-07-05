@@ -42,6 +42,7 @@ def convert_many(
     archive: bool = True,
     overwrite: bool = False,
     keep_workdir: bool = False,
+    include_tones: bool = True,
 ) -> BatchResult:
     """Convert multiple PSARC files, returning per-file success/error state."""
     items: list[BatchItem] = []
@@ -56,6 +57,7 @@ def convert_many(
                 archive=archive,
                 overwrite=overwrite,
                 keep_workdir=keep_workdir,
+                include_tones=include_tones,
             )
         except Exception as exc:  # noqa: BLE001
             _cleanup_failed_workdir(input_path, output, archive=archive, keep_workdir=keep_workdir)

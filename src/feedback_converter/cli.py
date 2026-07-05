@@ -69,6 +69,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Keep the intermediate .feedpak.work directory when writing a zip archive.",
     )
     parser.add_argument(
+        "--no-tones",
+        action="store_true",
+        help="Do not export tone definitions or rig metadata.",
+    )
+    parser.add_argument(
         "--inspect-json",
         action="store_true",
         help="Inspect one PSARC and write metadata JSON to stdout.",
@@ -113,6 +118,7 @@ def main(argv: list[str] | None = None) -> int:
                 archive=not args.directory,
                 overwrite=args.overwrite,
                 keep_workdir=args.keep_workdir,
+                include_tones=not args.no_tones,
             )
         except Exception as exc:  # noqa: BLE001
             _cleanup_failed_workdir(input_paths[0], output_arg, archive=not args.directory)
@@ -130,6 +136,7 @@ def main(argv: list[str] | None = None) -> int:
         archive=not args.directory,
         overwrite=args.overwrite,
         keep_workdir=args.keep_workdir,
+        include_tones=not args.no_tones,
     )
     for item in batch.items:
         if item.succeeded and item.result is not None:

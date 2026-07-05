@@ -34,6 +34,7 @@ function App() {
   const [outputDir, setOutputDir] = useState(() => initialSettingsRef.current.outputDir || null);
   const [lastSourcePath, setLastSourcePath] = useState(() => initialSettingsRef.current.lastSourcePath || null);
   const [overwrite, setOverwrite] = useState(false);
+  const [includeTones, setIncludeTones] = useState(() => initialSettingsRef.current.includeTones !== false);
   const [conversionWorkers, setConversionWorkers] = useState(DEFAULT_CONVERSION_WORKERS);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all");
@@ -50,8 +51,8 @@ function App() {
   }, [items]);
 
   useEffect(() => {
-    writeSettings({ outputDir, lastSourcePath });
-  }, [outputDir, lastSourcePath]);
+    writeSettings({ outputDir, lastSourcePath, includeTones });
+  }, [outputDir, lastSourcePath, includeTones]);
 
   useEffect(() => {
     return api.onDroppedPaths(async (paths) => {
@@ -194,7 +195,8 @@ function App() {
       const result = await api.convert({
         inputPath: item.path,
         outputPath,
-        overwrite
+        overwrite,
+        includeTones
       });
       if (!result.ok) {
         updateItem(item.id, { status: "failed", error: result.error });
@@ -276,6 +278,7 @@ function App() {
             <button className={filter === "converted" ? "active" : ""} onClick={() => setFilter("converted")}>Converted</button>
           </div>
           <label className="toggle"><input type="checkbox" checked={overwrite} onChange={(event) => setOverwrite(event.target.checked)} /> Overwrite</label>
+          <label className="toggle"><input type="checkbox" checked={includeTones} onChange={(event) => setIncludeTones(event.target.checked)} disabled={isConverting} /> Include tones</label>
         </section>
 
         <section className="stats">

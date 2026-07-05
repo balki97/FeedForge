@@ -123,6 +123,7 @@ ipcMain.handle("converter:convert", async (_event, payload) => {
   const args = [payload.inputPath];
   if (payload.outputPath) args.push("-o", payload.outputPath);
   if (payload.overwrite) args.push("--overwrite");
+  if (payload.includeTones === false) args.push("--no-tones");
   const result = await runConverter(args);
   const outputMatch = result.stdout.match(/wrote\s+(.+)/i);
   return {
