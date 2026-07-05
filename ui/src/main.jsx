@@ -359,6 +359,7 @@ function Inspector({ item }) {
   const cover = preview?.cover_path ? `file:///${preview.cover_path.replaceAll("\\", "/")}` : null;
   const arrangements = preview?.arrangements || [];
   const tones = preview?.tones || [];
+  const rigBuilder = preview?.rig_builder || [];
   return (
     <aside className="inspector">
       <section className="song-hero">
@@ -415,13 +416,13 @@ function Inspector({ item }) {
           </section>
         </>
       ) : (
-        <ToneInspector tones={tones} />
+        <ToneInspector tones={tones} rigBuilder={rigBuilder} />
       )}
     </aside>
   );
 }
 
-function ToneInspector({ tones }) {
+function ToneInspector({ tones, rigBuilder }) {
   return (
     <section className="panel tone-panel">
       <div className="panel-title">
@@ -441,8 +442,23 @@ function ToneInspector({ tones }) {
             <code>{arrangement.base_rig || "no-rig"}</code>
           </div>
 
+          <div className="tone-flow">
+            <div>
+              <b>PSARC source</b>
+              <span>Original tone names and gear keys from the CDLC manifest.</span>
+            </div>
+            <div>
+              <b>FeedPak export</b>
+              <span>Timeline names and rig ids written by FeedForge.</span>
+            </div>
+            <div>
+              <b>FeedBack audio</b>
+              <span>Local Rig Builder VST, IR, or NAM assignments.</span>
+            </div>
+          </div>
+
           <div className="tone-section">
-            <h3>Timeline</h3>
+            <h3>FeedPak Timeline</h3>
             <div className="tone-changes">
               {(arrangement.changes || []).length === 0 && <span className="muted-text">No tone changes. Base tone is used for the whole song.</span>}
               {(arrangement.changes || []).slice(0, 16).map((change, index) => (
@@ -457,13 +473,16 @@ function ToneInspector({ tones }) {
           </div>
 
           <div className="tone-section">
-            <h3>Definitions</h3>
+            <h3>Source Tones to FeedBack Audio</h3>
             <div className="tone-definitions">
               {(arrangement.definitions || []).map((definition) => (
                 <div className="tone-definition" key={definition.key || definition.name}>
                   <div className="tone-definition-head">
-                    <strong>{definition.name || "Unnamed tone"}</strong>
-                    <code>{definition.key || "no-key"}</code>
+                    <div>
+                      <strong>{definition.name || "Unnamed tone"}</strong>
+                      <span>PSARC key: {definition.key || "no-key"}</span>
+                    </div>
+                    <RouteBadge mapping={findRigBuilderMapping(rigBuilder, definition)} />
                   </div>
                   <div className="gear-list">
                     {(definition.gear || []).length === 0 && <span className="muted-text">No gear chain found.</span>}
@@ -475,6 +494,7 @@ function ToneInspector({ tones }) {
                       </div>
                     ))}
                   </div>
+                  <RigBuilderRoute mapping={findRigBuilderMapping(rigBuilder, definition)} />
                 </div>
               ))}
             </div>
@@ -483,6 +503,51 @@ function ToneInspector({ tones }) {
       ))}
     </section>
   );
+}
+
+function RouteBadge({ mapping }) {
+  if (!mapping) return <span className="route-badge missing">No local route</span>;
+  return <span className={`route-badge ${mapping.status}`}>{routeStatusText(mapping.status)}</span>;
+}
+
+function RigBuilderRoute({ mapping }) {
+  if (!mapping) {
+    return (
+      <div className="rig-route missing">
+        <strong>FeedBack audio route</strong>
+        <span>Not seeded in local Rig Builder yet. FeedBack may fall back to a default rig or produce no processed tone for this section.</span>
+      </div>
+    );
+  }
+  return (
+    <div className={`rig-route ${mapping.status}`}>
+      <div className="rig-route-head">
+        <strong>FeedBack audio route</strong>
+        <code>{mapping.preset || mapping.tone_key}</code>
+      </div>
+      <div className="route-stages">
+        {(mapping.stages || []).map((stage, index) => (
+          <div className={`route-stage ${stage.status}`} key={`${mapping.tone_key}-${stage.slot}-${stage.gear}-${index}`}>
+            <span>{stage.slot}</span>
+            <strong>{stage.gear || "Unknown gear"}</strong>
+            <small>{stage.kind.toUpperCase()} · {stage.asset || "missing assignment"}</small>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function findRigBuilderMapping(mappings, definition) {
+  const candidates = [definition?.key, definition?.name].filter(Boolean).map((item) => String(item).trim().toLowerCase());
+  return (mappings || []).find((mapping) => candidates.includes(String(mapping.tone_key || "").trim().toLowerCase())) || null;
+}
+
+function routeStatusText(status) {
+  if (status === "ready") return "Mapped";
+  if (status === "partial") return "Partial";
+  if (status === "bypassed") return "Bypassed";
+  return "Missing";
 }
 
 function countToneDefinitions(tones) {

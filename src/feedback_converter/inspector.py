@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -64,6 +66,25 @@ class ArrangementTonePreview:
 
 
 @dataclass(frozen=True)
+class RigBuilderStagePreview:
+    slot: str
+    gear: str
+    kind: str
+    asset: str
+    assigned_mode: str
+    bypassed: bool
+    status: str
+
+
+@dataclass(frozen=True)
+class RigBuilderMappingPreview:
+    tone_key: str
+    preset: str
+    status: str
+    stages: list[RigBuilderStagePreview] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class ChartPoint:
     time: float
     string: int
@@ -81,6 +102,7 @@ class PsarcPreview:
     cover_path: Path | None = None
     arrangements: list[ArrangementPreview] = field(default_factory=list)
     tones: list[ArrangementTonePreview] = field(default_factory=list)
+    rig_builder: list[RigBuilderMappingPreview] = field(default_factory=list)
     chart_points: list[ChartPoint] = field(default_factory=list)
     lyrics: int = 0
     warnings: list[str] = field(default_factory=list)
@@ -165,6 +187,7 @@ def inspect_psarc(input_psarc: Path, *, cover_dir: Path | None = None) -> PsarcP
         cover_path=cover_path,
         arrangements=arrangements,
         tones=tones,
+        rig_builder=_rig_builder_preview(input_psarc),
         chart_points=chart_points,
         lyrics=lyric_count,
         warnings=warnings,
@@ -230,6 +253,91 @@ def _tone_gear_preview(slot: str, gear: dict[str, Any]) -> ToneGearPreview:
         category=str(gear.get("Category") or ""),
         knobs=len(knobs),
     )
+
+
+def _rig_builder_preview(input_psarc: Path) -> list[RigBuilderMappingPreview]:
+    db = _rig_builder_db()
+    if db is None:
+        return []
+
+    song_key = input_psarc.with_suffix(".feedpak").name
+    try:
+        conn = sqlite3.connect(db)
+        conn.row_factory = sqlite3.Row
+    except sqlite3.Error:
+        return []
+
+    try:
+        rows = conn.execute(
+            "SELECT tm.tone_key, tm.preset_id, p.name "
+            "FROM tone_mappings tm "
+            "LEFT JOIN presets p ON p.id = tm.preset_id "
+            "WHERE tm.filename = ? "
+            "ORDER BY tm.tone_key",
+            (song_key,),
+        ).fetchall()
+        mappings: list[RigBuilderMappingPreview] = []
+        for row in rows:
+            stages = [_rig_builder_stage_preview(stage) for stage in conn.execute(
+                "SELECT slot, rs_gear_type, kind, file, assigned_mode, bypassed, vst_path "
+                "FROM preset_pieces WHERE preset_id = ? ORDER BY slot_order",
+                (row["preset_id"],),
+            )]
+            if not stages:
+                status = "missing"
+            elif any(stage.status == "missing" for stage in stages):
+                status = "partial"
+            else:
+                status = "ready"
+            mappings.append(
+                RigBuilderMappingPreview(
+                    tone_key=str(row["tone_key"] or ""),
+                    preset=str(row["name"] or ""),
+                    status=status,
+                    stages=stages,
+                )
+            )
+        return mappings
+    except sqlite3.Error:
+        return []
+    finally:
+        conn.close()
+
+
+def _rig_builder_stage_preview(row: sqlite3.Row) -> RigBuilderStagePreview:
+    kind = str(row["kind"] or "none")
+    file_asset = str(row["file"] or "")
+    vst_path = str(row["vst_path"] or "")
+    asset = Path(vst_path).name if vst_path else file_asset
+    status = "ready"
+    if kind == "none" or not asset:
+        status = "missing"
+    if bool(row["bypassed"]):
+        status = "bypassed"
+    return RigBuilderStagePreview(
+        slot=str(row["slot"] or ""),
+        gear=str(row["rs_gear_type"] or ""),
+        kind=kind,
+        asset=asset,
+        assigned_mode=str(row["assigned_mode"] or ""),
+        bypassed=bool(row["bypassed"]),
+        status=status,
+    )
+
+
+def _rig_builder_db() -> Path | None:
+    candidates: list[Path] = []
+    for env_name, app_name in (
+        ("APPDATA", "feedback-desktop"),
+        ("APPDATA", "slopsmith-desktop"),
+    ):
+        root = os.environ.get(env_name)
+        if root:
+            candidates.append(Path(root) / app_name / "slopsmith-config" / "nam_tone.db")
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
 
 
 def _chart_points(song: Any) -> list[ChartPoint]:

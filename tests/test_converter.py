@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -295,4 +296,80 @@ def test_inspector_previews_exported_tones(tmp_path, monkeypatch):
     assert [(gear.slot, gear.key, gear.type) for gear in clean_gear] == [
         ("Amp", "Amp_Clean", "Amps"),
         ("Cabinet", "Cab_212", "Cab_212"),
+    ]
+
+
+def test_inspector_previews_rig_builder_routes(tmp_path, monkeypatch):
+    class FakeSong:
+        @staticmethod
+        def parse(_data):
+            return fake_song()
+
+    db_dir = tmp_path / "feedback-desktop" / "slopsmith-config"
+    db_dir.mkdir(parents=True)
+    conn = sqlite3.connect(db_dir / "nam_tone.db")
+    conn.executescript(
+        """
+        CREATE TABLE presets (
+          id INTEGER PRIMARY KEY,
+          name TEXT,
+          model_file TEXT,
+          ir_file TEXT,
+          input_gain REAL,
+          output_gain REAL,
+          gate_threshold REAL,
+          settings_json TEXT
+        );
+        CREATE TABLE tone_mappings (
+          id INTEGER PRIMARY KEY,
+          filename TEXT,
+          tone_key TEXT,
+          preset_id INTEGER
+        );
+        CREATE TABLE preset_pieces (
+          id INTEGER PRIMARY KEY,
+          preset_id INTEGER,
+          slot_order INTEGER,
+          slot TEXT,
+          rs_gear_type TEXT,
+          kind TEXT,
+          file TEXT,
+          params_json TEXT,
+          tone3000_id INTEGER,
+          assigned_mode TEXT,
+          bypassed INTEGER,
+          vst_path TEXT,
+          vst_format TEXT,
+          vst_state TEXT
+        );
+        """
+    )
+    conn.execute("INSERT INTO presets VALUES (1, ?, '', '', 1, 1, -60, '{}')", ("input.feedpak::Clean",))
+    conn.execute("INSERT INTO tone_mappings VALUES (1, ?, 'Clean', 1)", ("input.feedpak",))
+    conn.execute(
+        "INSERT INTO preset_pieces VALUES (1, 1, 0, 'amp', 'Amp_Clean', 'vst', NULL, '{}', NULL, 'auto', 0, ?, 'VST3', NULL)",
+        (r"C:\Plugin\Amp.vst3",),
+    )
+    conn.execute(
+        "INSERT INTO preset_pieces VALUES (2, 1, 1, 'cabinet', 'Cab_212', 'none', NULL, '{}', NULL, 'auto', 0, NULL, NULL, NULL)",
+    )
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    monkeypatch.setattr(inspector, "PSARC", FakePSARC)
+    monkeypatch.setattr(inspector, "Song", FakeSong)
+
+    psarc = tmp_path / "input.psarc"
+    psarc.write_bytes(b"fake")
+
+    preview = inspector.inspect_psarc(psarc)
+
+    assert len(preview.rig_builder) == 1
+    route = preview.rig_builder[0]
+    assert route.tone_key == "Clean"
+    assert route.status == "partial"
+    assert [(stage.slot, stage.gear, stage.kind, stage.asset, stage.status) for stage in route.stages] == [
+        ("amp", "Amp_Clean", "vst", "Amp.vst3", "ready"),
+        ("cabinet", "Cab_212", "none", "", "missing"),
     ]

@@ -568,6 +568,7 @@ button:disabled {
 }
 
 .tone-arrangement-head span,
+.tone-definition-head span,
 .tone-definition-head code,
 .tone-arrangement-head code,
 .tone-change code {
@@ -582,6 +583,32 @@ button:disabled {
 
 .tone-section {
   margin-top: 16px;
+}
+
+.tone-flow {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.tone-flow div {
+  padding: 11px;
+  border-radius: 12px;
+  background: rgba(12, 21, 34, 0.72);
+  border: 1px solid rgba(151, 174, 205, 0.1);
+}
+
+.tone-flow b,
+.tone-flow span {
+  display: block;
+}
+
+.tone-flow span {
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .tone-section h3 {
@@ -647,6 +674,112 @@ button:disabled {
 }
 
 .gear-chip strong {
+  display: block;
+  margin: 3px 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.route-badge {
+  flex: 0 0 auto;
+  padding: 5px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 900;
+  border: 1px solid rgba(151, 174, 205, 0.18);
+}
+
+.route-badge.ready {
+  color: #b7ffd0;
+  background: rgba(66, 209, 120, 0.12);
+  border-color: rgba(66, 209, 120, 0.3);
+}
+
+.route-badge.partial {
+  color: #ffe09c;
+  background: rgba(246, 185, 76, 0.12);
+  border-color: rgba(246, 185, 76, 0.32);
+}
+
+.route-badge.missing {
+  color: #ffc9d0;
+  background: rgba(255, 91, 110, 0.12);
+  border-color: rgba(255, 91, 110, 0.32);
+}
+
+.rig-route {
+  margin-top: 11px;
+  padding: 11px;
+  border-radius: 12px;
+  background: rgba(7, 12, 20, 0.66);
+  border: 1px solid rgba(151, 174, 205, 0.1);
+}
+
+.rig-route.partial {
+  border-color: rgba(246, 185, 76, 0.28);
+}
+
+.rig-route.missing {
+  color: #ffc9d0;
+  border-color: rgba(255, 91, 110, 0.25);
+}
+
+.rig-route.missing span {
+  display: block;
+  margin-top: 5px;
+  color: #f0a9b3;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.rig-route-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.rig-route-head code {
+  color: var(--muted);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.route-stages {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
+  gap: 8px;
+}
+
+.route-stage {
+  min-width: 0;
+  padding: 9px;
+  border-radius: 10px;
+  background: rgba(22, 35, 55, 0.85);
+  border: 1px solid rgba(151, 174, 205, 0.08);
+}
+
+.route-stage.missing {
+  background: rgba(255, 91, 110, 0.09);
+  border-color: rgba(255, 91, 110, 0.25);
+}
+
+.route-stage.bypassed {
+  opacity: 0.55;
+}
+
+.route-stage span,
+.route-stage small {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.route-stage strong {
   display: block;
   margin: 3px 0;
   overflow: hidden;
