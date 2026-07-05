@@ -39,11 +39,12 @@ class FakePSARC:
                             "Key": "Tone_0",
                             "GearList": {
                                 "Amp": {
-                                    "Type": "Amp_Clean",
+                                    "Key": "Amp_Clean",
+                                    "Type": "Amps",
                                     "Category": "Amp",
                                     "KnobValues": {"Gain": 0.2, "Bass": 0.5},
                                 },
-                                "Cabinet": {"Type": "Cab_212", "KnobValues": {}},
+                                "Cabinet": {"Key": "Cab_212"},
                             },
                         },
                         {
@@ -51,7 +52,7 @@ class FakePSARC:
                             "Key": "Tone_1",
                             "GearList": {
                                 "PrePedal1": {
-                                    "Type": "Pedal_Overdrive",
+                                    "PedalKey": "Pedal_Overdrive",
                                     "Category": "Distortion",
                                     "KnobValues": {"Drive": 0.7},
                                 },
@@ -196,6 +197,14 @@ def test_convert_psarc_writes_valid_feedpak_directory(tmp_path, monkeypatch):
         {"t": 5.0, "name": "Drive", "rig": "tone-1-drive"},
     ]
     assert [tone["Name"] for tone in arrangement["tones"]["definitions"]] == ["Clean", "Drive"]
+    clean_gear = arrangement["tones"]["definitions"][0]["GearList"]
+    drive_gear = arrangement["tones"]["definitions"][1]["GearList"]
+    assert clean_gear["Amp"]["Key"] == "Amp_Clean"
+    assert clean_gear["Amp"]["PedalKey"] == "Amp_Clean"
+    assert clean_gear["Cabinet"]["Type"] == "Cab_212"
+    assert clean_gear["Cabinet"]["KnobValues"] == {}
+    assert drive_gear["PrePedal1"]["Key"] == "Pedal_Overdrive"
+    assert drive_gear["PrePedal1"]["Type"] == "Pedal_Overdrive"
     single_note = arrangement["notes"][0]
     assert single_note["pm"] is True
     assert single_note["hp"] is True

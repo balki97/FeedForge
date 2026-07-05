@@ -302,7 +302,11 @@ def _arrangement_tones(dicts: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if not match_keys:
             continue
 
-        definitions = [_json_safe(tone) for tone in tones if isinstance(tone, dict)] if isinstance(tones, list) else []
+        definitions = (
+            [_normalize_tone_definition(tone) for tone in tones if isinstance(tone, dict)]
+            if isinstance(tones, list)
+            else []
+        )
         arrangement_tones.append(
             {
                 "match_keys": match_keys,
@@ -454,6 +458,60 @@ def _tone_info_for_arrangement(source_path: str, metadata: dict[str, Any]) -> di
 def _tone_definition_name(definition: dict[str, Any]) -> str:
     value = definition.get("Name") or definition.get("ToneName") or definition.get("name")
     return str(value).strip() if value not in (None, "") else ""
+
+
+def _normalize_tone_definition(definition: dict[str, Any]) -> dict[str, Any]:
+    tone = _json_safe(definition)
+    if not isinstance(tone, dict):
+        return {}
+
+    name = tone.get("Name") or tone.get("ToneName") or tone.get("name")
+    if name not in (None, "") and not isinstance(tone.get("Name"), str):
+        tone["Name"] = str(name)
+
+    key = tone.get("Key") or tone.get("ToneKey") or tone.get("key")
+    if key in (None, "") and tone.get("Name") not in (None, ""):
+        key = tone["Name"]
+    if key not in (None, ""):
+        tone["Key"] = str(key)
+
+    gear_list = tone.get("GearList")
+    if not isinstance(gear_list, dict):
+        return tone
+
+    normalized_gear: dict[str, Any] = {}
+    for slot, gear in gear_list.items():
+        if not isinstance(gear, dict):
+            normalized_gear[str(slot)] = gear
+            continue
+        normalized_gear[str(slot)] = _normalize_tone_gear(gear)
+    tone["GearList"] = normalized_gear
+    return tone
+
+
+def _normalize_tone_gear(gear: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(gear)
+    key = (
+        normalized.get("Key")
+        or normalized.get("PedalKey")
+        or normalized.get("GearKey")
+        or normalized.get("EffectKey")
+        or normalized.get("Type")
+    )
+    if key not in (None, ""):
+        key_text = str(key)
+        normalized["Key"] = key_text
+        normalized.setdefault("PedalKey", key_text)
+
+    gear_type = normalized.get("Type")
+    if gear_type in (None, "") and key not in (None, ""):
+        normalized["Type"] = str(key)
+
+    knobs = normalized.get("KnobValues")
+    if not isinstance(knobs, dict):
+        normalized["KnobValues"] = {}
+
+    return normalized
 
 
 def _tone_id_for_name(
