@@ -416,30 +416,74 @@ function Inspector({ item }) {
           </section>
         </>
       ) : (
-        <ToneInspector tones={tones} rigBuilder={rigBuilder} />
+        <ToneInspector item={item} tones={tones} rigBuilder={rigBuilder} />
       )}
     </aside>
   );
 }
 
-function ToneInspector({ tones, rigBuilder }) {
+function ToneInspector({ item, tones, rigBuilder }) {
+  const [activeArrangement, setActiveArrangement] = useState(tones[0]?.arrangement_id || "");
+  const [seedStatus, setSeedStatus] = useState(null);
+  const active = tones.find((arrangement) => arrangement.arrangement_id === activeArrangement) || tones[0] || null;
+
+  useEffect(() => {
+    if (tones.length && !tones.some((arrangement) => arrangement.arrangement_id === activeArrangement)) {
+      setActiveArrangement(tones[0].arrangement_id);
+    }
+  }, [tones, activeArrangement]);
+
+  async function seedRoutes() {
+    if (!item?.path || seedStatus?.busy) return;
+    setSeedStatus({ busy: true, message: "Seeding local Rig Builder routes..." });
+    const result = await api.seedRigBuilder(item.path);
+    if (!result.ok) {
+      setSeedStatus({ busy: false, error: result.error || "Rig Builder route seeding failed" });
+      return;
+    }
+    const tonesSeeded = result.result?.tones?.length || 0;
+    setSeedStatus({ busy: false, message: `Seeded ${tonesSeeded} tone route${tonesSeeded === 1 ? "" : "s"}. Re-inspect this file to refresh the route status.` });
+  }
+
   return (
     <section className="panel tone-panel">
       <div className="panel-title">
         <h2>Tone Export</h2>
         <span>{countToneDefinitions(tones)} definitions</span>
       </div>
+      <div className="tone-actions">
+        <button onClick={seedRoutes} disabled={!item?.path || seedStatus?.busy}>
+          {seedStatus?.busy ? <RotateCw className="spin" size={16} /> : <Download size={16} />}
+          Seed/repair local routes
+        </button>
+        <span>Creates FeedBack Rig Builder VST/IR routes from the original PSARC tones on this PC.</span>
+      </div>
+      {seedStatus?.message && <div className="route-message">{seedStatus.message}</div>}
+      {seedStatus?.error && <div className="route-message error">{seedStatus.error}</div>}
       {tones.length === 0 && (
         <div className="empty compact">No PSARC tone data was detected for this song.</div>
       )}
-      {tones.map((arrangement) => (
-        <div className="tone-arrangement" key={arrangement.arrangement_id}>
+      {tones.length > 0 && (
+        <div className="arrangement-tabs">
+          {tones.map((arrangement) => (
+            <button
+              key={arrangement.arrangement_id}
+              className={active?.arrangement_id === arrangement.arrangement_id ? "active" : ""}
+              onClick={() => setActiveArrangement(arrangement.arrangement_id)}
+            >
+              {arrangement.arrangement_name}
+            </button>
+          ))}
+        </div>
+      )}
+      {active && (
+        <div className="tone-arrangement" key={active.arrangement_id}>
           <div className="tone-arrangement-head">
             <div>
-              <strong>{arrangement.arrangement_name}</strong>
-              <span>Base: {arrangement.base || "Not set"}</span>
+              <strong>{active.arrangement_name}</strong>
+              <span>Base: {active.base || "Not set"}</span>
             </div>
-            <code>{arrangement.base_rig || "no-rig"}</code>
+            <code>{active.base_rig || "no-rig"}</code>
           </div>
 
           <div className="tone-flow">
@@ -460,22 +504,22 @@ function ToneInspector({ tones, rigBuilder }) {
           <div className="tone-section">
             <h3>FeedPak Timeline</h3>
             <div className="tone-changes">
-              {(arrangement.changes || []).length === 0 && <span className="muted-text">No tone changes. Base tone is used for the whole song.</span>}
-              {(arrangement.changes || []).slice(0, 16).map((change, index) => (
+              {(active.changes || []).length === 0 && <span className="muted-text">No tone changes. Base tone is used for the whole song.</span>}
+              {(active.changes || []).slice(0, 16).map((change, index) => (
                 <div className="tone-change" key={`${change.time}-${change.name}-${index}`}>
                   <b>{duration(change.time)}</b>
                   <span>{change.name}</span>
                   <code>{change.rig}</code>
                 </div>
               ))}
-              {(arrangement.changes || []).length > 16 && <span className="muted-text">Showing first 16 of {arrangement.changes.length} tone changes.</span>}
+              {(active.changes || []).length > 16 && <span className="muted-text">Showing first 16 of {active.changes.length} tone changes.</span>}
             </div>
           </div>
 
           <div className="tone-section">
             <h3>Source Tones to FeedBack Audio</h3>
             <div className="tone-definitions">
-              {(arrangement.definitions || []).map((definition) => (
+              {(active.definitions || []).map((definition) => (
                 <div className="tone-definition" key={definition.key || definition.name}>
                   <div className="tone-definition-head">
                     <div>
@@ -502,7 +546,7 @@ function ToneInspector({ tones, rigBuilder }) {
             </div>
           </div>
         </div>
-      ))}
+      )}
     </section>
   );
 }

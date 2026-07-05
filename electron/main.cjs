@@ -136,6 +136,19 @@ ipcMain.handle("converter:convert", async (_event, payload) => {
   };
 });
 
+ipcMain.handle("converter:seedRigBuilder", async (_event, inputPath) => {
+  const result = await runConverter(["--seed-rig-builder", inputPath]);
+  const parsed = parseJson(result.stdout);
+  if (!parsed || !parsed.ok) {
+    return {
+      ok: false,
+      error: parsed?.error || result.stderr || "Rig Builder route seeding failed",
+      diagnostics: result.diagnostics
+    };
+  }
+  return parsed;
+});
+
 function converterCommand() {
   const packaged = path.join(process.resourcesPath || "", "bin", "psarc2feedpak", "psarc2feedpak.exe");
   const packagedLegacy = path.join(process.resourcesPath || "", "bin", "psarc2feedpak.exe");

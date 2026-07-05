@@ -27,5 +27,6 @@ contextBridge.exposeInMainWorld("feedbackConverter", {
     return () => window.removeEventListener("feedforge:dropped-paths", listener);
   },
   inspect: (inputPath) => ipcRenderer.invoke("converter:inspect", inputPath),
-  convert: (payload) => ipcRenderer.invoke("converter:convert", payload)
+  convert: (payload) => ipcRenderer.invoke("converter:convert", payload),
+  seedRigBuilder: (inputPath) => ipcRenderer.invoke("converter:seedRigBuilder", inputPath)
 });

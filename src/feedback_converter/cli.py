@@ -15,6 +15,7 @@ from feedback_converter import __version__
 from feedback_converter.batch import convert_many
 from feedback_converter.converter import convert_psarc
 from feedback_converter.inspector import inspect_psarc
+from feedback_converter.rig_builder_seed import seed_rig_builder_routes
 
 
 def _jsonable(value: Any) -> Any:
@@ -82,6 +83,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--inspect-cover-dir",
         help="Folder for cover art written during --inspect-json.",
     )
+    parser.add_argument(
+        "--seed-rig-builder",
+        action="store_true",
+        help="Seed or repair local FeedBack Rig Builder routes from one PSARC.",
+    )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     return parser
 
@@ -100,6 +106,17 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"ok": False, "error": str(exc)}), file=sys.stdout)
             return 1
         print(json.dumps({"ok": True, "preview": _jsonable(preview)}, ensure_ascii=False), file=sys.stdout)
+        return 0
+
+    if args.seed_rig_builder:
+        if len(args.input) != 1:
+            parser.error("--seed-rig-builder requires exactly one input")
+        try:
+            result = seed_rig_builder_routes(Path(args.input[0]))
+        except Exception as exc:  # noqa: BLE001
+            print(json.dumps({"ok": False, "error": str(exc)}), file=sys.stdout)
+            return 1
+        print(json.dumps({"ok": True, "result": _jsonable(result)}, ensure_ascii=False), file=sys.stdout)
         return 0
 
     if not args.input:

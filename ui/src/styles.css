@@ -549,6 +549,55 @@ button:disabled {
   overflow: auto;
 }
 
+.tone-actions {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(151, 174, 205, 0.1);
+  background: rgba(8, 15, 24, 0.52);
+}
+
+.tone-actions span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.route-message {
+  margin: 12px 16px 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(66, 209, 120, 0.1);
+  color: #b7ffd0;
+  border: 1px solid rgba(66, 209, 120, 0.22);
+  font-size: 13px;
+}
+
+.route-message.error {
+  background: rgba(255, 91, 110, 0.1);
+  color: #ffc9d0;
+  border-color: rgba(255, 91, 110, 0.28);
+}
+
+.arrangement-tabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 12px 16px 0;
+}
+
+.arrangement-tabs button {
+  min-height: 34px;
+  padding: 7px 10px;
+}
+
+.arrangement-tabs button.active {
+  border-color: #2388ba;
+  background: rgba(22, 169, 232, 0.16);
+  color: #dff6ff;
+}
+
 .tone-arrangement {
   padding: 16px;
   border-bottom: 1px solid rgba(151, 174, 205, 0.12);
