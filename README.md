@@ -13,6 +13,13 @@ files can be checked before export.
 
 Download `FeedForge 0.1.0.exe` from the latest GitHub release.
 
+## Community
+
+Join the FeedForge Discord server for announcements, support, bug reports, and
+feature requests:
+
+https://discord.gg/9cUe6cacQN
+
 ## Usage
 
 1. Open FeedForge.
