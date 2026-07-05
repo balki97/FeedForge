@@ -22,6 +22,8 @@ const INSPECTION_WORKERS = 2;
 const QUEUE_RENDER_LIMIT = 500;
 const DEFAULT_CONVERSION_WORKERS = 2;
 const SETTINGS_KEY = "feedforge:desktop-settings";
+const TONE_MIGRATION_WARNING =
+  "Tone migration will also seed or repair local FeedBack Rig Builder routes on this PC after conversion. Existing FeedForge-created routes for these songs may be replaced. Continue?";
 
 function App() {
   const initialSettingsRef = useRef(null);
@@ -178,6 +180,7 @@ function App() {
 
   async function convertQueue() {
     if (!items.length || isConverting) return;
+    if (includeTones && !window.confirm(TONE_MIGRATION_WARNING)) return;
     isConvertingRef.current = true;
     stopRequestedRef.current = false;
     setIsStopping(false);
@@ -200,6 +203,12 @@ function App() {
       });
       if (!result.ok) {
         updateItem(item.id, { status: "failed", error: result.error });
+      } else if (result.seed && !result.seed.ok) {
+        updateItem(item.id, {
+          status: "converted",
+          outputPath: result.outputPath || outputPath,
+          error: `Converted, but Rig Builder route seeding failed: ${result.seed.error || "unknown error"}`
+        });
       } else {
         updateItem(item.id, { status: "converted", outputPath: result.outputPath || outputPath });
       }
@@ -456,7 +465,7 @@ function ToneInspector({ item, tones, rigBuilder }) {
           {seedStatus?.busy ? <RotateCw className="spin" size={16} /> : <Download size={16} />}
           Seed/repair local routes
         </button>
-        <span>Creates FeedBack Rig Builder VST/IR routes from the original PSARC tones on this PC.</span>
+        <span>Conversion does this automatically when Include tones is enabled.</span>
       </div>
       {seedStatus?.message && <div className="route-message">{seedStatus.message}</div>}
       {seedStatus?.error && <div className="route-message error">{seedStatus.error}</div>}
@@ -486,20 +495,7 @@ function ToneInspector({ item, tones, rigBuilder }) {
             <code>{active.base_rig || "no-rig"}</code>
           </div>
 
-          <div className="tone-flow">
-            <div>
-              <b>PSARC source</b>
-              <span>Original tone names and gear keys from the CDLC manifest.</span>
-            </div>
-            <div>
-              <b>FeedPak export</b>
-              <span>Timeline names and rig ids written by FeedForge.</span>
-            </div>
-            <div>
-              <b>FeedBack audio</b>
-              <span>Local Rig Builder VST, IR, or NAM assignments.</span>
-            </div>
-          </div>
+          <ToneRouteSummary definitions={active.definitions || []} rigBuilder={rigBuilder} />
 
           <div className="tone-section">
             <h3>FeedPak Timeline</h3>
@@ -548,6 +544,29 @@ function ToneInspector({ item, tones, rigBuilder }) {
         </div>
       )}
     </section>
+  );
+}
+
+function ToneRouteSummary({ definitions, rigBuilder }) {
+  const total = definitions.length;
+  const mapped = definitions.filter((definition) => findRigBuilderMapping(rigBuilder, definition)?.status === "ready").length;
+  const partial = definitions.filter((definition) => findRigBuilderMapping(rigBuilder, definition)?.status === "partial").length;
+  const missing = Math.max(0, total - mapped - partial);
+  return (
+    <div className="tone-route-summary">
+      <div>
+        <strong>{mapped}/{total}</strong>
+        <span>Ready routes</span>
+      </div>
+      <div>
+        <strong>{partial}</strong>
+        <span>Partial</span>
+      </div>
+      <div>
+        <strong>{missing}</strong>
+        <span>Not seeded</span>
+      </div>
+    </div>
   );
 }
 
@@ -608,7 +627,8 @@ function RigBuilderRoute({ mapping }) {
           <div className={`route-stage ${stage.status}`} key={`${mapping.tone_key}-${stage.slot}-${stage.gear}-${index}`}>
             <span>{stage.slot}</span>
             <strong>{stage.gear || "Unknown gear"}</strong>
-            <small>{stage.kind.toUpperCase()} · {stage.asset || "missing assignment"}</small>
+            <small>{stage.kind.toUpperCase()} - {stage.asset || "missing assignment"}</small>
+            {stage.kind === "vst" && <em>{stage.state_applied ? "RS knobs applied" : "Default plugin settings"}</em>}
           </div>
         ))}
       </div>

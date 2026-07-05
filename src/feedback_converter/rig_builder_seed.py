@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -43,6 +44,65 @@ GEAR_SLOTS = (
     ("Rack4", "rack"),
     ("Cabinet", "cabinet"),
 )
+
+VST_PARAM_RANGES: dict[str, dict[str, tuple[str, float, float]]] = {
+    "mcompressor": {
+        "Gain": ("linear", -24.0, 24.0),
+        "Output gain": ("linear", -24.0, 24.0),
+        "Threshold": ("linear", -80.0, 0.0),
+        "Ratio": ("log", 1.0, 100.0),
+        "Knee size": ("linear", 0.0, 100.0),
+    },
+    "studiocomp": {
+        "Threshold": ("linear", -40.0, 0.0),
+        "Ratio": ("linear", 1.0, 12.0),
+        "Attack": ("linear", 0.0, 150.0),
+        "Release": ("linear", 20.0, 500.0),
+    },
+    "mequalizer": {
+        "Gain": ("linear", -24.0, 24.0),
+        "Dry/Wet": ("linear", 0.0, 100.0),
+        "Soft saturation": ("linear", 0.0, 100.0),
+        **{f"Gain {i} (EQ {i})": ("linear", -24.0, 24.0) for i in range(1, 17)},
+        **{f"Frequency {i} (EQ {i})": ("log", 20.0, 20000.0) for i in range(1, 17)},
+        **{f"Q {i} (EQ {i})": ("log", 0.1, 100.0) for i in range(1, 17)},
+    },
+    "mtremolo": {"Rate": ("log", 0.01, 20.0)},
+    "khs compressor": {
+        "Threshold": ("linear", -40.0, 6.0),
+        "Makeup gain": ("linear", -24.0, 24.0),
+        "Ratio": ("log", 1.0, 100.0),
+        "Attack": ("log", 1.0, 500.0),
+        "Release": ("log", 1.0, 500.0),
+    },
+    "khs 3-band eq": {
+        "Low Gain": ("linear", -24.0, 24.0),
+        "Mid Gain": ("linear", -24.0, 24.0),
+        "High Gain": ("linear", -24.0, 24.0),
+        "Low Freq": ("log", 20.0, 1000.0),
+        "High Freq": ("log", 1000.0, 20000.0),
+    },
+    "studioeq": {
+        "BassFreq": ("log", 30.0, 300.0),
+        "LoMidFreq": ("log", 120.0, 2000.0),
+        "HiMidFreq": ("log", 400.0, 8000.0),
+        "TrebleFreq": ("log", 1500.0, 16000.0),
+        "LoMidQ": ("log", 0.4, 4.0),
+        "HiMidQ": ("log", 0.4, 4.0),
+    },
+    "studiographiceq": {
+        "BassFreq": ("log", 30.0, 400.0),
+        "LoMidFreq": ("log", 75.0, 1000.0),
+        "HiMidFreq": ("log", 800.0, 12500.0),
+        "TrebleFreq": ("log", 2500.0, 20000.0),
+    },
+}
+
+STEM_RANGE_ALIASES = {
+    "hzx": "studiocomp",
+    "lng": "studioeq",
+    "g-550": "studiographiceq",
+}
 
 
 def seed_rig_builder_routes(input_psarc: Path, *, force: bool = True) -> SeedResult:
@@ -178,6 +238,7 @@ def _stages_from_definition(
 def _resolve_stage(data_dir: Path, slot: str, gear_key: str, params: dict[str, Any]) -> dict[str, Any] | None:
     vst = _resolve_vst(data_dir, gear_key)
     if vst:
+        vst_state = _build_vst_state(data_dir, gear_key, vst, params)
         return {
             "slot": slot,
             "gear": gear_key,
@@ -186,7 +247,7 @@ def _resolve_stage(data_dir: Path, slot: str, gear_key: str, params: dict[str, A
             "params": params,
             "vst_path": str(vst),
             "vst_format": "VST3",
-            "vst_state": {"params": {}},
+            "vst_state": vst_state,
         }
     if slot == "cabinet":
         cab = _resolve_cab_ir(data_dir, gear_key)
@@ -217,6 +278,150 @@ def _resolve_vst(data_dir: Path, gear_key: str) -> Path | None:
         if candidate.exists():
             return candidate
     return None
+
+
+def _build_vst_state(data_dir: Path, gear_key: str, vst_path: Path, params: dict[str, Any]) -> dict[str, Any] | None:
+    knob_table = _load_json_file(data_dir / "rs_knob_to_vst_param.json")
+    if not isinstance(knob_table, dict):
+        return None
+    state_params = _translate_vst_params(
+        gear_key,
+        str(vst_path),
+        {str(key): value for key, value in params.items()},
+        knob_table,
+    )
+    return {"params": state_params} if state_params else None
+
+
+def _translate_vst_params(
+    gear_key: str,
+    vst_path: str,
+    knobs: dict[str, Any],
+    knob_table: dict[str, Any],
+) -> dict[str, float]:
+    stem = _vst_stem(vst_path)
+    gear_block = knob_table.get(gear_key)
+    vst_block = gear_block.get(stem) if isinstance(gear_block, dict) else None
+    if not isinstance(vst_block, dict):
+        return {}
+
+    graphic = vst_block.get("_graphic_eq")
+    if isinstance(graphic, list) and graphic:
+        return _translate_graphic_eq(graphic, knobs, stem)
+
+    output: dict[str, float] = {}
+    static = vst_block.get("_static")
+    if isinstance(static, dict):
+        for name, value in static.items():
+            translated = _normalize_static_param(stem, str(name), value)
+            if translated is not None:
+                output[str(name)] = translated
+
+    for knob, value in knobs.items():
+        rule = vst_block.get(knob) or vst_block.get(_short_knob_name(knob))
+        if not isinstance(rule, dict):
+            continue
+        translated = _translate_one_knob(value, rule, stem)
+        if translated is None:
+            continue
+        name, normalized = translated
+        output[name] = normalized
+    return output
+
+
+def _short_knob_name(name: str) -> str:
+    text = str(name)
+    if "_" not in text:
+        return text
+    return text.rsplit("_", 1)[-1]
+
+
+def _knob_value(knobs: dict[str, Any], name: str) -> Any:
+    if name in knobs:
+        return knobs[name]
+    for key, value in knobs.items():
+        if _short_knob_name(key) == name:
+            return value
+    raise KeyError(name)
+
+
+def _translate_graphic_eq(graphic: list[Any], knobs: dict[str, Any], stem: str) -> dict[str, float]:
+    output: dict[str, float] = {}
+    freq_range = VST_PARAM_RANGES.get(_range_stem(stem), {}).get("Frequency 1 (EQ 1)") or ("log", 20.0, 20000.0)
+    gain_range = VST_PARAM_RANGES.get(_range_stem(stem), {}).get("Gain 1 (EQ 1)") or ("linear", -24.0, 24.0)
+    for index, band in enumerate(graphic[:16], 1):
+        if not isinstance(band, dict):
+            continue
+        try:
+            freq = float(band.get("freq"))
+        except (TypeError, ValueError):
+            continue
+        gains = []
+        for key in band.get("rs") or []:
+            try:
+                gains.append(float(_knob_value(knobs, str(key))))
+            except (KeyError, TypeError, ValueError):
+                pass
+        avg_gain = sum(gains) / len(gains) if gains else 0.0
+        output[f"Frequency {index} (EQ {index})"] = _normalize_display(freq, *freq_range)
+        output[f"Gain {index} (EQ {index})"] = _normalize_display(avg_gain, *gain_range)
+        output[f"Enable {index} (EQ {index})"] = 1.0
+    return output
+
+
+def _translate_one_knob(value: Any, rule: dict[str, Any], stem: str) -> tuple[str, float] | None:
+    try:
+        translated = float(value) * float(rule.get("scale", 1.0)) + float(rule.get("offset", 0.0))
+    except (TypeError, ValueError):
+        return None
+    if rule.get("invert"):
+        translated = 1.0 - translated
+    param = rule.get("param")
+    if not isinstance(param, str) or not param:
+        return None
+    value_range = VST_PARAM_RANGES.get(_range_stem(stem), {}).get(param)
+    if value_range:
+        translated = _normalize_display(translated, *value_range)
+    return param, _clamp01(translated)
+
+
+def _normalize_static_param(stem: str, name: str, value: Any) -> float | None:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    value_range = VST_PARAM_RANGES.get(_range_stem(stem), {}).get(name)
+    if value_range:
+        numeric = _normalize_display(numeric, *value_range)
+    return _clamp01(numeric)
+
+
+def _normalize_display(value: float, kind: str, lo: float, hi: float) -> float:
+    if kind == "log":
+        if value <= 0 or lo <= 0 or hi <= lo:
+            return 0.0
+        bounded = max(lo, min(hi, value))
+        return _clamp01(math.log(bounded / lo) / math.log(hi / lo))
+    if hi == lo:
+        return 0.0
+    return _clamp01((value - lo) / (hi - lo))
+
+
+def _clamp01(value: float) -> float:
+    return max(0.0, min(1.0, float(value)))
+
+
+def _range_stem(stem: str) -> str:
+    return STEM_RANGE_ALIASES.get(stem, stem)
+
+
+def _vst_stem(vst_path: str) -> str:
+    name = Path(vst_path).name
+    for suffix in (".vst3", ".component"):
+        if name.lower().endswith(suffix):
+            name = name[: -len(suffix)]
+            break
+    return name.lower()
 
 
 def _resolve_cab_ir(data_dir: Path, gear_key: str) -> dict[str, str] | None:

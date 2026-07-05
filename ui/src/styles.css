@@ -580,6 +580,32 @@ button:disabled {
   border-color: rgba(255, 91, 110, 0.28);
 }
 
+.tone-route-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.tone-route-summary div {
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(151, 174, 205, 0.14);
+  background: rgba(11, 23, 37, 0.8);
+}
+
+.tone-route-summary strong {
+  display: block;
+  font-size: 20px;
+}
+
+.tone-route-summary span {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .arrangement-tabs {
   display: flex;
   gap: 8px;
@@ -632,32 +658,6 @@ button:disabled {
 
 .tone-section {
   margin-top: 16px;
-}
-
-.tone-flow {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-  margin-top: 16px;
-}
-
-.tone-flow div {
-  padding: 11px;
-  border-radius: 12px;
-  background: rgba(12, 21, 34, 0.72);
-  border: 1px solid rgba(151, 174, 205, 0.1);
-}
-
-.tone-flow b,
-.tone-flow span {
-  display: block;
-}
-
-.tone-flow span {
-  margin-top: 5px;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.4;
 }
 
 .tone-section h3 {
@@ -869,10 +869,17 @@ button:disabled {
 }
 
 .route-stage span,
-.route-stage small {
+.route-stage small,
+.route-stage em {
   display: block;
   color: var(--muted);
   font-size: 11px;
+}
+
+.route-stage em {
+  margin-top: 5px;
+  color: #9bdcff;
+  font-style: normal;
 }
 
 .route-stage strong {

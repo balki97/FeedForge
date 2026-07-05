@@ -402,6 +402,10 @@ def test_seed_rig_builder_routes_writes_playable_rows(tmp_path, monkeypatch):
         json.dumps({"Cab_212": {"5c": {"effect_name": "Cab_212", "ir_file": "rocksmith/cab_212.wav"}}}),
         encoding="utf-8",
     )
+    (data_dir / "rs_knob_to_vst_param.json").write_text(
+        json.dumps({"Amp_Clean": {"amp": {"Gain": {"param": "Gain", "scale": 0.01}}}}),
+        encoding="utf-8",
+    )
 
     monkeypatch.setenv("APPDATA", str(tmp_path))
     monkeypatch.setattr(rig_builder_seed, "PSARC", FakePSARC)
@@ -417,7 +421,7 @@ def test_seed_rig_builder_routes_writes_playable_rows(tmp_path, monkeypatch):
     assert any(tone.tone_key == "Tone_0" for tone in result.tones)
     conn = sqlite3.connect(db_path)
     rows = conn.execute(
-        "SELECT tm.filename, tm.tone_key, pp.slot, pp.rs_gear_type, pp.kind, pp.file, pp.vst_path "
+        "SELECT tm.filename, tm.tone_key, pp.slot, pp.rs_gear_type, pp.kind, pp.file, pp.vst_path, pp.vst_state "
         "FROM tone_mappings tm JOIN preset_pieces pp ON pp.preset_id = tm.preset_id "
         "WHERE tm.tone_key = 'Tone_0' ORDER BY pp.slot_order"
     ).fetchall()
@@ -425,4 +429,5 @@ def test_seed_rig_builder_routes_writes_playable_rows(tmp_path, monkeypatch):
 
     assert rows[0][0:5] == ("input.feedpak", "Tone_0", "amp", "Amp_Clean", "vst")
     assert rows[0][6].endswith("Amp.vst3")
+    assert rows[0][7] is not None
     assert rows[1][2:6] == ("cabinet", "Cab_212", "ir", "other/greenback 212 1 mono.wav")

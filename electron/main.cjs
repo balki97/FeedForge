@@ -129,6 +129,7 @@ ipcMain.handle("converter:convert", async (_event, payload) => {
   return {
     ok: result.code === 0,
     outputPath: outputMatch ? outputMatch[1].trim() : null,
+    seed: payload.includeTones === false || result.code !== 0 ? null : await seedRigBuilder(payload.inputPath),
     stdout: result.stdout,
     stderr: result.stderr,
     diagnostics: result.diagnostics,
@@ -137,6 +138,10 @@ ipcMain.handle("converter:convert", async (_event, payload) => {
 });
 
 ipcMain.handle("converter:seedRigBuilder", async (_event, inputPath) => {
+  return seedRigBuilder(inputPath);
+});
+
+async function seedRigBuilder(inputPath) {
   const result = await runConverter(["--seed-rig-builder", inputPath]);
   const parsed = parseJson(result.stdout);
   if (!parsed || !parsed.ok) {
@@ -147,7 +152,7 @@ ipcMain.handle("converter:seedRigBuilder", async (_event, inputPath) => {
     };
   }
   return parsed;
-});
+}
 
 function converterCommand() {
   const packaged = path.join(process.resourcesPath || "", "bin", "psarc2feedpak", "psarc2feedpak.exe");
