@@ -91,13 +91,6 @@ class RigBuilderMappingPreview:
 
 
 @dataclass(frozen=True)
-class ChartPoint:
-    time: float
-    string: int
-    fret: int
-
-
-@dataclass(frozen=True)
 class PsarcPreview:
     input_path: Path
     title: str
@@ -109,7 +102,6 @@ class PsarcPreview:
     arrangements: list[ArrangementPreview] = field(default_factory=list)
     tones: list[ArrangementTonePreview] = field(default_factory=list)
     rig_builder: list[RigBuilderMappingPreview] = field(default_factory=list)
-    chart_points: list[ChartPoint] = field(default_factory=list)
     lyrics: int = 0
     warnings: list[str] = field(default_factory=list)
 
@@ -127,7 +119,6 @@ def inspect_psarc(input_psarc: Path, *, cover_dir: Path | None = None) -> PsarcP
     metadata = _extract_metadata(content)
     arrangements: list[ArrangementPreview] = []
     tones: list[ArrangementTonePreview] = []
-    chart_points: list[ChartPoint] = []
     lyric_count = 0
     first_song: Any | None = None
     used_ids: set[str] = set()
@@ -147,7 +138,6 @@ def inspect_psarc(input_psarc: Path, *, cover_dir: Path | None = None) -> PsarcP
 
         if first_song is None:
             first_song = song
-            chart_points = _chart_points(song)
 
         arr_id = _unique_preview_id(_arrangement_id(source_path, metadata), used_ids)
         highest = _highest_level(song)
@@ -194,7 +184,6 @@ def inspect_psarc(input_psarc: Path, *, cover_dir: Path | None = None) -> PsarcP
         arrangements=arrangements,
         tones=tones,
         rig_builder=_rig_builder_preview(input_psarc),
-        chart_points=chart_points,
         lyrics=lyric_count,
         warnings=warnings,
     )
@@ -367,11 +356,34 @@ def _load_json_file(path: Path) -> Any:
 
 
 def _rig_builder_data_dir() -> Path | None:
+    configured = os.environ.get("FEEDFORGE_RIG_BUILDER_DATA_DIR")
+    if configured:
+        resolved = _resolve_rig_builder_data_dir(Path(configured))
+        if resolved is not None:
+            return resolved
+
     candidates = [
         Path(r"C:\Program Files\feedback\current\resources\slopsmith\plugins\rig_builder\data"),
     ]
     for candidate in candidates:
-        if candidate.is_dir():
+        resolved = _resolve_rig_builder_data_dir(candidate)
+        if resolved is not None:
+            return resolved
+    return None
+
+
+def _resolve_rig_builder_data_dir(path: Path) -> Path | None:
+    possible = [
+        path,
+        path / "data",
+        path / "rig_builder" / "data",
+        path / "plugins" / "rig_builder" / "data",
+        path / "slopsmith" / "plugins" / "rig_builder" / "data",
+        path / "resources" / "slopsmith" / "plugins" / "rig_builder" / "data",
+        path / "current" / "resources" / "slopsmith" / "plugins" / "rig_builder" / "data",
+    ]
+    for candidate in possible:
+        if candidate.is_dir() and (candidate / "rs_gear_to_vst.json").is_file():
             return candidate
     return None
 
@@ -461,19 +473,6 @@ def _rig_builder_db() -> Path | None:
         if candidate.is_file():
             return candidate
     return None
-
-
-def _chart_points(song: Any) -> list[ChartPoint]:
-    points: list[ChartPoint] = []
-    try:
-        highest = _highest_level(song)
-    except ValueError:
-        return points
-    for note in sorted(highest.notes, key=lambda item: float(item.time))[:700]:
-        if int(note.chordId) != 0xFFFFFFFF:
-            continue
-        points.append(ChartPoint(float(note.time), int(note.string), int(note.fret)))
-    return points
 
 
 def _extract_cover(content: dict[str, bytes], cover_dir: Path | None) -> Path | None:

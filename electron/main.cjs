@@ -5,6 +5,8 @@ const path = require("path");
 
 let mainWindow;
 let inspectCacheRoot;
+let debugLogPath;
+const DEBUG_LOG_MAX_BYTES = 2 * 1024 * 1024;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -43,6 +45,16 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  initializeDebugLog();
+  logDebug("app.ready", {
+    version: app.getVersion(),
+    packaged: app.isPackaged,
+    appPath: app.getAppPath(),
+    userData: app.getPath("userData"),
+    resourcesPath: process.resourcesPath,
+    platform: process.platform,
+    arch: process.arch
+  });
   cleanupStalePortableArtifacts();
   inspectCacheRoot = path.join(app.getPath("temp"), "feedforge-inspect-cache");
   resetDirectory(inspectCacheRoot);
@@ -50,7 +62,21 @@ app.whenReady().then(() => {
 });
 app.whenReady().then(() => Menu.setApplicationMenu(null));
 app.on("before-quit", () => {
+  logDebug("app.beforeQuit");
   if (inspectCacheRoot) removeDirectory(inspectCacheRoot);
+});
+app.on("render-process-gone", (_event, webContents, details) => {
+  logDebug("app.renderProcessGone", {
+    reason: details.reason,
+    exitCode: details.exitCode,
+    url: webContents?.getURL?.() || ""
+  });
+});
+process.on("uncaughtException", (error) => {
+  logDebug("process.uncaughtException", errorToLog(error));
+});
+process.on("unhandledRejection", (reason) => {
+  logDebug("process.unhandledRejection", errorToLog(reason));
 });
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
@@ -66,7 +92,9 @@ ipcMain.handle("dialog:pickPsarc", async (_event, options = {}) => {
     properties: ["openFile", "multiSelections"],
     filters: [{ name: "PSARC files", extensions: ["psarc"] }]
   });
-  return result.canceled ? [] : result.filePaths;
+  const paths = result.canceled ? [] : result.filePaths;
+  logDebug("dialog.pickPsarc", { count: paths.length, defaultPath: options.defaultPath || "" });
+  return paths;
 });
 
 ipcMain.handle("dialog:pickFolder", async (_event, options = {}) => {
@@ -76,7 +104,9 @@ ipcMain.handle("dialog:pickFolder", async (_event, options = {}) => {
     properties: ["openDirectory"]
   });
   if (result.canceled || !result.filePaths[0]) return [];
-  return findPsarcFiles(result.filePaths[0]);
+  const files = await findPsarcFiles(result.filePaths[0]);
+  logDebug("dialog.pickFolder", { folder: result.filePaths[0], count: files.length });
+  return files;
 });
 
 ipcMain.handle("files:expandPaths", async (_event, inputPaths) => {
@@ -93,6 +123,7 @@ ipcMain.handle("files:expandPaths", async (_event, inputPaths) => {
       // Ignore paths the OS no longer exposes.
     }
   }
+  logDebug("files.expandPaths", { inputCount: (inputPaths || []).length, outputCount: found.length });
   return found;
 });
 
@@ -102,34 +133,91 @@ ipcMain.handle("dialog:pickOutput", async (_event, options = {}) => {
     defaultPath: validDefaultPath(options.defaultPath),
     properties: ["openDirectory", "createDirectory"]
   });
-  return result.canceled ? null : result.filePaths[0];
+  const folder = result.canceled ? null : result.filePaths[0];
+  logDebug("dialog.pickOutput", { selected: folder || "" });
+  return folder;
 });
 
-ipcMain.handle("converter:inspect", async (_event, inputPath) => {
+ipcMain.handle("dialog:pickRigBuilderData", async (_event, options = {}) => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: "Choose FeedBack Rig Builder data folder",
+    defaultPath: validDefaultPath(options.defaultPath),
+    properties: ["openDirectory"]
+  });
+  const folder = result.canceled ? null : result.filePaths[0];
+  logDebug("dialog.pickRigBuilderData", { selected: folder || "" });
+  return folder;
+});
+
+ipcMain.handle("converter:inspect", async (_event, inputPath, options = {}) => {
+  logDebug("converter.inspect.start", {
+    inputPath,
+    hasRigBuilderDataDir: Boolean(options.rigBuilderDataDir)
+  });
   const coverDir = createInspectionFolder(inputPath);
-  const result = await runConverter(["--inspect-json", "--inspect-cover-dir", coverDir, inputPath]);
+  const result = await runConverter([
+    "--inspect-json",
+    "--inspect-cover-dir",
+    coverDir,
+    ...rigBuilderArgs(options.rigBuilderDataDir),
+    inputPath
+  ]);
   const parsed = parseJson(result.stdout);
   if (!parsed || !parsed.ok) {
+    logDebug("converter.inspect.failed", {
+      inputPath,
+      code: result.code,
+      stdoutTail: tail(result.stdout),
+      stderrTail: tail(result.stderr),
+      diagnostics: result.diagnostics
+    });
     return {
       ok: false,
       error: parsed?.error || result.stderr || "Inspection failed",
       diagnostics: result.diagnostics
     };
   }
+  logDebug("converter.inspect.ok", {
+    inputPath,
+    title: parsed.preview?.title || "",
+    artist: parsed.preview?.artist || "",
+    arrangements: parsed.preview?.arrangements?.length || 0,
+    tones: parsed.preview?.tones?.length || 0,
+    warnings: parsed.preview?.warnings || []
+  });
   return parsed;
 });
 
 ipcMain.handle("converter:convert", async (_event, payload) => {
+  logDebug("converter.convert.start", {
+    inputPath: payload.inputPath,
+    outputPath: payload.outputPath || "",
+    overwrite: Boolean(payload.overwrite),
+    includeTones: payload.includeTones !== false,
+    bStandardTo7String: Boolean(payload.bStandardTo7String),
+    hasRigBuilderDataDir: Boolean(payload.rigBuilderDataDir)
+  });
   const args = [payload.inputPath];
   if (payload.outputPath) args.push("-o", payload.outputPath);
   if (payload.overwrite) args.push("--overwrite");
   if (payload.includeTones === false) args.push("--no-tones");
+  if (payload.bStandardTo7String) args.push("--b-standard-to-7-string");
+  args.push(...rigBuilderArgs(payload.rigBuilderDataDir));
   const result = await runConverter(args);
   const outputMatch = result.stdout.match(/wrote\s+(.+)/i);
+  logDebug(result.code === 0 ? "converter.convert.ok" : "converter.convert.failed", {
+    inputPath: payload.inputPath,
+    outputPath: outputMatch ? outputMatch[1].trim() : payload.outputPath || "",
+    code: result.code,
+    stdoutTail: tail(result.stdout),
+    stderrTail: tail(result.stderr),
+    diagnostics: result.diagnostics
+  });
+  const seed = payload.includeTones === false || result.code !== 0 ? null : await seedRigBuilder(payload.inputPath, payload);
   return {
     ok: result.code === 0,
     outputPath: outputMatch ? outputMatch[1].trim() : null,
-    seed: payload.includeTones === false || result.code !== 0 ? null : await seedRigBuilder(payload.inputPath),
+    seed,
     stdout: result.stdout,
     stderr: result.stderr,
     diagnostics: result.diagnostics,
@@ -137,21 +225,45 @@ ipcMain.handle("converter:convert", async (_event, payload) => {
   };
 });
 
-ipcMain.handle("converter:seedRigBuilder", async (_event, inputPath) => {
-  return seedRigBuilder(inputPath);
+ipcMain.handle("converter:seedRigBuilder", async (_event, inputPath, options = {}) => {
+  return seedRigBuilder(inputPath, options);
 });
 
-async function seedRigBuilder(inputPath) {
-  const result = await runConverter(["--seed-rig-builder", inputPath]);
+ipcMain.on("app:rendererError", (_event, payload = {}) => {
+  logDebug("renderer.error", payload);
+});
+
+async function seedRigBuilder(inputPath, options = {}) {
+  logDebug("converter.seedRigBuilder.start", {
+    inputPath,
+    hasRigBuilderDataDir: Boolean(options.rigBuilderDataDir)
+  });
+  const result = await runConverter(["--seed-rig-builder", ...rigBuilderArgs(options.rigBuilderDataDir), inputPath]);
   const parsed = parseJson(result.stdout);
   if (!parsed || !parsed.ok) {
+    logDebug("converter.seedRigBuilder.failed", {
+      inputPath,
+      code: result.code,
+      stdoutTail: tail(result.stdout),
+      stderrTail: tail(result.stderr),
+      diagnostics: result.diagnostics
+    });
     return {
       ok: false,
       error: parsed?.error || result.stderr || "Rig Builder route seeding failed",
       diagnostics: result.diagnostics
     };
   }
+  logDebug("converter.seedRigBuilder.ok", {
+    inputPath,
+    routes: parsed.routes?.length || 0,
+    warnings: parsed.warnings || []
+  });
   return parsed;
+}
+
+function rigBuilderArgs(folder) {
+  return typeof folder === "string" && folder ? ["--rig-builder-data-dir", folder] : [];
 }
 
 function converterCommand() {
@@ -197,7 +309,14 @@ function runConverter(args) {
     resourcesPath: process.resourcesPath,
     appPath: app.getAppPath()
   };
+  logDebug("converter.process.start", {
+    command,
+    cwd,
+    args: [...prefix, ...args],
+    diagnostics
+  });
   return new Promise((resolve) => {
+    const startedAt = Date.now();
     const child = spawn(command, [...prefix, ...args], {
       cwd,
       windowsHide: true
@@ -206,8 +325,21 @@ function runConverter(args) {
     let stderr = "";
     child.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
     child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
-    child.on("close", (code) => resolve({ code, stdout, stderr, diagnostics }));
+    child.on("close", (code) => {
+      logDebug("converter.process.close", {
+        code,
+        durationMs: Date.now() - startedAt,
+        stdoutTail: tail(stdout),
+        stderrTail: tail(stderr),
+        diagnostics
+      });
+      resolve({ code, stdout, stderr, diagnostics });
+    });
     child.on("error", (error) => {
+      logDebug("converter.process.error", {
+        error: errorToLog(error),
+        diagnostics
+      });
       resolve({
         code: 1,
         stdout,
@@ -298,4 +430,85 @@ function cleanupStalePortableArtifacts() {
       // Active portable launcher folders can be locked; the next launch can retry.
     }
   }
+}
+
+function initializeDebugLog() {
+  try {
+    const logDir = path.join(app.getPath("userData"), "logs");
+    fs.mkdirSync(logDir, { recursive: true });
+    debugLogPath = path.join(logDir, "feedforge-debug.log");
+    rotateDebugLogIfNeeded();
+    logDebug("log.initialized", { path: debugLogPath });
+  } catch {
+    debugLogPath = null;
+  }
+}
+
+function logDebug(event, details = {}) {
+  if (!debugLogPath) return;
+  try {
+    rotateDebugLogIfNeeded();
+    const record = {
+      time: new Date().toISOString(),
+      event,
+      details: sanitizeForLog(details)
+    };
+    fs.appendFileSync(debugLogPath, `${JSON.stringify(record)}\n`, "utf8");
+  } catch {
+    // Debug logging must never break conversion.
+  }
+}
+
+function rotateDebugLogIfNeeded() {
+  if (!debugLogPath || !fs.existsSync(debugLogPath)) return;
+  try {
+    const stat = fs.statSync(debugLogPath);
+    if (stat.size < DEBUG_LOG_MAX_BYTES) return;
+    const rotated = debugLogPath.replace(/\.log$/i, ".previous.log");
+    fs.rmSync(rotated, { force: true });
+    fs.renameSync(debugLogPath, rotated);
+  } catch {
+    // Rotation is best-effort.
+  }
+}
+
+function sanitizeForLog(value) {
+  if (value instanceof Error) return errorToLog(value);
+  if (Array.isArray(value)) return value.map((item) => sanitizeForLog(item));
+  if (!value || typeof value !== "object") {
+    return typeof value === "string" ? redact(value) : value;
+  }
+  const output = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (/token|password|secret|cookie|authorization/i.test(key)) {
+      output[key] = "[redacted]";
+    } else {
+      output[key] = sanitizeForLog(entry);
+    }
+  }
+  return output;
+}
+
+function errorToLog(error) {
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: redact(error.message || ""),
+      stack: redact(error.stack || "")
+    };
+  }
+  return {
+    message: redact(String(error || ""))
+  };
+}
+
+function tail(value, maxLength = 6000) {
+  const text = redact(String(value || ""));
+  return text.length > maxLength ? text.slice(-maxLength) : text;
+}
+
+function redact(value) {
+  return String(value)
+    .replace(/(token|password|secret|authorization|cookie)(["'\s:=]+)([^"'\s,}]+)/gi, "$1$2[redacted]")
+    .replace(/(Bearer\s+)[A-Za-z0-9._~+/=-]+/gi, "$1[redacted]");
 }

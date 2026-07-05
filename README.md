@@ -11,7 +11,7 @@ files can be checked before export.
 
 ## Download
 
-Download `FeedForge 0.1.0.exe` from the latest GitHub release.
+Download `FeedForge 0.1.2.exe` from the latest GitHub release.
 
 ## Community
 
@@ -36,3 +36,5 @@ The app writes `.feedpak` files that can be added to FeedBack.
 - `Stop after current` pauses the queue after active conversions finish.
 - Existing output files are skipped unless `Overwrite` is enabled.
 - Very large libraries are supported through folder import and a limited queue view.
+- If a conversion fails, send `%APPDATA%\FeedForge\logs\feedforge-debug.log`
+  with the bug report.

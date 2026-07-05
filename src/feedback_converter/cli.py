@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import sys
 from dataclasses import asdict, is_dataclass
@@ -75,6 +76,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Do not export tone definitions or rig metadata.",
     )
     parser.add_argument(
+        "--b-standard-to-7-string",
+        action="store_true",
+        help="Convert six-string B-standard arrangements to seven-string standard charts.",
+    )
+    parser.add_argument(
         "--inspect-json",
         action="store_true",
         help="Inspect one PSARC and write metadata JSON to stdout.",
@@ -88,6 +94,10 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Seed or repair local FeedBack Rig Builder routes from one PSARC.",
     )
+    parser.add_argument(
+        "--rig-builder-data-dir",
+        help="FeedBack Rig Builder data folder, or a portable FeedBack folder containing it.",
+    )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     return parser
 
@@ -95,6 +105,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.rig_builder_data_dir:
+        os.environ["FEEDFORGE_RIG_BUILDER_DATA_DIR"] = args.rig_builder_data_dir
 
     if args.inspect_json:
         if len(args.input) != 1:
@@ -136,6 +148,7 @@ def main(argv: list[str] | None = None) -> int:
                 overwrite=args.overwrite,
                 keep_workdir=args.keep_workdir,
                 include_tones=not args.no_tones,
+                b_standard_to_7_string=args.b_standard_to_7_string,
             )
         except Exception as exc:  # noqa: BLE001
             _cleanup_failed_workdir(input_paths[0], output_arg, archive=not args.directory)
@@ -154,6 +167,7 @@ def main(argv: list[str] | None = None) -> int:
         overwrite=args.overwrite,
         keep_workdir=args.keep_workdir,
         include_tones=not args.no_tones,
+        b_standard_to_7_string=args.b_standard_to_7_string,
     )
     for item in batch.items:
         if item.succeeded and item.result is not None:

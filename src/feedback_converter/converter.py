@@ -32,6 +32,10 @@ NOTE_MASK_MUTE = 0x020000
 NOTE_MASK_IGNORE = 0x040000
 NOTE_MASK_ACCENT = 0x04000000
 NOTE_MASK_PARENT = 0x08000000
+B_STANDARD_6_TUNING = [-5, -5, -5, -5, -5, -5]
+SEVEN_STRING_STANDARD_TUNING = [0, 0, 0, 0, 0, 0, 0]
+STANDARD_6_PITCHES = [40, 45, 50, 55, 59, 64]
+STANDARD_7_PITCHES = [35, 40, 45, 50, 55, 59, 64]
 
 
 @dataclass
@@ -55,6 +59,7 @@ def convert_psarc(
     overwrite: bool = False,
     keep_workdir: bool = False,
     include_tones: bool = True,
+    b_standard_to_7_string: bool = False,
 ) -> ConversionResult:
     input_psarc = Path(input_psarc)
     if not input_psarc.is_file():
@@ -123,6 +128,13 @@ def convert_psarc(
         except ValueError as exc:
             warnings.append(ConversionWarning(f"Skipped SNG {path}: {exc}"))
             continue
+        if b_standard_to_7_string and _is_b_standard_six_string(arrangement.get("tuning")):
+            arrangement = _b_standard_arrangement_to_seven_string(arrangement)
+            warnings.append(
+                ConversionWarning(
+                    f"Converted B-standard six-string arrangement to seven-string standard: {arrangement['name']}"
+                )
+            )
         for rig in arrangement.pop("_rigs", []):
             rig_entries.setdefault(str(rig["id"]), rig)
         arr_file = f"arrangements/{arr_id}.json"
@@ -386,7 +398,7 @@ def _song_tones_to_feedpak(song: Any, source_path: str, metadata: dict[str, Any]
         key=lambda tone: float(tone.time),
     )
     tone_info = _tone_info_for_arrangement(source_path, metadata)
-    definitions = list(tone_info.get("definitions") or []) if tone_info else []
+    definitions = _unique_tone_definitions(list(tone_info.get("definitions") or [])) if tone_info else []
     slot_names = dict(tone_info.get("slots") or {}) if tone_info else {}
     if not tone_events and not definitions and not slot_names:
         return None
@@ -450,22 +462,73 @@ def _song_tones_to_feedpak(song: Any, source_path: str, metadata: dict[str, Any]
 
 def _tone_info_for_arrangement(source_path: str, metadata: dict[str, Any]) -> dict[str, Any]:
     source = source_path.lower()
+    source_stem = Path(source_path.replace("\\", "/")).stem.lower()
     arrangement_id = _arrangement_id(source_path, metadata)
     for entry in metadata.get("arrangement_tones", []):
         keys = entry.get("match_keys") or []
-        if any(key and key in source for key in keys):
+        if any(_tone_match_key_matches_source(str(key), source, source_stem, arrangement_id) for key in keys):
             return entry
     for entry in metadata.get("arrangement_tones", []):
         keys = entry.get("match_keys") or []
-        if arrangement_id and any(_slug(key) == arrangement_id for key in keys):
+        if arrangement_id and any(_tone_match_key_matches_arrangement_id(str(key), arrangement_id) for key in keys):
             return entry
     arrangement_tones = metadata.get("arrangement_tones", [])
     return arrangement_tones[0] if len(arrangement_tones) == 1 else {}
 
 
+def _tone_match_key_matches_source(key: str, source: str, source_stem: str, arrangement_id: str) -> bool:
+    key = (key or "").strip().lower()
+    if not key:
+        return False
+    key_stem = key.rsplit(":", 1)[-1].replace("\\", "/").rsplit("/", 1)[-1]
+    if key_stem == source_stem:
+        return True
+    if key_stem and source_stem.endswith(f"_{key_stem}"):
+        return True
+    if key_stem and source_stem.endswith(f"-{key_stem}"):
+        return True
+    key_slug = _slug(key_stem)
+    if arrangement_id and key_slug == arrangement_id:
+        tokens = set(re.split(r"[-_\\/.]+", source_stem))
+        return arrangement_id in tokens
+    if key.isdigit():
+        return False
+    return len(key) >= 4 and key in source
+
+
+def _tone_match_key_matches_arrangement_id(key: str, arrangement_id: str) -> bool:
+    key = (key or "").strip().lower()
+    if not key or not arrangement_id:
+        return False
+    key_slug = _slug(key.rsplit(":", 1)[-1].replace("\\", "/").rsplit("/", 1)[-1])
+    return key_slug == arrangement_id or key_slug.endswith(f"-{arrangement_id}") or key_slug.endswith(f"_{arrangement_id}")
+
+
 def _tone_definition_name(definition: dict[str, Any]) -> str:
     value = definition.get("Name") or definition.get("ToneName") or definition.get("name")
     return str(value).strip() if value not in (None, "") else ""
+
+
+def _unique_tone_definitions(definitions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    unique: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for definition in definitions:
+        if not isinstance(definition, dict):
+            continue
+        key = str(
+            definition.get("Key")
+            or definition.get("ToneKey")
+            or definition.get("Name")
+            or definition.get("ToneName")
+            or ""
+        ).strip().lower()
+        if not key:
+            key = json.dumps(_json_safe(definition), sort_keys=True, ensure_ascii=False)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(definition)
+    return unique
 
 
 def _normalize_tone_definition(definition: dict[str, Any]) -> dict[str, Any]:
@@ -874,6 +937,127 @@ def _template_to_feedpak(template: Any) -> dict[str, Any]:
     return out
 
 
+def _is_b_standard_six_string(tuning: Any) -> bool:
+    return [int(value) for value in tuning or []] == B_STANDARD_6_TUNING
+
+
+def _b_standard_arrangement_to_seven_string(arrangement: dict[str, Any]) -> dict[str, Any]:
+    converted = json.loads(json.dumps(arrangement))
+    converted["tuning"] = list(SEVEN_STRING_STANDARD_TUNING)
+    converted["name"] = f"{converted.get('name') or 'Arrangement'} 7-string"
+    converted["notes"] = [_convert_note_to_seven_string(note) for note in converted.get("notes", [])]
+    converted["chords"] = [_convert_chord_to_seven_string(chord) for chord in converted.get("chords", [])]
+    converted["templates"] = [_convert_template_to_seven_string(template) for template in converted.get("templates", [])]
+    for phrase in converted.get("phrases", []):
+        for level in phrase.get("levels", []):
+            level["notes"] = [_convert_note_to_seven_string(note) for note in level.get("notes", [])]
+            level["chords"] = [_convert_chord_to_seven_string(chord) for chord in level.get("chords", [])]
+    return converted
+
+
+def _convert_note_to_seven_string(note: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(note, dict) or "s" not in note or "f" not in note:
+        return note
+    mapped = dict(note)
+    target = _map_pitch_to_seven_string(int(note["s"]), int(note["f"]))
+    if target is None:
+        return mapped
+    new_string, new_fret = target
+    mapped["s"] = new_string
+    mapped["f"] = new_fret
+    for key in ("sl", "slu"):
+        if key in mapped:
+            mapped[key] = _map_target_fret_to_string(int(note["s"]), int(mapped[key]), new_string)
+    return mapped
+
+
+def _convert_chord_to_seven_string(chord: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(chord, dict):
+        return chord
+    mapped = dict(chord)
+    used: set[int] = set()
+    notes = []
+    for note in chord.get("notes", []):
+        if not isinstance(note, dict) or "s" not in note or "f" not in note:
+            notes.append(note)
+            continue
+        mapped_note = dict(note)
+        target = _map_pitch_to_seven_string(int(note["s"]), int(note["f"]), used)
+        if target is not None:
+            new_string, new_fret = target
+            used.add(new_string)
+            mapped_note["s"] = new_string
+            mapped_note["f"] = new_fret
+            for key in ("sl", "slu"):
+                if key in mapped_note:
+                    mapped_note[key] = _map_target_fret_to_string(int(note["s"]), int(mapped_note[key]), new_string)
+        notes.append(mapped_note)
+    if notes:
+        mapped["notes"] = sorted(notes, key=lambda item: int(item.get("s", 0)) if isinstance(item, dict) else 0)
+    return mapped
+
+
+def _convert_template_to_seven_string(template: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(template, dict):
+        return template
+    mapped = dict(template)
+    old_frets = [int(value) for value in template.get("frets", [])]
+    old_fingers = [int(value) for value in template.get("fingers", [])]
+    new_frets = [-1] * 7
+    new_fingers = [-1] * 7
+    used: set[int] = set()
+    for old_string, fret in enumerate(old_frets[:6]):
+        if fret < 0:
+            continue
+        target = _map_pitch_to_seven_string(old_string, fret, used)
+        if target is None:
+            continue
+        new_string, new_fret = target
+        used.add(new_string)
+        new_frets[new_string] = new_fret
+        if old_string < len(old_fingers):
+            new_fingers[new_string] = int(old_fingers[old_string])
+    mapped["frets"] = new_frets
+    mapped["fingers"] = new_fingers
+    return mapped
+
+
+def _map_pitch_to_seven_string(
+    old_string: int,
+    fret: int,
+    used_strings: set[int] | None = None,
+) -> tuple[int, int] | None:
+    if not 0 <= old_string < 6:
+        return None
+    source_pitch = STANDARD_6_PITCHES[old_string] + B_STANDARD_6_TUNING[old_string] + fret
+    candidates: list[tuple[int, int, int, int, int]] = []
+    for new_string, base_pitch in enumerate(STANDARD_7_PITCHES):
+        new_fret = source_pitch - base_pitch
+        if new_fret < 0 or new_fret > 24:
+            continue
+        collision = 1 if used_strings and new_string in used_strings else 0
+        preferred_string = _preferred_seven_string(old_string)
+        candidates.append((collision, abs(new_string - preferred_string), abs(new_fret - fret), new_string, new_fret))
+    if not candidates:
+        return None
+    if used_strings and all(candidate[0] for candidate in candidates):
+        return None
+    _collision, _distance, _fret_delta, new_string, new_fret = min(candidates)
+    return new_string, new_fret
+
+
+def _map_target_fret_to_string(old_string: int, target_fret: int, new_string: int) -> int:
+    if not (0 <= old_string < 6 and 0 <= new_string < 7):
+        return target_fret
+    target_pitch = STANDARD_6_PITCHES[old_string] + B_STANDARD_6_TUNING[old_string] + target_fret
+    mapped = target_pitch - STANDARD_7_PITCHES[new_string]
+    return mapped if mapped >= 0 else target_fret
+
+
+def _preferred_seven_string(old_string: int) -> int:
+    return old_string if old_string <= 3 else old_string + 1
+
+
 def _anchor_to_feedpak(anchor: Any) -> dict[str, Any]:
     out = {"time": _num(anchor.time), "fret": int(anchor.fret)}
     if int(anchor.width) > 0:
@@ -950,7 +1134,7 @@ def _copy_audio(
         target.write_bytes(b"")
         return {"id": "full", "file": "stems/full.wav", "codec": "wav", "default": True}
 
-    path, data = max(audio, key=lambda item: len(item[1]))
+    path, data = _select_primary_audio(audio)
     ext = Path(path).suffix.lower() or ".bin"
     if ext == ".wem":
         converted = _convert_wem_bytes_to_ogg(data, package_dir / "stems" / "full.ogg")
@@ -978,6 +1162,14 @@ def _copy_audio(
         ".opus": "opus",
     }.get(ext, ext.lstrip("."))
     return {"id": "full", "file": f"stems/{target_name}", "codec": codec, "default": True}
+
+
+def _select_primary_audio(audio: list[tuple[str, bytes]]) -> tuple[str, bytes]:
+    full_song = [
+        item for item in audio
+        if "preview" not in Path(item[0]).stem.lower()
+    ]
+    return max(full_song or audio, key=lambda item: len(item[1]))
 
 
 def _convert_wem_bytes_to_ogg(data: bytes, output_path: Path) -> bool:

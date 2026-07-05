@@ -37,6 +37,8 @@ function App() {
   const [lastSourcePath, setLastSourcePath] = useState(() => initialSettingsRef.current.lastSourcePath || null);
   const [overwrite, setOverwrite] = useState(false);
   const [includeTones, setIncludeTones] = useState(() => initialSettingsRef.current.includeTones !== false);
+  const [bStandardTo7String, setBStandardTo7String] = useState(() => initialSettingsRef.current.bStandardTo7String === true);
+  const [rigBuilderDataDir, setRigBuilderDataDir] = useState(() => initialSettingsRef.current.rigBuilderDataDir || "");
   const [conversionWorkers, setConversionWorkers] = useState(DEFAULT_CONVERSION_WORKERS);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all");
@@ -53,8 +55,8 @@ function App() {
   }, [items]);
 
   useEffect(() => {
-    writeSettings({ outputDir, lastSourcePath, includeTones });
-  }, [outputDir, lastSourcePath, includeTones]);
+    writeSettings({ outputDir, lastSourcePath, includeTones, bStandardTo7String, rigBuilderDataDir });
+  }, [outputDir, lastSourcePath, includeTones, bStandardTo7String, rigBuilderDataDir]);
 
   useEffect(() => {
     return api.onDroppedPaths(async (paths) => {
@@ -136,7 +138,7 @@ function App() {
 
   async function inspectItem(item) {
     updateItem(item.id, { status: "inspecting" });
-    const result = await api.inspect(item.path);
+    const result = await api.inspect(item.path, { rigBuilderDataDir });
     if (!result.ok) {
       updateItem(item.id, (current) => {
         if (current.status === "converted" || current.status === "converting") return current;
@@ -173,6 +175,17 @@ function App() {
     if (folder) setOutputDir(folder);
   }
 
+  async function chooseRigBuilderData() {
+    const folder = await api.pickRigBuilderData({ defaultPath: rigBuilderDataDir || undefined });
+    if (!folder) return;
+    setRigBuilderDataDir(folder);
+    for (const item of itemsRef.current) {
+      if (item.status === "converted" || item.status === "converting") continue;
+      inspectionQueueRef.current.push(item.id);
+    }
+    pumpInspectionQueue();
+  }
+
   function rememberSourcePath(filePath) {
     const sourcePath = parentDir(filePath);
     if (sourcePath) setLastSourcePath(sourcePath);
@@ -199,7 +212,9 @@ function App() {
         inputPath: item.path,
         outputPath,
         overwrite,
-        includeTones
+        includeTones,
+        bStandardTo7String,
+        rigBuilderDataDir
       });
       if (!result.ok) {
         updateItem(item.id, { status: "failed", error: result.error });
@@ -274,6 +289,9 @@ function App() {
           <button onClick={chooseFiles}><Plus size={17} /> Add PSARCs</button>
           <button onClick={chooseFolder}><FolderOpen size={17} /> Add folder</button>
           <button onClick={chooseOutput}><FolderOpen size={17} /> Output</button>
+          <button onClick={chooseRigBuilderData} title={rigBuilderDataDir || "Set FeedBack Rig Builder data folder"}>
+            <FolderOpen size={17} /> Rig Builder data
+          </button>
           <label className="select-control">
             Workers
             <select value={conversionWorkers} onChange={(event) => setConversionWorkers(Number(event.target.value))} disabled={isConverting}>
@@ -288,6 +306,11 @@ function App() {
           </div>
           <label className="toggle"><input type="checkbox" checked={overwrite} onChange={(event) => setOverwrite(event.target.checked)} /> Overwrite</label>
           <label className="toggle"><input type="checkbox" checked={includeTones} onChange={(event) => setIncludeTones(event.target.checked)} disabled={isConverting} /> Include tones</label>
+          <label className="toggle lab-toggle">
+            <input type="checkbox" checked={bStandardTo7String} onChange={(event) => setBStandardTo7String(event.target.checked)} disabled={isConverting} />
+            B standard to 7-string
+          </label>
+          {rigBuilderDataDir && <span className="path-chip" title={rigBuilderDataDir}>Rig data: {basename(rigBuilderDataDir)}</span>}
         </section>
 
         <section className="stats">
@@ -425,34 +448,32 @@ function Inspector({ item }) {
           </section>
         </>
       ) : (
-        <ToneInspector item={item} tones={tones} rigBuilder={rigBuilder} />
+        <ToneInspector arrangements={arrangements} tones={tones} rigBuilder={rigBuilder} />
       )}
     </aside>
   );
 }
 
-function ToneInspector({ item, tones, rigBuilder }) {
-  const [activeArrangement, setActiveArrangement] = useState(tones[0]?.arrangement_id || "");
-  const [seedStatus, setSeedStatus] = useState(null);
-  const active = tones.find((arrangement) => arrangement.arrangement_id === activeArrangement) || tones[0] || null;
+function ToneInspector({ arrangements, tones, rigBuilder }) {
+  const rows = useMemo(() => (arrangements?.length ? arrangements : tones || []).map((arrangement) => {
+    const id = arrangement.id || arrangement.arrangement_id;
+    const tone = (tones || []).find((candidate) => candidate.arrangement_id === id);
+    return {
+      id,
+      name: arrangement.name || arrangement.arrangement_name || id,
+      type: arrangement.type || "guitar",
+      tone
+    };
+  }), [arrangements, tones]);
+  const [activeArrangement, setActiveArrangement] = useState(rows[0]?.id || "");
+  const activeRow = rows.find((arrangement) => arrangement.id === activeArrangement) || rows[0] || null;
+  const active = activeRow?.tone || null;
 
   useEffect(() => {
-    if (tones.length && !tones.some((arrangement) => arrangement.arrangement_id === activeArrangement)) {
-      setActiveArrangement(tones[0].arrangement_id);
+    if (rows.length && !rows.some((arrangement) => arrangement.id === activeArrangement)) {
+      setActiveArrangement(rows[0].id);
     }
-  }, [tones, activeArrangement]);
-
-  async function seedRoutes() {
-    if (!item?.path || seedStatus?.busy) return;
-    setSeedStatus({ busy: true, message: "Seeding local Rig Builder routes..." });
-    const result = await api.seedRigBuilder(item.path);
-    if (!result.ok) {
-      setSeedStatus({ busy: false, error: result.error || "Rig Builder route seeding failed" });
-      return;
-    }
-    const tonesSeeded = result.result?.tones?.length || 0;
-    setSeedStatus({ busy: false, message: `Seeded ${tonesSeeded} tone route${tonesSeeded === 1 ? "" : "s"}. Re-inspect this file to refresh the route status.` });
-  }
+  }, [rows, activeArrangement]);
 
   return (
     <section className="panel tone-panel">
@@ -460,29 +481,26 @@ function ToneInspector({ item, tones, rigBuilder }) {
         <h2>Tone Export</h2>
         <span>{countToneDefinitions(tones)} definitions</span>
       </div>
-      <div className="tone-actions">
-        <button onClick={seedRoutes} disabled={!item?.path || seedStatus?.busy}>
-          {seedStatus?.busy ? <RotateCw className="spin" size={16} /> : <Download size={16} />}
-          Seed/repair local routes
-        </button>
-        <span>Conversion does this automatically when Include tones is enabled.</span>
-      </div>
-      {seedStatus?.message && <div className="route-message">{seedStatus.message}</div>}
-      {seedStatus?.error && <div className="route-message error">{seedStatus.error}</div>}
-      {tones.length === 0 && (
-        <div className="empty compact">No PSARC tone data was detected for this song.</div>
+      {rows.length === 0 && (
+        <div className="empty compact">No playable arrangements were detected for this song.</div>
       )}
-      {tones.length > 0 && (
+      {rows.length > 0 && (
         <div className="arrangement-tabs">
-          {tones.map((arrangement) => (
+          {rows.map((arrangement) => (
             <button
-              key={arrangement.arrangement_id}
-              className={active?.arrangement_id === arrangement.arrangement_id ? "active" : ""}
-              onClick={() => setActiveArrangement(arrangement.arrangement_id)}
+              key={arrangement.id}
+              className={activeRow?.id === arrangement.id ? "active" : ""}
+              onClick={() => setActiveArrangement(arrangement.id)}
             >
-              {arrangement.arrangement_name}
+              {arrangement.name}
+              <span>{arrangement.tone?.definitions?.length || 0}</span>
             </button>
           ))}
+        </div>
+      )}
+      {activeRow && !active && (
+        <div className="empty compact">
+          No tone data was detected for {activeRow.name}. The arrangement will still be exported.
         </div>
       )}
       {active && (
@@ -530,7 +548,7 @@ function ToneInspector({ item, tones, rigBuilder }) {
                       <div className="gear-chip" key={`${definition.key}-${gear.slot}-${gear.key}`}>
                         <span>{gear.slot}</span>
                         <strong>{gear.key || gear.type || "Unknown gear"}</strong>
-                        <small>{gear.category || gear.type || "mapped by key"} · {gear.knobs} knobs</small>
+                        <small>{gear.category || gear.type || "mapped by key"} - {gear.knobs} knobs</small>
                         <GearRecommendation gear={gear} />
                         <KnobValues values={gear.knob_values} />
                       </div>
@@ -684,7 +702,7 @@ function withoutExtension(fileName) {
 }
 
 function duration(value) {
-  if (!value) return "-";
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return "-";
   const minutes = Math.floor(value / 60);
   const seconds = Math.floor(value % 60).toString().padStart(2, "0");
   return `${minutes}:${seconds}`;

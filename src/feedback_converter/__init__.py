@@ -1,16 +1,15 @@
 """PSARC CDLC to FeedPak converter."""
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 
 from .batch import BatchItem, BatchResult, convert_many
 from .converter import ConversionResult, ConversionWarning, convert_psarc
-from .inspector import ArrangementPreview, ChartPoint, PsarcPreview, inspect_psarc
+from .inspector import ArrangementPreview, PsarcPreview, inspect_psarc
 
 __all__ = [
     "ArrangementPreview",
     "BatchItem",
     "BatchResult",
-    "ChartPoint",
     "ConversionResult",
     "ConversionWarning",
     "PsarcPreview",

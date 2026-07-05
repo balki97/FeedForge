@@ -162,6 +162,17 @@ def fake_song():
     )
 
 
+def fake_b_standard_song():
+    song = fake_song()
+    song.metadata.tuning = [-5, -5, -5, -5, -5, -5]
+    song.levels[0].notes[0].string = 4
+    song.levels[0].notes[0].fret = 1
+    song.levels[0].notes[0].slideTo = 3
+    song.chordTemplates[0].frets = [0, 2, 2, 1, 0, 0]
+    song.chordTemplates[0].fingers = [0, 2, 3, 1, 0, 0]
+    return song
+
+
 def test_convert_psarc_writes_valid_feedpak_directory(tmp_path, monkeypatch):
     class FakeSong:
         @staticmethod
@@ -247,6 +258,34 @@ def test_convert_psarc_writes_valid_feedpak_directory(tmp_path, monkeypatch):
     assert validation.returncode == 0, validation.stdout
 
 
+def test_convert_psarc_can_remap_b_standard_to_seven_string(tmp_path, monkeypatch):
+    class FakeSong:
+        @staticmethod
+        def parse(_data):
+            return fake_b_standard_song()
+
+    monkeypatch.setattr(converter, "PSARC", FakePSARC)
+    monkeypatch.setattr(converter, "Song", FakeSong)
+
+    psarc = tmp_path / "input.psarc"
+    psarc.write_bytes(b"fake")
+    output = tmp_path / "converted.feedpak"
+
+    converter.convert_psarc(psarc, output, archive=False, b_standard_to_7_string=True)
+
+    manifest = yaml.safe_load((output / "manifest.yaml").read_text(encoding="utf-8"))
+    arrangement = json.loads((output / "arrangements" / "lead.json").read_text(encoding="utf-8"))
+
+    assert manifest["arrangements"][0]["tuning"] == [0, 0, 0, 0, 0, 0, 0]
+    assert arrangement["tuning"] == [0, 0, 0, 0, 0, 0, 0]
+    assert arrangement["notes"][0]["s"] == 4
+    assert arrangement["notes"][0]["f"] == 0
+    assert arrangement["notes"][0]["sl"] == 2
+    assert len(arrangement["templates"][0]["frets"]) == 7
+    assert arrangement["templates"][0]["frets"][0:4] == [0, 2, 2, 1]
+    assert arrangement["templates"][0]["frets"][5] == 0
+
+
 def test_convert_psarc_can_skip_tones(tmp_path, monkeypatch):
     class FakeSong:
         @staticmethod
@@ -268,6 +307,39 @@ def test_convert_psarc_can_skip_tones(tmp_path, monkeypatch):
     assert "rigs" not in manifest
     assert "tones" not in arrangement
     assert not (output / "rigs.json").exists()
+
+
+def test_tone_matching_ignores_numeric_substring_keys():
+    metadata = {
+        "arrangement_tones": [
+            {
+                "match_keys": ["32187", "3", "bass"],
+                "base": "bass_tone",
+                "definitions": [{"Name": "bass_tone", "Key": "bass_tone"}],
+            },
+            {
+                "match_keys": ["urn:application:xml:38sprock_lead", "32196", "0", "lead"],
+                "base": "lead_dist",
+                "definitions": [
+                    {"Name": "lead_dist", "Key": "lead_dist"},
+                    {"Name": "lead_solo", "Key": "lead_solo"},
+                ],
+            },
+            {
+                "match_keys": ["urn:application:xml:38sprock_rhythm", "32189", "1", "rhythm"],
+                "base": "rhythm_dist",
+                "definitions": [{"Name": "rhythm_dist", "Key": "rhythm_dist"}],
+            },
+        ]
+    }
+
+    lead = converter._tone_info_for_arrangement("songs/bin/generic/38sprock_lead.sng", metadata)
+    rhythm = converter._tone_info_for_arrangement("songs/bin/generic/38sprock_rhythm.sng", metadata)
+    bass = converter._tone_info_for_arrangement("songs/bin/generic/38sprock_bass.sng", metadata)
+
+    assert lead["base"] == "lead_dist"
+    assert rhythm["base"] == "rhythm_dist"
+    assert bass["base"] == "bass_tone"
 
 
 def test_inspector_previews_exported_tones(tmp_path, monkeypatch):
@@ -431,3 +503,14 @@ def test_seed_rig_builder_routes_writes_playable_rows(tmp_path, monkeypatch):
     assert rows[0][6].endswith("Amp.vst3")
     assert rows[0][7] is not None
     assert rows[1][2:6] == ("cabinet", "Cab_212", "ir", "other/greenback 212 1 mono.wav")
+
+
+def test_rig_builder_data_dir_accepts_portable_root(tmp_path, monkeypatch):
+    portable_root = tmp_path / "FeedBackPortable"
+    data_dir = portable_root / "resources" / "slopsmith" / "plugins" / "rig_builder" / "data"
+    data_dir.mkdir(parents=True)
+    (data_dir / "rs_gear_to_vst.json").write_text("{}", encoding="utf-8")
+
+    monkeypatch.setenv("FEEDFORGE_RIG_BUILDER_DATA_DIR", str(portable_root))
+
+    assert inspector._rig_builder_data_dir() == data_dir
