@@ -108,8 +108,8 @@ def convert_psarc_songs(
     for key, paths in sorted(groups.items()):
         song_content = _content_for_song_group(content, key, paths)
         output = base_dir / f"{_safe_output_stem(_metadata_song_title(song_content) or key)}.feedpak"
-        results.append(
-            convert_psarc(
+        try:
+            result = convert_psarc(
                 input_psarc,
                 output,
                 archive=archive,
@@ -123,8 +123,19 @@ def convert_psarc_songs(
                 demucs_stems=demucs_stems,
                 _content=song_content,
             )
-        )
+        except Exception:
+            _cleanup_output(output, archive=archive, keep_workdir=keep_workdir)
+            raise
+        results.append(result)
     return results
+
+
+def _cleanup_output(output: Path, *, archive: bool, keep_workdir: bool) -> None:
+    if keep_workdir:
+        return
+    target = output.with_suffix(output.suffix + ".work") if archive else output
+    if target.is_dir():
+        shutil.rmtree(target, ignore_errors=True)
 
 
 def convert_psarc(
@@ -1512,10 +1523,7 @@ def _copy_audio(
         if path.lower().endswith((".wem", ".ogg", ".wav", ".mp3", ".flac", ".opus"))
     ]
     if not audio:
-        warnings.append(ConversionWarning("No audio file found; wrote empty placeholder stem."))
-        target = package_dir / "stems" / "full.wav"
-        target.write_bytes(b"")
-        return ([{"id": "full", "file": "stems/full.wav", "codec": "wav", "default": True}], None)
+        raise ValueError("No audio file found in PSARC; FeedForge will not write a silent placeholder FeedPak.")
 
     path, data = _select_primary_audio(audio)
     ext = Path(path).suffix.lower() or ".bin"

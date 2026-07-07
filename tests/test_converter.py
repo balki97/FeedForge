@@ -9,6 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import yaml
+import pytest
 
 from feedback_converter import converter
 from feedback_converter import inspector
@@ -326,6 +327,31 @@ def test_rs1_multisong_grouping_keeps_song_specific_audio():
     assert "audio/windows/777777.wem" not in first
     assert "audio/windows/777777.wem" in second
     assert "audio/windows/123456.wem" not in second
+
+
+def test_convert_psarc_without_audio_fails_instead_of_placeholder(tmp_path, monkeypatch):
+    class FakeSong:
+        @staticmethod
+        def parse(_data):
+            return fake_song()
+
+    class NoAudioPSARC(FakePSARC):
+        def parse_stream(self, fh):
+            content = dict(super().parse_stream(fh))
+            content.pop("audio/windows/test.wem")
+            return content
+
+    monkeypatch.setattr(converter, "PSARC", NoAudioPSARC)
+    monkeypatch.setattr(converter, "Song", FakeSong)
+
+    psarc = tmp_path / "input.psarc"
+    psarc.write_bytes(b"fake")
+    output = tmp_path / "converted.feedpak"
+
+    with pytest.raises(ValueError, match="No audio file found"):
+        converter.convert_psarc(psarc, output, archive=False)
+
+    assert not (output / "stems" / "full.wav").exists()
 
 
 def test_convert_psarc_can_package_demucs_stems(tmp_path, monkeypatch):

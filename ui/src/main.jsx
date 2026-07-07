@@ -221,12 +221,13 @@ function App() {
   const stemServerBusy = (isStartingStemServer || stemServerStatus.starting) && !stemServerStatus.healthy && !stemServerStatus.running;
 
   async function addFiles(paths) {
-    const existing = new Set(itemsRef.current.map((item) => item.path));
+    const existing = new Set(itemsRef.current.map((item) => normalizePathKey(item.path)));
     const incoming = paths
       .filter((filePath) => filePath.toLowerCase().endsWith(".psarc"))
       .filter((filePath) => {
-        if (existing.has(filePath)) return false;
-        existing.add(filePath);
+        const key = normalizePathKey(filePath);
+        if (existing.has(key)) return false;
+        existing.add(key);
         return true;
       })
       .map((filePath) => ({
@@ -393,7 +394,15 @@ function App() {
     setIsStopping(false);
     setIsConverting(true);
     const stopManagedStemServerAfterQueue = separateStems && stemServerStatus.processRunning;
-    const pending = itemsRef.current.filter((item) => item.status !== "converted" && item.status !== "converting");
+    const pending = [];
+    const pendingPaths = new Set();
+    for (const item of itemsRef.current) {
+      if (item.status === "converted" || item.status === "converting") continue;
+      const key = normalizePathKey(item.path);
+      if (pendingPaths.has(key)) continue;
+      pendingPaths.add(key);
+      pending.push(item);
+    }
     let index = 0;
 
     async function convertNext() {
@@ -1329,6 +1338,10 @@ function basename(filePath) {
 
 function withoutExtension(fileName) {
   return fileName.replace(/\.[^.]+$/, "");
+}
+
+function normalizePathKey(filePath) {
+  return String(filePath || "").replaceAll("/", "\\").toLowerCase();
 }
 
 function duration(value) {
