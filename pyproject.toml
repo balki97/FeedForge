@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "feedforge"
-version = "0.1.4"
+version = "0.1.5"
 description = "Convert PSARC CDLC packages to FeedPak packages."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -20,9 +20,17 @@ dev = [
     "pytest>=8",
     "pyinstaller>=6",
 ]
+stems = [
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "python-multipart>=0.0.9",
+    "demucs>=4.0",
+    "soundfile>=0.12",
+]
 
 [project.scripts]
 psarc2feedpak = "feedback_converter.cli:main"
+feedforge-demucs-server = "feedback_converter.demucs_server:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

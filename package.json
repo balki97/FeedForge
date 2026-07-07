@@ -1,6 +1,6 @@
 {
   "name": "feedforge",
-  "version": "0.1.4",
+  "version": "0.1.6",
   "private": true,
   "description": "Desktop toolkit for preparing FeedBack-ready song packages.",
   "author": "FeedForge Contributors",
@@ -9,7 +9,7 @@
     "dev": "concurrently -k \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && electron .\"",
     "build": "vite build",
     "converter:pack": "python -m PyInstaller --noconfirm --clean psarc2feedpak.spec",
-    "electron:pack": "npm run build && electron-builder --win portable",
+    "electron:pack": "npm run build && electron-builder --win",
     "release": "npm run converter:pack && npm run electron:pack",
     "lint:ui": "vite build"
   },
@@ -39,6 +39,21 @@
       {
         "from": "dist/psarc2feedpak",
         "to": "bin/psarc2feedpak"
+      },
+      {
+        "from": "src",
+        "to": "demucs-server/src",
+        "filter": [
+          "feedback_converter/**/*.py"
+        ]
+      },
+      {
+        "from": "pyproject.toml",
+        "to": "demucs-server/pyproject.toml"
+      },
+      {
+        "from": "tools/start-demucs-server.ps1",
+        "to": "demucs-server/start-demucs-server.ps1"
       }
     ],
     "directories": {
@@ -46,7 +61,9 @@
     },
     "win": {
       "icon": "assets/feedforge.ico",
-      "target": "portable",
+      "target": [
+        "portable"
+      ],
       "signExecutable": false
     },
     "portable": {

@@ -41,6 +41,7 @@ contextBridge.exposeInMainWorld("feedbackConverter", {
   pickFolder: (options) => ipcRenderer.invoke("dialog:pickFolder", options),
   pickOutput: (options) => ipcRenderer.invoke("dialog:pickOutput", options),
   pickRigBuilderData: (options) => ipcRenderer.invoke("dialog:pickRigBuilderData", options),
+  pickDemucsInstallDir: (options) => ipcRenderer.invoke("dialog:pickDemucsInstallDir", options),
   expandPaths: (paths) => ipcRenderer.invoke("files:expandPaths", paths),
   onDroppedPaths: (callback) => {
     const listener = (event) => callback(event.detail);
@@ -49,5 +50,11 @@ contextBridge.exposeInMainWorld("feedbackConverter", {
   },
   inspect: (inputPath, options) => ipcRenderer.invoke("converter:inspect", inputPath, options),
   convert: (payload) => ipcRenderer.invoke("converter:convert", payload),
-  seedRigBuilder: (inputPath, options) => ipcRenderer.invoke("converter:seedRigBuilder", inputPath, options)
+  seedRigBuilder: (inputPath, options) => ipcRenderer.invoke("converter:seedRigBuilder", inputPath, options),
+  getStemServerStatus: () => ipcRenderer.invoke("stemServer:status"),
+  getStemServerModels: (options) => ipcRenderer.invoke("stemServer:models", options),
+  startStemServer: (options) => ipcRenderer.invoke("stemServer:start", options),
+  stopStemServer: () => ipcRenderer.invoke("stemServer:stop"),
+  checkForUpdates: () => ipcRenderer.invoke("updates:check"),
+  openLatestRelease: (url) => ipcRenderer.invoke("updates:openLatest", url)
 });

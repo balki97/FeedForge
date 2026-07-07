@@ -4,13 +4,16 @@ import {
   AlertTriangle,
   Check,
   Download,
+  ExternalLink,
   FolderOpen,
   Guitar,
   ImageIcon,
   Play,
   Plus,
+  Power,
   RotateCw,
   Search,
+  Server,
   Square,
   UploadCloud,
   XCircle
@@ -38,6 +41,16 @@ function App() {
   const [overwrite, setOverwrite] = useState(false);
   const [includeTones, setIncludeTones] = useState(() => initialSettingsRef.current.includeTones !== false);
   const [bStandardTo7String, setBStandardTo7String] = useState(() => initialSettingsRef.current.bStandardTo7String === true);
+  const [separateStems, setSeparateStems] = useState(() => initialSettingsRef.current.separateStems === true);
+  const [demucsUrl, setDemucsUrl] = useState(() => initialSettingsRef.current.demucsUrl || "");
+  const [demucsApiKey, setDemucsApiKey] = useState("");
+  const [demucsInstallDir, setDemucsInstallDir] = useState(() => initialSettingsRef.current.demucsInstallDir || "");
+  const [demucsModel, setDemucsModel] = useState(() => initialSettingsRef.current.demucsModel || "htdemucs_6s");
+  const [demucsModels, setDemucsModels] = useState([]);
+  const [demucsModelRoot, setDemucsModelRoot] = useState("");
+  const [stemServerStatus, setStemServerStatus] = useState({ url: "http://127.0.0.1:7865", running: false, starting: false, healthy: false });
+  const [isStartingStemServer, setIsStartingStemServer] = useState(false);
+  const [updateInfo, setUpdateInfo] = useState(null);
   const [rigBuilderDataDir, setRigBuilderDataDir] = useState(() => initialSettingsRef.current.rigBuilderDataDir || "");
   const [conversionWorkers, setConversionWorkers] = useState(DEFAULT_CONVERSION_WORKERS);
   const [query, setQuery] = useState("");
@@ -45,6 +58,7 @@ function App() {
   const [artistFilter, setArtistFilter] = useState("all");
   const [albumFilter, setAlbumFilter] = useState("all");
   const [tuningFilter, setTuningFilter] = useState("all");
+  const [activeView, setActiveView] = useState("workspace");
   const [isConverting, setIsConverting] = useState(false);
   const [isStopping, setIsStopping] = useState(false);
   const itemsRef = useRef(items);
@@ -58,8 +72,64 @@ function App() {
   }, [items]);
 
   useEffect(() => {
-    writeSettings({ outputDir, lastSourcePath, includeTones, bStandardTo7String, rigBuilderDataDir });
-  }, [outputDir, lastSourcePath, includeTones, bStandardTo7String, rigBuilderDataDir]);
+    writeSettings({ outputDir, lastSourcePath, includeTones, bStandardTo7String, separateStems, demucsUrl, demucsInstallDir, demucsModel, rigBuilderDataDir });
+  }, [outputDir, lastSourcePath, includeTones, bStandardTo7String, separateStems, demucsUrl, demucsInstallDir, demucsModel, rigBuilderDataDir]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function check() {
+      try {
+        const result = await api.checkForUpdates();
+        if (!cancelled) setUpdateInfo(result);
+      } catch {
+        if (!cancelled) setUpdateInfo(null);
+      }
+    }
+    check();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadDemucsModels() {
+      try {
+        const result = await api.getStemServerModels({ installDir: demucsInstallDir });
+        if (cancelled) return;
+        setDemucsModels(result.models || []);
+        setDemucsModelRoot(result.installRoot || result.defaultInstallDir || "");
+        if (!demucsInstallDir && result.defaultInstallDir) {
+          setDemucsInstallDir(result.defaultInstallDir);
+        }
+      } catch {
+        // Model metadata is helpful but not required for conversion.
+      }
+    }
+    loadDemucsModels();
+    return () => {
+      cancelled = true;
+    };
+  }, [demucsInstallDir]);
+
+  useEffect(() => {
+    if (!separateStems) return undefined;
+    let cancelled = false;
+    async function refresh() {
+      try {
+        const status = await api.getStemServerStatus();
+        if (!cancelled) setStemServerStatus(status);
+      } catch {
+        if (!cancelled) setStemServerStatus((current) => ({ ...current, running: false, healthy: false }));
+      }
+    }
+    refresh();
+    const timer = window.setInterval(refresh, 5000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [separateStems]);
 
   useEffect(() => {
     return api.onDroppedPaths(async (paths) => {
@@ -109,6 +179,7 @@ function App() {
     converted: items.filter((item) => item.status === "converted").length,
     failed: items.filter((item) => item.status === "failed").length
   }), [items]);
+  const stemServerBusy = (isStartingStemServer || stemServerStatus.starting) && !stemServerStatus.healthy && !stemServerStatus.running;
 
   async function addFiles(paths) {
     const existing = new Set(itemsRef.current.map((item) => item.path));
@@ -211,6 +282,31 @@ function App() {
     pumpInspectionQueue();
   }
 
+  async function startLocalStemServer() {
+    if (isStartingStemServer) return;
+    setIsStartingStemServer(true);
+    try {
+      const status = await api.startStemServer({ installDir: demucsInstallDir, model: demucsModel });
+      setStemServerStatus(status);
+      if (status.url) setDemucsUrl(status.url);
+      const result = await api.getStemServerModels({ installDir: demucsInstallDir });
+      setDemucsModels(result.models || []);
+      setDemucsModelRoot(result.installRoot || result.defaultInstallDir || "");
+    } finally {
+      setIsStartingStemServer(false);
+    }
+  }
+
+  async function stopLocalStemServer() {
+    const status = await api.stopStemServer();
+    setStemServerStatus(status);
+  }
+
+  async function chooseDemucsInstallDir() {
+    const folder = await api.pickDemucsInstallDir({ defaultPath: demucsInstallDir || undefined });
+    if (folder) setDemucsInstallDir(folder);
+  }
+
   function rememberSourcePath(filePath) {
     const sourcePath = parentDir(filePath);
     if (sourcePath) setLastSourcePath(sourcePath);
@@ -223,6 +319,7 @@ function App() {
     stopRequestedRef.current = false;
     setIsStopping(false);
     setIsConverting(true);
+    const stopManagedStemServerAfterQueue = separateStems && stemServerStatus.processRunning;
     const pending = itemsRef.current.filter((item) => item.status !== "converted" && item.status !== "converting");
     let index = 0;
 
@@ -239,6 +336,9 @@ function App() {
         overwrite,
         includeTones,
         bStandardTo7String,
+        separateStems,
+        demucsUrl: demucsUrl.trim(),
+        demucsApiKey: demucsApiKey.trim(),
         rigBuilderDataDir
       });
       if (!result.ok) {
@@ -264,6 +364,9 @@ function App() {
       stopRequestedRef.current = false;
       setIsStopping(false);
       setIsConverting(false);
+      if (stopManagedStemServerAfterQueue) {
+        stopLocalStemServer();
+      }
       pumpInspectionQueue();
     }
   }
@@ -315,75 +418,179 @@ function App() {
           <button onClick={chooseFolder}><FolderOpen size={17} /> Add folder</button>
         </section>
 
-        <section className="filter-bar">
-          <div className="filter-pills" aria-label="Queue status">
-            <button className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")}>All</button>
-            <button className={filter === "ready" ? "active" : ""} onClick={() => setFilter("ready")}>Ready</button>
-            <button className={filter === "issues" ? "active" : ""} onClick={() => setFilter("issues")}>Issues</button>
-            <button className={filter === "converted" ? "active" : ""} onClick={() => setFilter("converted")}>Converted</button>
-          </div>
-          <FilterSelect label="Artist" value={artistFilter} onChange={setArtistFilter} options={filterOptions.artists} />
-          <FilterSelect label="Album" value={albumFilter} onChange={setAlbumFilter} options={filterOptions.albums} />
-          <FilterSelect label="Tuning" value={tuningFilter} onChange={setTuningFilter} options={filterOptions.tunings} />
-          {(artistFilter !== "all" || albumFilter !== "all" || tuningFilter !== "all" || filter !== "all" || query) && (
-            <button className="ghost" onClick={() => {
-              setQuery("");
-              setFilter("all");
-              setArtistFilter("all");
-              setAlbumFilter("all");
-              setTuningFilter("all");
-            }}>
-              Clear filters
+        {updateInfo?.updateAvailable && (
+          <section className="update-banner">
+            <div>
+              <strong>FeedForge {updateInfo.latestVersion} is available</strong>
+              <span>You are using {updateInfo.currentVersion}. Download the latest release from GitHub.</span>
+            </div>
+            <button onClick={() => api.openLatestRelease(updateInfo.releaseUrl)}>
+              <ExternalLink size={16} />
+              Open GitHub
             </button>
-          )}
+          </section>
+        )}
+
+        <section className="view-tabs" aria-label="FeedForge sections">
+          <button className={activeView === "workspace" ? "active" : ""} onClick={() => setActiveView("workspace")}>Workspace</button>
+          <button className={activeView === "settings" ? "active" : ""} onClick={() => setActiveView("settings")}>Settings</button>
         </section>
 
-        <section className="control-strip">
-          <div className="control-actions">
-            <button className="path-action" onClick={chooseOutput} title={outputDir || "Use source folders for output"}>
-              <FolderOpen size={17} />
-              <span>Output</span>
-              <b>{outputDir ? basename(outputDir) : "Source folder"}</b>
-            </button>
-            <button className="path-action" onClick={chooseRigBuilderData} title={rigBuilderDataDir || "Auto-detect FeedBack Rig Builder data"}>
-              <FolderOpen size={17} />
-              <span>Rig data</span>
-              <b>{rigBuilderDataDir ? basename(rigBuilderDataDir) : "Auto"}</b>
-            </button>
-          </div>
-          <div className="settings-controls compact-controls">
-            <label className="select-control">
-              Workers
-              <select value={conversionWorkers} onChange={(event) => setConversionWorkers(Number(event.target.value))} disabled={isConverting}>
-                {[1, 2, 3, 4, 5, 6].map((value) => <option key={value} value={value}>{value}</option>)}
-              </select>
-            </label>
-            <label className="toggle"><input type="checkbox" checked={overwrite} onChange={(event) => setOverwrite(event.target.checked)} /> Overwrite</label>
-            <label className="toggle"><input type="checkbox" checked={includeTones} onChange={(event) => setIncludeTones(event.target.checked)} disabled={isConverting} /> Include tones</label>
-            <label className="toggle lab-toggle">
-              <input type="checkbox" checked={bStandardTo7String} onChange={(event) => setBStandardTo7String(event.target.checked)} disabled={isConverting} />
-              B standard to 7-string
-            </label>
-          </div>
-        </section>
+        {activeView === "settings" ? (
+          <section className="settings-page">
+            <div className="settings-card">
+              <div className="settings-card-head">
+                <div>
+                  <h2>Conversion</h2>
+                  <p>Output location, worker count, and package options.</p>
+                </div>
+              </div>
+              <div className="settings-grid">
+                <button className="path-action wide" onClick={chooseOutput} title={outputDir || "Use source folders for output"}>
+                  <FolderOpen size={17} />
+                  <span>Output</span>
+                  <b>{outputDir ? outputDir : "Source folder"}</b>
+                </button>
+                <button className="path-action wide" onClick={chooseRigBuilderData} title={rigBuilderDataDir || "Auto-detect FeedBack Rig Builder data"}>
+                  <FolderOpen size={17} />
+                  <span>Rig data</span>
+                  <b>{rigBuilderDataDir ? rigBuilderDataDir : "Auto"}</b>
+                </button>
+                <label className="select-control">
+                  Workers
+                  <select value={conversionWorkers} onChange={(event) => setConversionWorkers(Number(event.target.value))} disabled={isConverting}>
+                    {[1, 2, 3, 4, 5, 6].map((value) => <option key={value} value={value}>{value}</option>)}
+                  </select>
+                </label>
+                <div className="option-grid">
+                  <label className="toggle"><input type="checkbox" checked={overwrite} onChange={(event) => setOverwrite(event.target.checked)} /> Overwrite existing output</label>
+                  <label className="toggle"><input type="checkbox" checked={includeTones} onChange={(event) => setIncludeTones(event.target.checked)} disabled={isConverting} /> Include tones</label>
+                  <label className="toggle"><input type="checkbox" checked={separateStems} onChange={(event) => setSeparateStems(event.target.checked)} disabled={isConverting} /> Separate stems</label>
+                  <label className="toggle lab-toggle">
+                    <input type="checkbox" checked={bStandardTo7String} onChange={(event) => setBStandardTo7String(event.target.checked)} disabled={isConverting} />
+                    B standard to 7-string
+                  </label>
+                </div>
+              </div>
+            </div>
 
-        <section className="stats">
-          <Metric label="Imported" value={stats.total} />
-          <Metric label="Ready" value={stats.ready} tone="blue" />
-          <Metric label="Converted" value={stats.converted} tone="green" />
-          <Metric label="Issues" value={stats.failed} tone="red" />
-        </section>
+            {separateStems && (
+              <div className="settings-card">
+                <div className="settings-card-head">
+                  <div>
+                    <h2>Stem Server</h2>
+                    <p>Local Demucs setup and optional remote server settings.</p>
+                  </div>
+                  <span className={`server-badge ${stemServerBadge(stemServerStatus, isStartingStemServer).toLowerCase()}`}>{stemServerBadge(stemServerStatus, isStartingStemServer)}</span>
+                </div>
+                <div className="stem-settings">
+                  <label>
+                    Model
+                    <select value={demucsModel} onChange={(event) => setDemucsModel(event.target.value)} disabled={isConverting || stemServerStatus.processRunning || stemServerBusy}>
+                      {(demucsModels.length ? demucsModels : [{ id: "htdemucs_6s", name: "HTDemucs 6-source", size: "approx. 270 MB", description: "Best FeedForge default." }]).map((model) => (
+                        <option key={model.id} value={model.id}>{model.name} ({model.size}) - {modelStatusLabel(model)}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <div className="demucs-model-note">
+                    <strong>{modelStatusLabel(selectedDemucsModel(demucsModels, demucsModel))} - {selectedDemucsModel(demucsModels, demucsModel)?.size || "Model size varies"}</strong>
+                    <span>{selectedDemucsModel(demucsModels, demucsModel)?.description || "The selected model downloads on first local server start."}</span>
+                    <em>{selectedDemucsModel(demucsModels, demucsModel)?.installed ? "Starting this model should reuse the local checkpoint." : `Cache checked in ${demucsModelRoot || "the selected install folder"} and the legacy Torch cache.`}</em>
+                  </div>
+                  <div className="demucs-install-row">
+                    <label>
+                      Install folder
+                      <input value={demucsInstallDir} onChange={(event) => setDemucsInstallDir(event.target.value)} placeholder="Choose where Demucs, caches, and models are stored" disabled={isConverting || stemServerStatus.processRunning || stemServerBusy} />
+                    </label>
+                    <button onClick={chooseDemucsInstallDir} disabled={isConverting || stemServerStatus.processRunning || stemServerBusy}>
+                      <FolderOpen size={17} />
+                      Browse
+                    </button>
+                  </div>
+                  <label>
+                    Demucs server
+                    <input value={demucsUrl} onChange={(event) => setDemucsUrl(event.target.value)} placeholder="Auto from FeedBack, or http://127.0.0.1:8000" disabled={isConverting} />
+                  </label>
+                  <label>
+                    API key
+                    <input value={demucsApiKey} onChange={(event) => setDemucsApiKey(event.target.value)} placeholder="Optional" type="password" disabled={isConverting} />
+                  </label>
+                  <div className="local-stem-server">
+                    <div className={`server-state ${stemServerStatus.healthy ? "ready" : stemServerBusy ? "starting" : ""}`}>
+                      <Server size={17} />
+                      <div>
+                        <strong>{stemServerStatus.healthy ? "Local stem server ready" : stemServerBusy ? "Installing or starting stem server" : stemServerStatus.running ? "Stem server reachable, Demucs not ready" : "Local stem server not running"}</strong>
+                        <span>{stemServerStatus.healthy ? `${stemServerStatus.url} - ${stemServerStatus.model || demucsModel} is ready for conversions.` : stemServerStatus.running ? "The port is reachable, but health did not pass. Open the debug log if this stays unresolved." : selectedDemucsModel(demucsModels, demucsModel)?.installed ? "Selected model is installed. Starting should not download it again." : "First start downloads Python dependencies and the selected model into the install folder."}</span>
+                      </div>
+                    </div>
+                    <div className="server-actions">
+                      <button onClick={startLocalStemServer} disabled={isConverting || stemServerBusy}>
+                        {stemServerBusy ? <RotateCw className="spin" size={17} /> : <Download size={17} />}
+                        {stemServerStatus.healthy ? "Use local stem server" : "Install/start local stem server"}
+                      </button>
+                      {(stemServerStatus.processRunning || stemServerBusy) && (
+                        <button className="ghost" onClick={stopLocalStemServer} disabled={isConverting}>
+                          <Power size={17} />
+                          Stop
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </section>
+        ) : (
+          <>
+            <section className="filter-bar">
+              <div className="filter-pills" aria-label="Queue status">
+                <button className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")}>All</button>
+                <button className={filter === "ready" ? "active" : ""} onClick={() => setFilter("ready")}>Ready</button>
+                <button className={filter === "issues" ? "active" : ""} onClick={() => setFilter("issues")}>Issues</button>
+                <button className={filter === "converted" ? "active" : ""} onClick={() => setFilter("converted")}>Converted</button>
+              </div>
+              <FilterSelect label="Artist" value={artistFilter} onChange={setArtistFilter} options={filterOptions.artists} />
+              <FilterSelect label="Album" value={albumFilter} onChange={setAlbumFilter} options={filterOptions.albums} />
+              <FilterSelect label="Tuning" value={tuningFilter} onChange={setTuningFilter} options={filterOptions.tunings} />
+              {(artistFilter !== "all" || albumFilter !== "all" || tuningFilter !== "all" || filter !== "all" || query) && (
+                <button className="ghost" onClick={() => {
+                  setQuery("");
+                  setFilter("all");
+                  setArtistFilter("all");
+                  setAlbumFilter("all");
+                  setTuningFilter("all");
+                }}>
+                  Clear filters
+                </button>
+              )}
+            </section>
 
-        <section className="content-grid">
-          <div className="left-column">
-            <DropZone onClick={chooseFiles} />
-            <Queue items={filtered} selectedId={selected?.id} onSelect={setSelectedId} />
-          </div>
-          <Inspector item={selected} />
-        </section>
+            <section className="stats">
+              <Metric label="Imported" value={stats.total} />
+              <Metric label="Ready" value={stats.ready} tone="blue" />
+              <Metric label="Converted" value={stats.converted} tone="green" />
+              <Metric label="Issues" value={stats.failed} tone="red" />
+            </section>
+
+            <section className="content-grid">
+              <div className="left-column">
+                <DropZone onClick={chooseFiles} />
+                <Queue items={filtered} selectedId={selected?.id} onSelect={setSelectedId} />
+              </div>
+              <Inspector item={selected} />
+            </section>
+          </>
+        )}
       </main>
     </div>
   );
+}
+
+function stemServerBadge(status, isStarting) {
+  if (status.healthy) return "Running";
+  if (status.starting || isStarting) return "Starting";
+  if (status.running) return "Unhealthy";
+  return "Stopped";
 }
 
 function Metric({ label, value, tone = "" }) {
@@ -405,6 +612,17 @@ function FilterSelect({ label, value, onChange, options }) {
       </select>
     </label>
   );
+}
+
+function selectedDemucsModel(models, modelId) {
+  return (models || []).find((model) => model.id === modelId) || null;
+}
+
+function modelStatusLabel(model) {
+  if (!model) return "Unknown";
+  if (model.installed) return "Installed";
+  if (model.partial) return `Partial ${model.installedCount || 0}/${model.requiredCount || 0}`;
+  return "Download needed";
 }
 
 function DropZone({ onClick }) {
@@ -458,6 +676,7 @@ function Inspector({ item }) {
   const arrangements = preview?.arrangements || [];
   const tones = preview?.tones || [];
   const rigBuilder = preview?.rig_builder || [];
+  const authors = preview?.authors || [];
   return (
     <aside className="inspector">
       <section className="song-hero">
@@ -466,11 +685,12 @@ function Inspector({ item }) {
           <span className="eyebrow">Selected song</span>
           <h2>{preview?.title || item?.name || "No song selected"}</h2>
           <p>{preview?.artist || "Add PSARC files to inspect metadata and conversion readiness."}</p>
-          <div className="chips">
-            {preview?.album && <span>{preview.album}</span>}
-            {preview?.year && <span>{preview.year}</span>}
-            {preview?.duration && <span>{duration(preview.duration)}</span>}
-          </div>
+            <div className="chips">
+              {preview?.album && <span>{preview.album}</span>}
+              {preview?.year && <span>{preview.year}</span>}
+              {preview?.duration && <span>{duration(preview.duration)}</span>}
+              {authors.length > 0 && <span>{authors.length} credit{authors.length === 1 ? "" : "s"}</span>}
+            </div>
         </div>
       </section>
 
@@ -491,10 +711,28 @@ function Inspector({ item }) {
               <ReadyLine ok={!!cover} text="Cover image detected" />
               <ReadyLine ok={arrangements.length > 0} text={`${arrangements.length || 0} playable arrangement${arrangements.length === 1 ? "" : "s"}`} />
               <ReadyLine ok={tones.length > 0} text={tones.length ? `${countToneDefinitions(tones)} tone definition${countToneDefinitions(tones) === 1 ? "" : "s"} detected` : "No tone definitions detected"} muted={!tones.length} />
-              <ReadyLine ok={!!preview?.lyrics} text={preview?.lyrics ? `${preview.lyrics} lyric timing events` : "Lyrics optional"} muted={!preview?.lyrics} />
+              <ReadyLine ok={authors.length > 0} text={authors.length ? `${authors.length} author credit${authors.length === 1 ? "" : "s"} retained` : "No embedded author credit found"} muted={!authors.length} />
+              <ReadyLine ok={!!preview?.lyrics} text={preview?.lyrics ? `${preview.lyrics} lyric timing events for karaoke` : "No vocals lyrics detected"} muted={!preview?.lyrics} />
             </ul>
             {item?.error && <div className="error-box"><AlertTriangle size={17} /> {item.error}</div>}
           </section>
+
+          {authors.length > 0 && (
+            <section className="panel">
+              <div className="panel-title">
+                <h2>Credits</h2>
+                <span>From PSARC metadata</span>
+              </div>
+              <div className="credit-list">
+                {authors.map((author, index) => (
+                  <div className="credit-row" key={`${author.name}-${author.role || "credit"}-${index}`}>
+                    <strong>{author.name}</strong>
+                    <span>{author.role || "contributor"}</span>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
 
           <section className="panel">
             <div className="panel-title">

@@ -12,6 +12,7 @@ from .converter import (
     _convert_dds_bytes_to_png,
     _display_name,
     _duration_from_song,
+    _authors_from_metadata,
     _extract_metadata,
     _find_sng_entries,
     _highest_level,
@@ -98,6 +99,7 @@ class PsarcPreview:
     album: str = ""
     year: int | None = None
     duration: float | None = None
+    authors: list[dict[str, str]] = field(default_factory=list)
     cover_path: Path | None = None
     arrangements: list[ArrangementPreview] = field(default_factory=list)
     tones: list[ArrangementTonePreview] = field(default_factory=list)
@@ -180,6 +182,7 @@ def inspect_psarc(input_psarc: Path, *, cover_dir: Path | None = None) -> PsarcP
         album=str(metadata.get("album") or ""),
         year=year,
         duration=float(duration) if duration else None,
+        authors=_authors_from_metadata(metadata),
         cover_path=cover_path,
         arrangements=arrangements,
         tones=tones,

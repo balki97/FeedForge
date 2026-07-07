@@ -81,6 +81,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="Convert six-string B-standard arrangements to seven-string standard charts.",
     )
     parser.add_argument(
+        "--separate-stems",
+        action="store_true",
+        help="Split the converted full mix into instrument stems through a Demucs-compatible server.",
+    )
+    parser.add_argument(
+        "--demucs-url",
+        help="Demucs-compatible server URL. Defaults to FEEDFORGE_DEMUCS_URL or DEMUCS_SERVER_URL.",
+    )
+    parser.add_argument(
+        "--demucs-api-key",
+        help="Optional Demucs server API key sent as X-API-Key.",
+    )
+    parser.add_argument(
+        "--demucs-stems",
+        default="guitar,bass,drums,vocals,other",
+        help="Comma-separated stems to request from the Demucs server.",
+    )
+    parser.add_argument(
         "--inspect-json",
         action="store_true",
         help="Inspect one PSARC and write metadata JSON to stdout.",
@@ -150,6 +168,10 @@ def main(argv: list[str] | None = None) -> int:
                 keep_workdir=args.keep_workdir,
                 include_tones=not args.no_tones,
                 b_standard_to_7_string=args.b_standard_to_7_string,
+                separate_stems=args.separate_stems,
+                demucs_url=args.demucs_url,
+                demucs_api_key=args.demucs_api_key,
+                demucs_stems=_split_csv(args.demucs_stems),
             )
         except Exception as exc:  # noqa: BLE001
             _cleanup_failed_workdir(input_paths[0], output_path, archive=not args.directory)
@@ -169,6 +191,10 @@ def main(argv: list[str] | None = None) -> int:
         keep_workdir=args.keep_workdir,
         include_tones=not args.no_tones,
         b_standard_to_7_string=args.b_standard_to_7_string,
+        separate_stems=args.separate_stems,
+        demucs_url=args.demucs_url,
+        demucs_api_key=args.demucs_api_key,
+        demucs_stems=_split_csv(args.demucs_stems),
     )
     for item in batch.items:
         if item.succeeded and item.result is not None:
@@ -188,6 +214,10 @@ def _single_output_path(input_path: Path, output_arg: Path | None) -> Path | Non
     if not output_arg.suffix:
         return output_arg / input_path.with_suffix(".feedpak").name
     return output_arg
+
+
+def _split_csv(value: str | None) -> list[str]:
+    return [item.strip() for item in str(value or "").split(",") if item.strip()]
 
 
 if __name__ == "__main__":

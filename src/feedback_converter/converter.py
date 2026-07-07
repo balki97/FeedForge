@@ -1,10 +1,17 @@
 from __future__ import annotations
 
 import json
+import mimetypes
+import os
 import re
 import shutil
 import subprocess
 import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+import uuid
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -60,6 +67,10 @@ def convert_psarc(
     keep_workdir: bool = False,
     include_tones: bool = True,
     b_standard_to_7_string: bool = False,
+    separate_stems: bool = False,
+    demucs_url: str | None = None,
+    demucs_api_key: str | None = None,
+    demucs_stems: list[str] | None = None,
 ) -> ConversionResult:
     input_psarc = Path(input_psarc)
     if not input_psarc.is_file():
@@ -114,9 +125,10 @@ def convert_psarc(
                 lyric_song = song
 
         if not getattr(song, "levels", None) or len(song.levels) == 0:
-            warnings.append(
-                ConversionWarning(f"Skipped non-playable SNG with no difficulty levels: {path}")
-            )
+            if not _is_vocal_sng(path, song):
+                warnings.append(
+                    ConversionWarning(f"Skipped non-playable SNG with no difficulty levels: {path}")
+                )
             continue
 
         if first_song is None:
@@ -165,12 +177,34 @@ def convert_psarc(
         if lyrics:
             lyrics_path = "lyrics.json"
             _write_json(package_dir / lyrics_path, lyrics)
+            if not any(item["id"] == "vocals" for item in arrangements):
+                vocals_id = _unique_id("vocals", used_ids)
+                vocals_file = f"arrangements/{vocals_id}.json"
+                _write_json(package_dir / vocals_file, _karaoke_arrangement(first_song))
+                arrangements.append(
+                    {
+                        "id": vocals_id,
+                        "name": "Vocals",
+                        "file": vocals_file,
+                        "tuning": [0, 0, 0, 0, 0, 0],
+                        "capo": 0,
+                        "type": "vocals",
+                    }
+                )
         else:
             lyrics_path = None
     else:
         lyrics_path = None
 
-    stem_entry = _copy_audio(content, package_dir, warnings)
+    stem_entries, stem_separation = _copy_audio(
+        content,
+        package_dir,
+        warnings,
+        separate_stems=separate_stems,
+        demucs_url=demucs_url,
+        demucs_api_key=demucs_api_key,
+        demucs_stems=demucs_stems,
+    )
     cover_path = _copy_cover(content, package_dir)
 
     title = metadata.get("title") or input_psarc.stem
@@ -183,8 +217,13 @@ def convert_psarc(
         "artist": str(artist),
         "duration": round(duration, 6),
         "arrangements": arrangements,
-        "stems": [stem_entry],
+        "stems": stem_entries,
     }
+    authors = _authors_from_metadata(metadata)
+    if authors:
+        manifest["authors"] = authors
+    if stem_separation:
+        manifest["stem_separation"] = stem_separation
     if metadata.get("album"):
         manifest["album"] = str(metadata["album"])
     if metadata.get("year"):
@@ -194,6 +233,30 @@ def convert_psarc(
             warnings.append(ConversionWarning(f"Ignored non-integer year: {metadata['year']!r}"))
     if lyrics_path:
         manifest["lyrics"] = lyrics_path
+        manifest["lyrics_source"] = "authored"
+        manifest["language"] = "und"
+        manifest["lyric_tracks"] = [
+            {
+                "id": "original",
+                "file": lyrics_path,
+                "language": "und",
+                "kind": "original",
+                "lyrics_source": "authored",
+                **({"stem": "vocals"} if any(str(stem.get("id")) == "vocals" for stem in stem_entries) else {}),
+                "name": "Original",
+            }
+        ]
+        vocal_pitch = _maybe_write_vocal_pitch(
+            package_dir,
+            lyrics,
+            stem_entries,
+            demucs_url=demucs_url,
+            demucs_api_key=demucs_api_key,
+            warnings=warnings,
+        )
+        if vocal_pitch:
+            manifest["vocal_pitch"] = vocal_pitch
+            manifest["pitch_extraction"] = {"engine": "crepe", "model": "v1", "version": "1.0.0"}
     if timeline_path:
         manifest["song_timeline"] = timeline_path
     if cover_path:
@@ -227,6 +290,10 @@ def _find_sng_entries(content: dict[str, bytes]) -> list[tuple[str, bytes]]:
     return sorted(entries, key=lambda item: item[0].lower())
 
 
+def _is_vocal_sng(path: str, song: Any) -> bool:
+    return "vocal" in path.replace("\\", "/").lower() or bool(getattr(song, "vocals", None))
+
+
 def _extract_metadata(content: dict[str, bytes]) -> dict[str, Any]:
     objects: list[Any] = []
     for path, data in content.items():
@@ -246,6 +313,7 @@ def _extract_metadata(content: dict[str, bytes]) -> dict[str, Any]:
         "album": _first_key(flat, "AlbumName", "Album"),
         "year": _first_key(flat, "SongYear", "Year"),
         "duration": _first_key(flat, "SongLength", "Duration", "SongLengthSeconds"),
+        "authors": _metadata_authors(flat),
         "arrangement_names": _arrangement_names(flat),
         "arrangement_tones": _arrangement_tones(flat),
     }
@@ -270,6 +338,113 @@ def _first_key(dicts: list[dict[str, Any]], *keys: str) -> Any | None:
             if value not in (None, ""):
                 return value
     return None
+
+
+def _metadata_authors(dicts: list[dict[str, Any]]) -> list[dict[str, str]]:
+    authors: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+
+    for item in dicts:
+        for key, value in item.items():
+            if not isinstance(value, (str, int, float)) or isinstance(value, bool):
+                continue
+            role = _author_role_from_key(key)
+            if role is None:
+                continue
+            name = str(value).strip()
+            if not name:
+                continue
+            identity = (name.lower(), role)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            authors.append({"name": name, "role": role})
+
+        for key in ("Authors", "Author", "Creators", "Contributors"):
+            value = item.get(key)
+            if isinstance(value, list):
+                for entry in value:
+                    author = _normalize_author_entry(entry)
+                    if not author:
+                        continue
+                    identity = (author["name"].lower(), author.get("role", ""))
+                    if identity in seen:
+                        continue
+                    seen.add(identity)
+                    authors.append(author)
+            elif isinstance(value, dict):
+                author = _normalize_author_entry(value)
+                if author:
+                    identity = (author["name"].lower(), author.get("role", ""))
+                    if identity not in seen:
+                        seen.add(identity)
+                        authors.append(author)
+
+    return authors
+
+
+def _author_role_from_key(key: str) -> str | None:
+    normalized = key.lower().replace("_", "").replace("-", "").replace(" ", "")
+    if normalized in {
+        "charter",
+        "chartauthor",
+        "songauthor",
+        "dlcauthor",
+        "author",
+        "packageauthor",
+        "customsongauthor",
+        "customdlcauthor",
+        "cdlcauthor",
+        "manifestauthor",
+        "arrangementauthor",
+        "tabauthor",
+    }:
+        return "charter"
+    if normalized in {
+        "creator",
+        "createdby",
+        "packagecreator",
+        "customsongcreator",
+        "customdlccreator",
+        "cdlccreator",
+        "toolkitcreator",
+    }:
+        return "creator"
+    if normalized in {"arranger", "transcriber", "editor", "mixer", "engineer", "proofreader"}:
+        return normalized
+    return None
+
+
+def _normalize_author_entry(value: Any) -> dict[str, str] | None:
+    if isinstance(value, str):
+        name = value.strip()
+        return {"name": name, "role": "charter"} if name else None
+    if not isinstance(value, dict):
+        return None
+    name = _first_key([value], "name", "Name", "displayName", "DisplayName", "username", "Username")
+    if name in (None, ""):
+        return None
+    role = _first_key([value], "role", "Role", "type", "Type") or "charter"
+    author = {"name": str(name).strip(), "role": str(role).strip() or "charter"}
+    email = _first_key([value], "email", "Email")
+    url = _first_key([value], "url", "Url", "URL", "website", "Website")
+    if email:
+        author["email"] = str(email).strip()
+    if url:
+        author["url"] = str(url).strip()
+    return author if author["name"] else None
+
+
+def _authors_from_metadata(metadata: dict[str, Any]) -> list[dict[str, str]]:
+    authors = metadata.get("authors")
+    if not isinstance(authors, list):
+        return []
+    cleaned: list[dict[str, str]] = []
+    for item in authors:
+        author = _normalize_author_entry(item)
+        if author:
+            cleaned.append(author)
+    return cleaned
 
 
 def _arrangement_names(dicts: list[dict[str, Any]]) -> dict[str, str]:
@@ -1111,6 +1286,21 @@ def _song_to_lyrics(song: Any) -> list[dict[str, Any]]:
     return lyrics
 
 
+def _karaoke_arrangement(song: Any) -> dict[str, Any]:
+    return {
+        "name": "Vocals",
+        "tuning": [0, 0, 0, 0, 0, 0],
+        "capo": 0,
+        "notes": [],
+        "chords": [],
+        "anchors": [],
+        "handshapes": [],
+        "templates": [],
+        "beats": [_beat_to_feedpak(b) for b in getattr(song, "beats", [])],
+        "sections": [_section_to_feedpak(s) for s in getattr(song, "sections", [])],
+    }
+
+
 def _duration_from_song(song: Any | None) -> float | None:
     if song is None:
         return None
@@ -1121,8 +1311,15 @@ def _duration_from_song(song: Any | None) -> float | None:
 
 
 def _copy_audio(
-    content: dict[str, bytes], package_dir: Path, warnings: list[ConversionWarning]
-) -> dict[str, Any]:
+    content: dict[str, bytes],
+    package_dir: Path,
+    warnings: list[ConversionWarning],
+    *,
+    separate_stems: bool = False,
+    demucs_url: str | None = None,
+    demucs_api_key: str | None = None,
+    demucs_stems: list[str] | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, str] | None]:
     audio = [
         (path, data)
         for path, data in content.items()
@@ -1132,19 +1329,28 @@ def _copy_audio(
         warnings.append(ConversionWarning("No audio file found; wrote empty placeholder stem."))
         target = package_dir / "stems" / "full.wav"
         target.write_bytes(b"")
-        return {"id": "full", "file": "stems/full.wav", "codec": "wav", "default": True}
+        return ([{"id": "full", "file": "stems/full.wav", "codec": "wav", "default": True}], None)
 
     path, data = _select_primary_audio(audio)
     ext = Path(path).suffix.lower() or ".bin"
     if ext == ".wem":
         converted = _convert_wem_bytes_to_ogg(data, package_dir / "stems" / "full.ogg")
         if converted:
-            return {
+            full_entry = {
                 "id": "full",
                 "file": "stems/full.ogg",
                 "codec": "vorbis",
                 "default": True,
             }
+            return _maybe_separate_stems(
+                package_dir,
+                full_entry,
+                warnings,
+                separate_stems=separate_stems,
+                demucs_url=demucs_url,
+                demucs_api_key=demucs_api_key,
+                demucs_stems=demucs_stems,
+            )
         warnings.append(
             ConversionWarning(
                 "Could not convert WEM audio to OGG; preserved WEM, which FeedBack may not play."
@@ -1161,7 +1367,385 @@ def _copy_audio(
         ".flac": "flac",
         ".opus": "opus",
     }.get(ext, ext.lstrip("."))
-    return {"id": "full", "file": f"stems/{target_name}", "codec": codec, "default": True}
+    full_entry = {"id": "full", "file": f"stems/{target_name}", "codec": codec, "default": True}
+    return _maybe_separate_stems(
+        package_dir,
+        full_entry,
+        warnings,
+        separate_stems=separate_stems,
+        demucs_url=demucs_url,
+        demucs_api_key=demucs_api_key,
+        demucs_stems=demucs_stems,
+    )
+
+
+def _maybe_separate_stems(
+    package_dir: Path,
+    full_entry: dict[str, Any],
+    warnings: list[ConversionWarning],
+    *,
+    separate_stems: bool,
+    demucs_url: str | None,
+    demucs_api_key: str | None,
+    demucs_stems: list[str] | None,
+) -> tuple[list[dict[str, Any]], dict[str, str] | None]:
+    if not separate_stems:
+        return ([full_entry], None)
+
+    source = package_dir / str(full_entry["file"])
+    resolved_url = _resolve_demucs_url(demucs_url)
+    if not resolved_url:
+        warnings.append(
+            ConversionWarning(
+                "Stem separation was requested but no Demucs server URL is configured; wrote full mix only."
+            )
+        )
+        return ([full_entry], None)
+    if not source.is_file() or source.stat().st_size == 0:
+        warnings.append(ConversionWarning("Stem separation skipped because the converted full mix is empty."))
+        return ([full_entry], None)
+
+    requested = _normalize_demucs_stems(demucs_stems)
+    try:
+        stems = _run_demucs_server(
+            source,
+            package_dir / "stems",
+            server_url=resolved_url,
+            api_key=demucs_api_key,
+            requested_stems=requested,
+        )
+    except Exception as exc:  # noqa: BLE001
+        warnings.append(ConversionWarning(f"Stem separation failed; wrote full mix only: {exc}"))
+        return ([full_entry], None)
+
+    if not stems:
+        warnings.append(ConversionWarning("Stem separation returned no usable stems; wrote full mix only."))
+        return ([full_entry], None)
+
+    full_mix = dict(full_entry)
+    full_mix["default"] = False
+    stem_entries = [full_mix]
+    for stem_id, rel_file in stems:
+        stem_entries.append(
+            {
+                "id": stem_id,
+                "file": rel_file,
+                "codec": _codec_for_audio_path(rel_file),
+                "default": True,
+            }
+        )
+    stem_entries.sort(key=lambda item: _stem_sort_key(str(item["id"])))
+    return (
+        stem_entries,
+        {"engine": "demucs", "model": "server", "version": "1.0.0"},
+    )
+
+
+def _resolve_demucs_url(demucs_url: str | None) -> str:
+    url = (
+        demucs_url
+        or os.environ.get("FEEDFORGE_DEMUCS_URL")
+        or os.environ.get("DEMUCS_SERVER_URL")
+        or _feedback_demucs_url()
+        or ""
+    ).strip()
+    return url.rstrip("/")
+
+
+def _feedback_demucs_url() -> str | None:
+    for config_dir in _feedback_config_dirs():
+        for path, key in (
+            (config_dir / "studio_demucs.json", "url"),
+            (config_dir / "config.json", "demucs_server_url"),
+        ):
+            value = _json_string_value(path, key)
+            if value:
+                return value
+    return None
+
+
+def _feedback_config_dirs() -> list[Path]:
+    dirs = [Path(os.environ.get("CONFIG_DIR", str(Path.home() / ".local" / "share" / "feedback")))]
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        root = Path(appdata)
+        dirs.extend(
+            [
+                root / "feedback-desktop" / "slopsmith-config",
+                root / "slopsmith-desktop" / "slopsmith-config",
+                root / "FeedBack" / "slopsmith-config",
+                root / "feedback" / "slopsmith-config",
+            ]
+        )
+    unique: list[Path] = []
+    seen: set[str] = set()
+    for path in dirs:
+        key = str(path).lower()
+        if key not in seen:
+            seen.add(key)
+            unique.append(path)
+    return unique
+
+
+def _json_string_value(path: Path, key: str) -> str | None:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return None
+    value = data.get(key) if isinstance(data, dict) else None
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def _feedback_demucs_api_key() -> str | None:
+    for config_dir in _feedback_config_dirs():
+        value = _json_string_value(config_dir / "studio_demucs.json", "api_key")
+        if value:
+            return value
+    return None
+
+
+def _normalize_demucs_stems(stems: list[str] | None) -> list[str]:
+    allowed = {"guitar", "bass", "drums", "vocals", "piano", "other"}
+    requested = []
+    for stem in stems or ["guitar", "bass", "drums", "vocals", "other"]:
+        value = str(stem).strip().lower()
+        if value in allowed and value not in requested:
+            requested.append(value)
+    return requested or ["guitar", "bass", "drums", "vocals", "other"]
+
+
+def _run_demucs_server(
+    source_audio: Path,
+    stems_dir: Path,
+    *,
+    server_url: str,
+    api_key: str | None,
+    requested_stems: list[str],
+) -> list[tuple[str, str]]:
+    headers = {}
+    api_key = api_key or _feedback_demucs_api_key()
+    if api_key:
+        headers["X-API-Key"] = api_key
+    result = _demucs_post_file(server_url, source_audio, requested_stems, headers)
+    if result.get("status") == "processing":
+        result = _poll_demucs_job(server_url, str(result.get("job_id") or ""), headers)
+    if result.get("status") == "failed":
+        raise RuntimeError(str(result.get("error") or "server reported failure"))
+
+    stem_urls = result.get("stems")
+    if not isinstance(stem_urls, dict):
+        raise RuntimeError("server response did not include a stems object")
+
+    stems_dir.mkdir(parents=True, exist_ok=True)
+    written: list[tuple[str, str]] = []
+    for stem_name, stem_url in stem_urls.items():
+        stem_id = str(stem_name).strip().lower()
+        if stem_id not in set(requested_stems):
+            continue
+        if not isinstance(stem_url, str) or not stem_url:
+            continue
+        data = _download_demucs_file(server_url, stem_url, headers)
+        ext = Path(urllib.parse.urlparse(stem_url).path).suffix.lower() or ".ogg"
+        target = stems_dir / f"{_safe_stem_id(stem_id)}{ext}"
+        target.write_bytes(data)
+        if target.stat().st_size > 0:
+            written.append((stem_id, f"stems/{target.name}"))
+    return written
+
+
+def _maybe_write_vocal_pitch(
+    package_dir: Path,
+    lyrics: list[dict[str, Any]],
+    stem_entries: list[dict[str, Any]],
+    *,
+    demucs_url: str | None,
+    demucs_api_key: str | None,
+    warnings: list[ConversionWarning],
+) -> str | None:
+    if not lyrics:
+        return None
+    vocals = next((stem for stem in stem_entries if str(stem.get("id")) == "vocals"), None)
+    if not vocals:
+        return None
+    vocals_path = package_dir / str(vocals.get("file") or "")
+    if not vocals_path.is_file() or vocals_path.stat().st_size == 0:
+        return None
+    resolved_url = _resolve_demucs_url(demucs_url)
+    if not resolved_url:
+        return None
+    try:
+        notes = _run_pitch_server(
+            vocals_path,
+            lyrics,
+            server_url=resolved_url,
+            api_key=demucs_api_key,
+        )
+    except Exception as exc:  # noqa: BLE001
+        warnings.append(ConversionWarning(f"Karaoke pitch generation skipped: {exc}"))
+        return None
+    if not notes:
+        warnings.append(ConversionWarning("Karaoke pitch generation returned no pitched syllables."))
+        return None
+    path = "vocal_pitch.json"
+    _write_json(package_dir / path, {"version": 1, "notes": notes})
+    return path
+
+
+def _run_pitch_server(
+    vocals_path: Path,
+    lyrics: list[dict[str, Any]],
+    *,
+    server_url: str,
+    api_key: str | None,
+) -> list[dict[str, Any]]:
+    headers = {}
+    api_key = api_key or _feedback_demucs_api_key()
+    if api_key:
+        headers["X-API-Key"] = api_key
+        headers["Authorization"] = f"Bearer {api_key}"
+    fields = {"lyrics": json.dumps(lyrics, ensure_ascii=False)}
+    result = _post_multipart_json(
+        f"{server_url}/pitch",
+        file_path=vocals_path,
+        file_field="file",
+        fields=fields,
+        headers=headers,
+        timeout=300,
+    )
+    raw_notes = result.get("notes")
+    if not isinstance(raw_notes, list):
+        raise RuntimeError("pitch endpoint did not return a notes list")
+    notes: list[dict[str, Any]] = []
+    for note in raw_notes:
+        if not isinstance(note, dict):
+            continue
+        try:
+            t = float(note["t"])
+            d = float(note["d"])
+            midi = int(note["midi"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if _finite_number(t) and _finite_number(d):
+            notes.append({"t": round(t, 3), "d": round(d, 3), "midi": midi})
+    return notes
+
+
+def _demucs_post_file(
+    server_url: str,
+    source_audio: Path,
+    requested_stems: list[str],
+    headers: dict[str, str],
+) -> dict[str, Any]:
+    endpoint = f"{server_url}/separate?stems={urllib.parse.quote(','.join(requested_stems))}"
+    return _post_multipart_json(
+        endpoint,
+        file_path=source_audio,
+        file_field="file",
+        fields={},
+        headers=headers,
+        timeout=900,
+    )
+
+
+def _post_multipart_json(
+    endpoint: str,
+    *,
+    file_path: Path,
+    file_field: str,
+    fields: dict[str, str],
+    headers: dict[str, str],
+    timeout: int,
+) -> dict[str, Any]:
+    boundary = uuid.uuid4().hex
+    mime = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
+    chunks: list[bytes] = []
+    for name, value in fields.items():
+        chunks.append(
+            (
+                f"--{boundary}\r\n"
+                f"Content-Disposition: form-data; name=\"{name}\"\r\n\r\n"
+                f"{value}\r\n"
+            ).encode("utf-8")
+        )
+    chunks.append(
+        (
+            f"--{boundary}\r\n"
+            f"Content-Disposition: form-data; name=\"{file_field}\"; filename=\"{file_path.name}\"\r\n"
+            f"Content-Type: {mime}\r\n\r\n"
+        ).encode("utf-8")
+    )
+    chunks.append(file_path.read_bytes())
+    chunks.append(f"\r\n--{boundary}--\r\n".encode("utf-8"))
+    req = urllib.request.Request(
+        endpoint,
+        data=b"".join(chunks),
+        headers={**headers, "Content-Type": f"multipart/form-data; boundary={boundary}"},
+        method="POST",
+    )
+    return _read_json_response(req, timeout=timeout)
+
+
+def _poll_demucs_job(server_url: str, job_id: str, headers: dict[str, str]) -> dict[str, Any]:
+    if not job_id:
+        raise RuntimeError("server returned processing without a job_id")
+    deadline = time.time() + 900
+    while time.time() < deadline:
+        time.sleep(5)
+        req = urllib.request.Request(f"{server_url}/jobs/{urllib.parse.quote(job_id)}", headers=headers)
+        result = _read_json_response(req, timeout=30)
+        if result.get("status") in {"complete", "failed"}:
+            return result
+    raise RuntimeError("server job timed out")
+
+
+def _download_demucs_file(server_url: str, stem_url: str, headers: dict[str, str]) -> bytes:
+    if stem_url.startswith(("http://", "https://")):
+        url = stem_url
+    else:
+        url = f"{server_url}{stem_url if stem_url.startswith('/') else '/' + stem_url}"
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            return resp.read()
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"stem download failed ({exc.code}): {body[:300]}") from exc
+
+
+def _read_json_response(req: urllib.request.Request, *, timeout: int) -> dict[str, Any]:
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            payload = resp.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"server returned {exc.code}: {body[:300]}") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"cannot connect to server: {exc.reason}") from exc
+    data = json.loads(payload)
+    if not isinstance(data, dict):
+        raise RuntimeError("server returned a non-object response")
+    return data
+
+
+def _codec_for_audio_path(rel_file: str) -> str:
+    return {
+        ".ogg": "vorbis",
+        ".wav": "wav",
+        ".mp3": "mp3",
+        ".flac": "flac",
+        ".opus": "opus",
+    }.get(Path(rel_file).suffix.lower(), Path(rel_file).suffix.lower().lstrip("."))
+
+
+def _stem_sort_key(stem_id: str) -> tuple[int, str]:
+    order = {"full": 0, "guitar": 1, "bass": 2, "drums": 3, "vocals": 4, "piano": 5, "other": 6}
+    return (order.get(stem_id, 99), stem_id)
+
+
+def _safe_stem_id(stem_id: str) -> str:
+    return re.sub(r"[^a-z0-9_-]+", "_", stem_id.lower()).strip("_") or "stem"
 
 
 def _select_primary_audio(audio: list[tuple[str, bytes]]) -> tuple[str, bytes]:

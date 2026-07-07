@@ -11,7 +11,8 @@ files can be checked before export.
 
 ## Download
 
-Download `FeedForge 0.1.2.exe` from the latest GitHub release.
+Download the installer for normal use. The portable EXE is still available, but
+it starts slower because Windows has to unpack it before launch.
 
 ## Community
 
@@ -26,7 +27,8 @@ https://discord.gg/9cUe6cacQN
 2. Add `.psarc` files by browsing, dragging them in, or choosing a folder.
 3. Choose an output folder.
 4. Select the number of conversion workers.
-5. Click `Convert queue`.
+5. Optional: enable tone export, stem separation, or B-standard remapping.
+6. Click `Convert queue`.
 
 The app writes `.feedpak` files that can be added to FeedBack.
 
@@ -35,6 +37,12 @@ The app writes `.feedpak` files that can be added to FeedBack.
 - Use fewer workers if the PC becomes slow during a large batch.
 - `Stop after current` pauses the queue after active conversions finish.
 - Existing output files are skipped unless `Overwrite` is enabled.
+- Stem separation can use the in-app `Install/start local stem server` button,
+  FeedBack's Demucs server setting, or a custom Demucs server URL.
+- The local stem server install folder stores its Python environment, cache, and
+  downloaded Demucs models. Choose a folder on a drive with enough free space.
+- Already downloaded Demucs models are detected in the selected install folder
+  and reused on later starts.
 - Very large libraries are supported through folder import and a limited queue view.
 - If a conversion fails, send `%APPDATA%\FeedForge\logs\feedforge-debug.log`
   with the bug report.

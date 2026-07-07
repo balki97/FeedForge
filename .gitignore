@@ -1,6 +1,7 @@
 # Local environments
 .venv/
 venv/
+.demucs-venv/
 .env
 .env.*
 

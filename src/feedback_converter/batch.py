@@ -44,6 +44,10 @@ def convert_many(
     keep_workdir: bool = False,
     include_tones: bool = True,
     b_standard_to_7_string: bool = False,
+    separate_stems: bool = False,
+    demucs_url: str | None = None,
+    demucs_api_key: str | None = None,
+    demucs_stems: list[str] | None = None,
 ) -> BatchResult:
     """Convert multiple PSARC files, returning per-file success/error state."""
     items: list[BatchItem] = []
@@ -60,6 +64,10 @@ def convert_many(
                 keep_workdir=keep_workdir,
                 include_tones=include_tones,
                 b_standard_to_7_string=b_standard_to_7_string,
+                separate_stems=separate_stems,
+                demucs_url=demucs_url,
+                demucs_api_key=demucs_api_key,
+                demucs_stems=demucs_stems,
             )
         except Exception as exc:  # noqa: BLE001
             _cleanup_failed_workdir(input_path, output, archive=archive, keep_workdir=keep_workdir)

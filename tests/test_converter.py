@@ -56,6 +56,7 @@ class FakePSARC:
                     "AlbumName": "Test Album",
                     "SongYear": 2026,
                     "SongLength": 12.5,
+                    "PackageAuthor": "Chart Maker",
                     "ArrangementName": "Lead",
                     "SongXml": "songs/arr/test_lead.xml",
                     "Tone_Base": "Clean",
@@ -218,8 +219,23 @@ def test_convert_psarc_writes_valid_feedpak_directory(tmp_path, monkeypatch):
     assert manifest["artist"] == "Test Artist"
     assert manifest["stems"][0]["codec"] == "wem"
     assert manifest["lyrics"] == "lyrics.json"
+    assert manifest["lyrics_source"] == "authored"
+    assert manifest["language"] == "und"
+    assert manifest["lyric_tracks"] == [
+        {
+            "id": "original",
+            "file": "lyrics.json",
+            "language": "und",
+            "kind": "original",
+            "lyrics_source": "authored",
+            "name": "Original",
+        }
+    ]
+    assert manifest["authors"] == [{"name": "Chart Maker", "role": "charter"}]
     assert manifest["rigs"] == "rigs.json"
     assert (output / "arrangements" / "lead.json").is_file()
+    assert (output / "arrangements" / "vocals.json").is_file()
+    assert manifest["arrangements"][-1]["type"] == "vocals"
     rigs = json.loads((output / "rigs.json").read_text(encoding="utf-8"))
     assert [rig["name"] for rig in rigs["rigs"]] == ["Clean", "Drive"]
     assert rigs["rigs"][0]["blocks"][0]["role"] == "amp"
@@ -264,6 +280,96 @@ def test_convert_psarc_writes_valid_feedpak_directory(tmp_path, monkeypatch):
     ]
     assert len(arrangement["chords"]) == 1
 
+    validator = Path("references/feedpak-spec/tools/validate.py")
+    if validator.is_file():
+        validation = subprocess.run(
+            [
+                sys.executable,
+                str(validator),
+                str(result.output_path),
+            ],
+            cwd=Path(__file__).resolve().parents[1],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        assert validation.returncode == 0, validation.stdout
+
+
+def test_convert_psarc_can_package_demucs_stems(tmp_path, monkeypatch):
+    class FakeSong:
+        @staticmethod
+        def parse(_data):
+            return fake_song()
+
+    def fake_separator(source_audio, stems_dir, *, server_url, api_key, requested_stems):
+        assert source_audio.name == "full.ogg"
+        assert server_url == "http://demucs.local"
+        assert api_key == "secret"
+        assert requested_stems == ["guitar", "drums"]
+        (stems_dir / "guitar.ogg").write_bytes(b"OggSguitar")
+        (stems_dir / "drums.ogg").write_bytes(b"OggSdrums")
+        return [("guitar", "stems/guitar.ogg"), ("drums", "stems/drums.ogg")]
+
+    monkeypatch.setattr(converter, "PSARC", FakePSARC)
+    monkeypatch.setattr(converter, "Song", FakeSong)
+    monkeypatch.setattr(converter, "_convert_wem_bytes_to_ogg", lambda _data, output: output.write_bytes(b"OggSfull") or True)
+    monkeypatch.setattr(converter, "_run_demucs_server", fake_separator)
+
+    psarc = tmp_path / "input.psarc"
+    psarc.write_bytes(b"fake")
+    output = tmp_path / "converted.feedpak"
+
+    result = converter.convert_psarc(
+        psarc,
+        output,
+        archive=False,
+        separate_stems=True,
+        demucs_url="http://demucs.local",
+        demucs_api_key="secret",
+        demucs_stems=["guitar", "drums"],
+    )
+
+    manifest = result.manifest
+    assert manifest["stem_separation"] == {"engine": "demucs", "model": "server", "version": "1.0.0"}
+    assert [stem["id"] for stem in manifest["stems"]] == ["full", "guitar", "drums"]
+    assert manifest["stems"][0]["default"] is False
+    assert all(stem["codec"] == "vorbis" for stem in manifest["stems"])
+    assert (output / "stems" / "full.ogg").is_file()
+    assert (output / "stems" / "guitar.ogg").is_file()
+    assert (output / "stems" / "drums.ogg").is_file()
+
+
+def test_demucs_url_falls_back_to_feedback_config(tmp_path, monkeypatch):
+    config_dir = tmp_path / "feedback"
+    config_dir.mkdir()
+    (config_dir / "studio_demucs.json").write_text(
+        json.dumps({"url": "http://feedback-demucs.local/"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CONFIG_DIR", str(config_dir))
+    monkeypatch.delenv("FEEDFORGE_DEMUCS_URL", raising=False)
+    monkeypatch.delenv("DEMUCS_SERVER_URL", raising=False)
+
+    assert converter._resolve_demucs_url(None) == "http://feedback-demucs.local"
+
+
+def test_demucs_url_falls_back_to_windows_feedback_desktop_config(tmp_path, monkeypatch):
+    appdata = tmp_path / "AppData" / "Roaming"
+    config_dir = appdata / "feedback-desktop" / "slopsmith-config"
+    config_dir.mkdir(parents=True)
+    (config_dir / "config.json").write_text(
+        json.dumps({"demucs_server_url": "http://windows-demucs.local/"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("APPDATA", str(appdata))
+    monkeypatch.delenv("CONFIG_DIR", raising=False)
+    monkeypatch.delenv("FEEDFORGE_DEMUCS_URL", raising=False)
+    monkeypatch.delenv("DEMUCS_SERVER_URL", raising=False)
+
+    assert converter._resolve_demucs_url(None) == "http://windows-demucs.local"
+
 
 def test_single_cli_output_folder_resolves_inside_existing_folder(tmp_path):
     input_path = tmp_path / "Song.psarc"
@@ -285,24 +391,6 @@ def test_single_cli_explicit_output_file_is_preserved(tmp_path):
     output_file = tmp_path / "custom.feedpak"
 
     assert _single_output_path(input_path, output_file) == output_file
-
-    validator = Path("references/feedpak-spec/tools/validate.py")
-    if not validator.is_file():
-        return
-
-    validation = subprocess.run(
-        [
-            sys.executable,
-            str(validator),
-            str(result.output_path),
-        ],
-        cwd=Path(__file__).resolve().parents[1],
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        check=False,
-    )
-    assert validation.returncode == 0, validation.stdout
 
 
 def test_convert_psarc_can_remap_b_standard_to_seven_string(tmp_path, monkeypatch):
