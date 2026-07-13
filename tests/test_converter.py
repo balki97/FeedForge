@@ -599,7 +599,7 @@ def test_stem_separation_warns_when_model_omits_requested_stems(tmp_path, monkey
     assert any("guitar" in warning.message for warning in warnings)
 
 
-def test_stem_separation_can_remove_full_mix_after_success(tmp_path, monkeypatch):
+def test_stem_separation_keeps_full_mix_after_success(tmp_path, monkeypatch):
     stems_dir = tmp_path / "stems"
     stems_dir.mkdir()
     full = stems_dir / "full.ogg"
@@ -622,12 +622,12 @@ def test_stem_separation_can_remove_full_mix_after_success(tmp_path, monkeypatch
         demucs_api_key=None,
         demucs_model="htdemucs_6s",
         demucs_stems=["guitar"],
-        keep_full_stem=False,
     )
 
     assert separation == {"engine": "demucs", "model": "htdemucs_6s", "version": "1.0.0"}
-    assert [stem["id"] for stem in stems] == ["guitar"]
-    assert not full.exists()
+    assert [stem["id"] for stem in stems] == ["full", "guitar"]
+    assert stems[0]["default"] is False
+    assert full.exists()
     assert warnings == []
 
 

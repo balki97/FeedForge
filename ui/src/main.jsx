@@ -60,7 +60,6 @@ function App() {
   const [demucsDevice, setDemucsDevice] = useState(() => initialSettingsRef.current.demucsDevice || "auto");
   const [demucsStemJobs, setDemucsStemJobs] = useState(() => Number(initialSettingsRef.current.demucsStemJobs) || 1);
   const [demucsStems, setDemucsStems] = useState(() => normalizeStemSelection(initialSettingsRef.current.demucsStems));
-  const [keepFullStem, setKeepFullStem] = useState(() => initialSettingsRef.current.keepFullStem !== false);
   const [demucsDevices, setDemucsDevices] = useState(defaultDemucsDevices());
   const [demucsModels, setDemucsModels] = useState([]);
   const [demucsModelRoot, setDemucsModelRoot] = useState("");
@@ -93,8 +92,8 @@ function App() {
   }, [items]);
 
   useEffect(() => {
-    writeSettings({ outputDir, outputLayout, outputNameFormat, outputNameTemplate, lastSourcePath, bStandardTo7String, separateStems, demucsUrl, demucsInstallDir, pythonPath, demucsModel, demucsDevice, demucsStemJobs, demucsStems, keepFullStem });
-  }, [outputDir, outputLayout, outputNameFormat, outputNameTemplate, lastSourcePath, bStandardTo7String, separateStems, demucsUrl, demucsInstallDir, pythonPath, demucsModel, demucsDevice, demucsStemJobs, demucsStems, keepFullStem]);
+    writeSettings({ outputDir, outputLayout, outputNameFormat, outputNameTemplate, lastSourcePath, bStandardTo7String, separateStems, demucsUrl, demucsInstallDir, pythonPath, demucsModel, demucsDevice, demucsStemJobs, demucsStems });
+  }, [outputDir, outputLayout, outputNameFormat, outputNameTemplate, lastSourcePath, bStandardTo7String, separateStems, demucsUrl, demucsInstallDir, pythonPath, demucsModel, demucsDevice, demucsStemJobs, demucsStems]);
 
   useEffect(() => {
     let cancelled = false;
@@ -483,8 +482,7 @@ function App() {
         demucsUrl: demucsUrl.trim(),
         demucsApiKey: demucsApiKey.trim(),
         demucsModel,
-        demucsStems,
-        keepFullStem
+        demucsStems
       });
       if (!result.ok) {
         updateItem(item.id, { status: "failed", error: result.error });
@@ -734,7 +732,7 @@ function App() {
                     <div className="stem-picker-head">
                       <div>
                         <strong>Stems to generate</strong>
-                        <span>{stemSelectionSummary(demucsStems, keepFullStem)}</span>
+                        <span>{stemSelectionSummary(demucsStems)}</span>
                       </div>
                       <div>
                         <button className="ghost" onClick={() => setDemucsStems(DEMUCS_STEM_OPTIONS.map((stem) => stem.id))} disabled={isConverting}>All</button>
@@ -754,18 +752,6 @@ function App() {
                         </label>
                       ))}
                     </div>
-                    <label className="stem-keep-full">
-                      <input
-                        type="checkbox"
-                        checked={keepFullStem}
-                        onChange={(event) => setKeepFullStem(event.target.checked)}
-                        disabled={isConverting}
-                      />
-                      <span>
-                        <strong>Keep full mix</strong>
-                        <em>Recommended. Keeps full.ogg for fallback playback and metadata detection.</em>
-                      </span>
-                    </label>
                   </div>
                   <label>
                     Processing device
@@ -1043,14 +1029,13 @@ function toggleStemSelection(current, stemId) {
   return normalizeStemSelection([...selected, stemId]);
 }
 
-function stemSelectionSummary(stems, keepFullStem = true) {
+function stemSelectionSummary(stems) {
   const selected = normalizeStemSelection(stems);
-  const fullMix = keepFullStem ? " Full mix will be kept." : " Full mix will be removed after successful splitting.";
-  if (selected.length === DEMUCS_STEM_OPTIONS.length) return `All supported stems will be requested.${fullMix}`;
+  if (selected.length === DEMUCS_STEM_OPTIONS.length) return "All supported stems will be requested. Full mix is always included.";
   const labels = selected
     .map((id) => DEMUCS_STEM_OPTIONS.find((stem) => stem.id === id)?.label || id)
     .join(", ");
-  return `${labels} will be requested.${fullMix}`;
+  return `${labels} will be requested. Full mix is always included.`;
 }
 
 function StemSetupChecklist({ pythonInfo, setup, selectedModel, status, matchesSelection }) {

@@ -827,43 +827,6 @@ button:disabled {
   box-shadow: 0 0 0 1px rgba(27, 169, 232, 0.16) inset;
 }
 
-.stem-keep-full {
-  min-height: 46px;
-  display: flex !important;
-  align-items: center;
-  gap: 10px !important;
-  padding: 10px 12px;
-  border: 1px solid rgba(98, 210, 143, 0.24);
-  border-radius: 10px;
-  background: rgba(98, 210, 143, 0.06);
-  color: var(--text) !important;
-  text-transform: none !important;
-}
-
-.stem-keep-full input {
-  width: 15px;
-  height: 15px;
-  margin: 0;
-  accent-color: #62d28f;
-}
-
-.stem-keep-full span {
-  display: grid;
-  gap: 3px;
-}
-
-.stem-keep-full strong {
-  color: #e6f6ff;
-  font-size: 12px;
-}
-
-.stem-keep-full em {
-  color: var(--muted);
-  font-size: 12px;
-  font-style: normal;
-  font-weight: 650;
-}
-
 .demucs-model-note strong,
 .demucs-device-note strong,
 .stem-summary strong,

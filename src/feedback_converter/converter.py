@@ -87,7 +87,6 @@ def convert_psarc_songs(
     demucs_api_key: str | None = None,
     demucs_model: str | None = None,
     demucs_stems: list[str] | None = None,
-    keep_full_stem: bool = True,
 ) -> list[ConversionResult]:
     """Convert a PSARC, splitting multi-song containers into one FeedPak per song."""
     input_psarc = Path(input_psarc)
@@ -112,7 +111,6 @@ def convert_psarc_songs(
                 demucs_api_key=demucs_api_key,
                 demucs_model=demucs_model,
                 demucs_stems=demucs_stems,
-                keep_full_stem=keep_full_stem,
                 _content=content,
             )
         ]
@@ -140,7 +138,6 @@ def convert_psarc_songs(
                 demucs_api_key=demucs_api_key,
                 demucs_model=demucs_model,
                 demucs_stems=demucs_stems,
-                keep_full_stem=keep_full_stem,
                 _content=song_content,
             )
         except Exception:
@@ -172,7 +169,6 @@ def convert_psarc(
     demucs_api_key: str | None = None,
     demucs_model: str | None = None,
     demucs_stems: list[str] | None = None,
-    keep_full_stem: bool = True,
     _content: dict[str, bytes] | None = None,
 ) -> ConversionResult:
     input_psarc = Path(input_psarc)
@@ -315,7 +311,6 @@ def convert_psarc(
         demucs_api_key=demucs_api_key,
         demucs_model=demucs_model,
         demucs_stems=demucs_stems,
-        keep_full_stem=keep_full_stem,
     )
     cover_path = _copy_cover(content, package_dir)
 
@@ -1713,7 +1708,6 @@ def _copy_audio(
     demucs_api_key: str | None = None,
     demucs_model: str | None = None,
     demucs_stems: list[str] | None = None,
-    keep_full_stem: bool = True,
 ) -> tuple[list[dict[str, Any]], dict[str, str] | None]:
     audio = [
         (path, data)
@@ -1743,7 +1737,6 @@ def _copy_audio(
                 demucs_api_key=demucs_api_key,
                 demucs_model=demucs_model,
                 demucs_stems=demucs_stems,
-                keep_full_stem=keep_full_stem,
             )
         warnings.append(
             ConversionWarning(
@@ -1771,7 +1764,6 @@ def _copy_audio(
         demucs_api_key=demucs_api_key,
         demucs_model=demucs_model,
         demucs_stems=demucs_stems,
-        keep_full_stem=keep_full_stem,
     )
 
 
@@ -1785,7 +1777,6 @@ def _maybe_separate_stems(
     demucs_api_key: str | None,
     demucs_model: str | None,
     demucs_stems: list[str] | None,
-    keep_full_stem: bool = True,
 ) -> tuple[list[dict[str, Any]], dict[str, str] | None]:
     if not separate_stems:
         return ([full_entry], None)
@@ -1829,19 +1820,9 @@ def _maybe_separate_stems(
             )
         )
 
-    stem_entries: list[dict[str, Any]] = []
-    if keep_full_stem:
-        full_mix = dict(full_entry)
-        full_mix["default"] = False
-        stem_entries.append(full_mix)
-    else:
-        try:
-            source.unlink(missing_ok=True)
-        except OSError:
-            warnings.append(ConversionWarning("Could not remove full mix after stem separation; kept full mix."))
-            full_mix = dict(full_entry)
-            full_mix["default"] = False
-            stem_entries.append(full_mix)
+    full_mix = dict(full_entry)
+    full_mix["default"] = False
+    stem_entries: list[dict[str, Any]] = [full_mix]
     for stem_id, rel_file in stems:
         stem_entries.append(
             {
