@@ -281,17 +281,23 @@ ipcMain.handle("converter:convert", async (_event, payload) => {
     overwrite: Boolean(payload.overwrite),
     bStandardTo7String: Boolean(payload.bStandardTo7String),
     separateStems: Boolean(payload.separateStems),
+    keepFullStem: payload.keepFullStem !== false,
     hasDemucsUrl: Boolean(payload.demucsUrl),
-    demucsModel: payload.demucsModel || ""
+    demucsModel: payload.demucsModel || "",
+    demucsStems: Array.isArray(payload.demucsStems) ? payload.demucsStems : []
   });
   const args = [payload.inputPath];
   if (payload.outputPath) args.push("-o", payload.outputPath);
   if (payload.overwrite) args.push("--overwrite");
   if (payload.bStandardTo7String) args.push("--b-standard-to-7-string");
   if (payload.separateStems) args.push("--separate-stems");
+  if (payload.keepFullStem === false) args.push("--no-full-stem");
   if (payload.demucsUrl) args.push("--demucs-url", payload.demucsUrl);
   if (payload.demucsApiKey) args.push("--demucs-api-key", payload.demucsApiKey);
   if (payload.demucsModel) args.push("--demucs-model", payload.demucsModel);
+  if (Array.isArray(payload.demucsStems) && payload.demucsStems.length) {
+    args.push("--demucs-stems", payload.demucsStems.join(","));
+  }
   const result = await runConverter(args);
   const outputPaths = [...result.stdout.matchAll(/^wrote\s+(.+)$/gim)].map((match) => match[1].trim()).filter(Boolean);
   const warnings = [...`${result.stdout}\n${result.stderr}`.matchAll(/^warning:\s+(.+)$/gim)].map((match) => match[1].trim()).filter(Boolean);

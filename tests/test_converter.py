@@ -341,6 +341,49 @@ def test_convert_psarc_writes_valid_feedpak_directory(tmp_path, monkeypatch):
         assert validation.returncode == 0, validation.stdout
 
 
+def test_extract_metadata_reads_toolkit_package_author():
+    metadata = converter._extract_metadata(
+        {
+            "manifests/songs_dlc/test/test.json": json.dumps(
+                {"SongName": "Song", "ArtistName": "Artist"}
+            ).encode(),
+            "toolkit.version": b"Toolkit version: 2.9.2.1\nPackage Author: nicolobos77\nPackage Version: 2\n",
+        }
+    )
+
+    assert metadata["authors"] == [{"name": "nicolobos77", "role": "charter"}]
+
+
+def test_extract_metadata_ignores_generic_toolkit_package_author():
+    metadata = converter._extract_metadata(
+        {
+            "manifests/songs_dlc/test/test.json": json.dumps(
+                {"SongName": "Song", "ArtistName": "Artist", "PackageAuthor": "Custom Song Creator"}
+            ).encode(),
+            "toolkit.version": (
+                b"Toolkit version: 2.9.2.1\n"
+                b"Package Author: Custom Song Creator\n"
+                b"Package Comment: (Remastered by CDLC Creator) (DDC by CDLC Creator)\n"
+            ),
+        }
+    )
+
+    assert metadata["authors"] == []
+
+
+def test_extract_metadata_reads_explicit_xml_credit_comments():
+    metadata = converter._extract_metadata(
+        {
+            "manifests/songs_dlc/test/test.json": json.dumps(
+                {"SongName": "Song", "ArtistName": "Artist"}
+            ).encode(),
+            "songs/arr/test_lead.xml": b"<!-- Charted by RealCharter -->\n<song />\n",
+        }
+    )
+
+    assert metadata["authors"] == [{"name": "RealCharter", "role": "charter"}]
+
+
 def test_rs1_multisong_grouping_keeps_song_specific_audio():
     content = {
         "songs/bin/generic/first_lead.sng": b"first-sng",
@@ -475,11 +518,17 @@ def test_run_demucs_server_cleans_remote_job_after_download(tmp_path, monkeypatc
     def fake_cleanup(server_url, job_id, headers):
         calls.append((server_url, job_id, headers))
 
+    def fake_wav_to_ogg(input_path, output_path):
+        assert input_path.name == "guitar.wav"
+        output_path.write_bytes(b"OggSencoded")
+        return True
+
     source = tmp_path / "full.ogg"
     source.write_bytes(b"OggS")
     monkeypatch.setattr(converter, "_demucs_post_file", fake_post)
     monkeypatch.setattr(converter, "_download_demucs_file", fake_download)
     monkeypatch.setattr(converter, "_cleanup_demucs_job", fake_cleanup)
+    monkeypatch.setattr(converter, "_convert_wav_file_to_ogg", fake_wav_to_ogg)
 
     written = converter._run_demucs_server(
         source,
@@ -490,8 +539,35 @@ def test_run_demucs_server_cleans_remote_job_after_download(tmp_path, monkeypatc
         requested_stems=["guitar"],
     )
 
-    assert written == [("guitar", "stems/guitar.wav")]
+    assert written == [("guitar", "stems/guitar.ogg")]
+    assert not (tmp_path / "stems" / "guitar.wav").exists()
+    assert (tmp_path / "stems" / "guitar.ogg").read_bytes() == b"OggSencoded"
     assert calls == [("http://demucs.local", "job123", {"X-API-Key": "secret"})]
+
+
+def test_run_demucs_server_keeps_wav_if_encoding_unavailable(tmp_path, monkeypatch):
+    def fake_post(_server_url, _source_audio, _requested_stems, _headers, *, model=""):
+        return {"status": "complete", "job_id": "job123", "stems": {"bass": "/files/job123/bass.wav"}}
+
+    monkeypatch.setattr(converter, "_demucs_post_file", fake_post)
+    monkeypatch.setattr(converter, "_download_demucs_file", lambda *_args: b"RIFFstem")
+    monkeypatch.setattr(converter, "_cleanup_demucs_job", lambda *_args: None)
+    monkeypatch.setattr(converter, "_convert_wav_file_to_ogg", lambda *_args: False)
+
+    source = tmp_path / "full.ogg"
+    source.write_bytes(b"OggS")
+
+    written = converter._run_demucs_server(
+        source,
+        tmp_path / "stems",
+        server_url="http://demucs.local",
+        api_key=None,
+        model="htdemucs_6s",
+        requested_stems=["bass"],
+    )
+
+    assert written == [("bass", "stems/bass.wav")]
+    assert (tmp_path / "stems" / "bass.wav").read_bytes() == b"RIFFstem"
 
 
 def test_stem_separation_warns_when_model_omits_requested_stems(tmp_path, monkeypatch):
@@ -521,6 +597,38 @@ def test_stem_separation_warns_when_model_omits_requested_stems(tmp_path, monkey
     assert separation == {"engine": "demucs", "model": "htdemucs_ft", "version": "1.0.0"}
     assert [stem["id"] for stem in stems] == ["full", "bass"]
     assert any("guitar" in warning.message for warning in warnings)
+
+
+def test_stem_separation_can_remove_full_mix_after_success(tmp_path, monkeypatch):
+    stems_dir = tmp_path / "stems"
+    stems_dir.mkdir()
+    full = stems_dir / "full.ogg"
+    full.write_bytes(b"OggSfull")
+
+    def fake_separator(source_audio, stems_dir, *, server_url, api_key, model, requested_stems):
+        assert source_audio == full
+        (stems_dir / "guitar.ogg").write_bytes(b"OggSguitar")
+        return [("guitar", "stems/guitar.ogg")]
+
+    warnings = []
+    monkeypatch.setattr(converter, "_run_demucs_server", fake_separator)
+
+    stems, separation = converter._maybe_separate_stems(
+        tmp_path,
+        {"id": "full", "file": "stems/full.ogg", "codec": "vorbis", "default": True},
+        warnings,
+        separate_stems=True,
+        demucs_url="http://demucs.local",
+        demucs_api_key=None,
+        demucs_model="htdemucs_6s",
+        demucs_stems=["guitar"],
+        keep_full_stem=False,
+    )
+
+    assert separation == {"engine": "demucs", "model": "htdemucs_6s", "version": "1.0.0"}
+    assert [stem["id"] for stem in stems] == ["guitar"]
+    assert not full.exists()
+    assert warnings == []
 
 
 def test_safe_output_stem_transliterates_multi_song_names():

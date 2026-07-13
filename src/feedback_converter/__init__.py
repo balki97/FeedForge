@@ -1,6 +1,6 @@
 """PSARC CDLC to FeedPak converter."""
 
-__version__ = "0.1.10"
+__version__ = "0.1.11"
 
 from .batch import BatchItem, BatchResult, convert_many
 from .converter import ConversionResult, ConversionWarning, convert_psarc, convert_psarc_songs

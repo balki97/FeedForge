@@ -56,6 +56,7 @@ def convert_many(
     demucs_api_key: str | None = None,
     demucs_model: str | None = None,
     demucs_stems: list[str] | None = None,
+    keep_full_stem: bool = True,
 ) -> BatchResult:
     """Convert multiple PSARC files, returning per-file success/error state."""
     items: list[BatchItem] = []
@@ -83,6 +84,7 @@ def convert_many(
                 demucs_api_key=demucs_api_key,
                 demucs_model=demucs_model,
                 demucs_stems=demucs_stems,
+                keep_full_stem=keep_full_stem,
             )
         except Exception as exc:  # noqa: BLE001
             _cleanup_failed_workdir(input_path, output, archive=archive, keep_workdir=keep_workdir)

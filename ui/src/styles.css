@@ -628,6 +628,7 @@ button:disabled {
 .stem-settings > label:first-child,
 .stem-summary,
 .stem-prereq,
+.stem-picker,
 .demucs-model-note,
 .demucs-device-note {
   grid-column: 1 / -1;
@@ -657,7 +658,8 @@ button:disabled {
 .demucs-model-note,
 .demucs-device-note,
 .stem-summary,
-.stem-prereq {
+.stem-prereq,
+.stem-picker {
   min-height: 38px;
   display: grid;
   align-content: center;
@@ -755,10 +757,118 @@ button:disabled {
   gap: 4px;
 }
 
+.stem-picker {
+  gap: 10px;
+}
+
+.stem-picker-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.stem-picker-head > div:first-child {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.stem-picker-head > div:last-child {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.stem-picker-head button {
+  min-height: 30px;
+  padding: 0 10px;
+}
+
+.stem-choice-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(92px, 1fr));
+  gap: 8px;
+}
+
+.stem-choice {
+  min-height: 38px;
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  gap: 8px !important;
+  padding: 8px 10px;
+  border: 1px solid #314865;
+  border-radius: 10px;
+  background: rgba(13, 23, 37, 0.74);
+  color: var(--muted) !important;
+  cursor: pointer;
+  text-transform: none !important;
+}
+
+.stem-choice input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.stem-choice span {
+  color: inherit;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.stem-choice.active {
+  border-color: rgba(27, 169, 232, 0.72);
+  background: rgba(27, 169, 232, 0.14);
+  color: #e6f6ff !important;
+  box-shadow: 0 0 0 1px rgba(27, 169, 232, 0.16) inset;
+}
+
+.stem-keep-full {
+  min-height: 46px;
+  display: flex !important;
+  align-items: center;
+  gap: 10px !important;
+  padding: 10px 12px;
+  border: 1px solid rgba(98, 210, 143, 0.24);
+  border-radius: 10px;
+  background: rgba(98, 210, 143, 0.06);
+  color: var(--text) !important;
+  text-transform: none !important;
+}
+
+.stem-keep-full input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: #62d28f;
+}
+
+.stem-keep-full span {
+  display: grid;
+  gap: 3px;
+}
+
+.stem-keep-full strong {
+  color: #e6f6ff;
+  font-size: 12px;
+}
+
+.stem-keep-full em {
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 650;
+}
+
 .demucs-model-note strong,
 .demucs-device-note strong,
 .stem-summary strong,
-.stem-prereq strong {
+.stem-prereq strong,
+.stem-picker strong {
   color: #f5c76a;
   font-size: 12px;
   overflow-wrap: anywhere;
@@ -767,7 +877,8 @@ button:disabled {
 .demucs-model-note span,
 .demucs-device-note span,
 .stem-summary span,
-.stem-prereq span {
+.stem-prereq span,
+.stem-picker-head span {
   color: var(--muted);
   font-size: 12px;
   font-weight: 650;
@@ -1807,6 +1918,7 @@ button:disabled {
   .option-grid,
   .stem-settings,
   .setup-checklist,
+  .stem-choice-grid,
   .demucs-install-row,
   .local-stem-server {
     grid-template-columns: 1fr;

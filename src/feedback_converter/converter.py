@@ -45,6 +45,19 @@ B_STANDARD_6_TUNING = [-5, -5, -5, -5, -5, -5]
 SEVEN_STRING_STANDARD_TUNING = [0, 0, 0, 0, 0, 0, 0]
 STANDARD_6_PITCHES = [40, 45, 50, 55, 59, 64]
 STANDARD_7_PITCHES = [35, 40, 45, 50, 55, 59, 64]
+GENERIC_AUTHOR_NAMES = {
+    "author",
+    "cdlc author",
+    "cdlc creator",
+    "custom dlc author",
+    "custom dlc creator",
+    "custom song author",
+    "custom song creator",
+    "creator",
+    "unknown",
+    "unknown author",
+    "unknown creator",
+}
 
 
 @dataclass
@@ -74,6 +87,7 @@ def convert_psarc_songs(
     demucs_api_key: str | None = None,
     demucs_model: str | None = None,
     demucs_stems: list[str] | None = None,
+    keep_full_stem: bool = True,
 ) -> list[ConversionResult]:
     """Convert a PSARC, splitting multi-song containers into one FeedPak per song."""
     input_psarc = Path(input_psarc)
@@ -98,6 +112,7 @@ def convert_psarc_songs(
                 demucs_api_key=demucs_api_key,
                 demucs_model=demucs_model,
                 demucs_stems=demucs_stems,
+                keep_full_stem=keep_full_stem,
                 _content=content,
             )
         ]
@@ -125,6 +140,7 @@ def convert_psarc_songs(
                 demucs_api_key=demucs_api_key,
                 demucs_model=demucs_model,
                 demucs_stems=demucs_stems,
+                keep_full_stem=keep_full_stem,
                 _content=song_content,
             )
         except Exception:
@@ -156,6 +172,7 @@ def convert_psarc(
     demucs_api_key: str | None = None,
     demucs_model: str | None = None,
     demucs_stems: list[str] | None = None,
+    keep_full_stem: bool = True,
     _content: dict[str, bytes] | None = None,
 ) -> ConversionResult:
     input_psarc = Path(input_psarc)
@@ -298,6 +315,7 @@ def convert_psarc(
         demucs_api_key=demucs_api_key,
         demucs_model=demucs_model,
         demucs_stems=demucs_stems,
+        keep_full_stem=keep_full_stem,
     )
     cover_path = _copy_cover(content, package_dir)
 
@@ -482,24 +500,30 @@ def _is_vocal_sng(path: str, song: Any) -> bool:
 
 def _extract_metadata(content: dict[str, bytes]) -> dict[str, Any]:
     objects: list[Any] = []
+    text_entries: list[tuple[str, str]] = []
     for path, data in content.items():
         low = path.lower()
-        if not (low.endswith(".json") or low.endswith(".hsan")):
-            continue
-        try:
-            text = data.decode("utf-8-sig")
-            objects.append(json.loads(text))
-        except Exception:  # noqa: BLE001
-            continue
+        if low.endswith((".json", ".hsan")):
+            try:
+                text = data.decode("utf-8-sig")
+                objects.append(json.loads(text))
+            except Exception:  # noqa: BLE001
+                continue
+        elif low.endswith((".version", ".txt", ".ini", ".xml")):
+            try:
+                text_entries.append((path, data.decode("utf-8-sig")))
+            except Exception:  # noqa: BLE001
+                continue
 
     flat = list(_walk_dicts(objects))
+    authors = _dedupe_authors([*_metadata_authors(flat), *_metadata_text_authors(text_entries)])
     return {
         "title": _first_key(flat, "SongName", "Title", "Name", "SongTitle"),
         "artist": _first_key(flat, "ArtistName", "Artist", "SongArtist"),
         "album": _first_key(flat, "AlbumName", "Album"),
         "year": _first_key(flat, "SongYear", "Year"),
         "duration": _first_key(flat, "SongLength", "Duration", "SongLengthSeconds"),
-        "authors": _metadata_authors(flat),
+        "authors": authors,
         "arrangement_names": _arrangement_names(flat),
         "arrangement_tones": _arrangement_tones(flat),
     }
@@ -537,7 +561,7 @@ def _metadata_authors(dicts: list[dict[str, Any]]) -> list[dict[str, str]]:
             role = _author_role_from_key(key)
             if role is None:
                 continue
-            name = str(value).strip()
+            name = _clean_author_name(str(value))
             if not name:
                 continue
             identity = (name.lower(), role)
@@ -567,6 +591,69 @@ def _metadata_authors(dicts: list[dict[str, Any]]) -> list[dict[str, str]]:
                         authors.append(author)
 
     return authors
+
+
+def _metadata_text_authors(entries: list[tuple[str, str]]) -> list[dict[str, str]]:
+    authors: list[dict[str, str]] = []
+    for path, text in entries:
+        lower_path = path.lower()
+        for raw_line in text.splitlines():
+            line = re.sub(r"^\s*<!--\s*|\s*-->\s*$", "", raw_line).strip()
+            if not line:
+                continue
+            if lower_path.endswith("toolkit.version"):
+                match = re.match(r"(?i)^package\s+author\s*:\s*(.+?)\s*$", line)
+                if match:
+                    name = _clean_author_name(match.group(1))
+                    if name:
+                        authors.append({"name": name, "role": "charter"})
+                continue
+            match = re.match(
+                r"(?i)^(?:charted|chart|authored|created|made|converted|arranged|transcribed)\s+by\s*[:\-]?\s*(.+?)\s*$",
+                line,
+            ) or re.match(
+                r"(?i)^(?:charter|chart\s+author|author|creator|arranger|transcriber)\s*[:\-]\s*(.+?)\s*$",
+                line,
+            )
+            if not match:
+                continue
+            role = "charter"
+            label = line.split(":", 1)[0].split("-", 1)[0].lower()
+            if "arrang" in label:
+                role = "arranger"
+            elif "transcrib" in label:
+                role = "transcriber"
+            name = _clean_author_name(match.group(1))
+            if name:
+                authors.append({"name": name, "role": role})
+    return _dedupe_authors(authors)
+
+
+def _clean_author_name(value: str) -> str | None:
+    name = str(value or "").strip().strip("\"'")
+    name = re.sub(r"\s+", " ", name)
+    name = re.sub(r"(?i)\s*\((?:remastered|arrangement id|ddc)\s+by\s+[^)]*\)\s*", " ", name).strip()
+    if not name:
+        return None
+    normalized = re.sub(r"[^a-z0-9]+", " ", name.lower()).strip()
+    if normalized in GENERIC_AUTHOR_NAMES:
+        return None
+    return name
+
+
+def _dedupe_authors(authors: list[dict[str, str]]) -> list[dict[str, str]]:
+    deduped: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for author in authors:
+        normalized = _normalize_author_entry(author)
+        if not normalized:
+            continue
+        identity = (normalized["name"].lower(), normalized.get("role", ""))
+        if identity in seen:
+            continue
+        seen.add(identity)
+        deduped.append(normalized)
+    return deduped
 
 
 def _author_role_from_key(key: str) -> str | None:
@@ -603,7 +690,7 @@ def _author_role_from_key(key: str) -> str | None:
 
 def _normalize_author_entry(value: Any) -> dict[str, str] | None:
     if isinstance(value, str):
-        name = value.strip()
+        name = _clean_author_name(value)
         return {"name": name, "role": "charter"} if name else None
     if not isinstance(value, dict):
         return None
@@ -611,7 +698,10 @@ def _normalize_author_entry(value: Any) -> dict[str, str] | None:
     if name in (None, ""):
         return None
     role = _first_key([value], "role", "Role", "type", "Type") or "charter"
-    author = {"name": str(name).strip(), "role": str(role).strip() or "charter"}
+    cleaned_name = _clean_author_name(str(name))
+    if not cleaned_name:
+        return None
+    author = {"name": cleaned_name, "role": str(role).strip() or "charter"}
     email = _first_key([value], "email", "Email")
     url = _first_key([value], "url", "Url", "URL", "website", "Website")
     if email:
@@ -1623,6 +1713,7 @@ def _copy_audio(
     demucs_api_key: str | None = None,
     demucs_model: str | None = None,
     demucs_stems: list[str] | None = None,
+    keep_full_stem: bool = True,
 ) -> tuple[list[dict[str, Any]], dict[str, str] | None]:
     audio = [
         (path, data)
@@ -1652,6 +1743,7 @@ def _copy_audio(
                 demucs_api_key=demucs_api_key,
                 demucs_model=demucs_model,
                 demucs_stems=demucs_stems,
+                keep_full_stem=keep_full_stem,
             )
         warnings.append(
             ConversionWarning(
@@ -1679,6 +1771,7 @@ def _copy_audio(
         demucs_api_key=demucs_api_key,
         demucs_model=demucs_model,
         demucs_stems=demucs_stems,
+        keep_full_stem=keep_full_stem,
     )
 
 
@@ -1692,6 +1785,7 @@ def _maybe_separate_stems(
     demucs_api_key: str | None,
     demucs_model: str | None,
     demucs_stems: list[str] | None,
+    keep_full_stem: bool = True,
 ) -> tuple[list[dict[str, Any]], dict[str, str] | None]:
     if not separate_stems:
         return ([full_entry], None)
@@ -1735,9 +1829,19 @@ def _maybe_separate_stems(
             )
         )
 
-    full_mix = dict(full_entry)
-    full_mix["default"] = False
-    stem_entries = [full_mix]
+    stem_entries: list[dict[str, Any]] = []
+    if keep_full_stem:
+        full_mix = dict(full_entry)
+        full_mix["default"] = False
+        stem_entries.append(full_mix)
+    else:
+        try:
+            source.unlink(missing_ok=True)
+        except OSError:
+            warnings.append(ConversionWarning("Could not remove full mix after stem separation; kept full mix."))
+            full_mix = dict(full_entry)
+            full_mix["default"] = False
+            stem_entries.append(full_mix)
     for stem_id, rel_file in stems:
         stem_entries.append(
             {
@@ -1873,7 +1977,17 @@ def _run_demucs_server(
             data = _download_demucs_file(server_url, stem_url, headers)
             ext = Path(urllib.parse.urlparse(stem_url).path).suffix.lower() or ".ogg"
             target = stems_dir / f"{_safe_stem_id(stem_id)}{ext}"
-            target.write_bytes(data)
+            if ext == ".wav":
+                wav_target = target
+                wav_target.write_bytes(data)
+                ogg_target = stems_dir / f"{_safe_stem_id(stem_id)}.ogg"
+                if _convert_wav_file_to_ogg(wav_target, ogg_target):
+                    wav_target.unlink(missing_ok=True)
+                    target = ogg_target
+                else:
+                    target = wav_target
+            else:
+                target.write_bytes(data)
             if target.stat().st_size > 0:
                 written.append((stem_id, f"stems/{target.name}"))
         return written
@@ -2225,6 +2339,39 @@ def _convert_wem_with_vgmstream(data: bytes, output_path: Path, tools_dir: Path)
     finally:
         temp_wem.unlink(missing_ok=True)
         temp_wav.unlink(missing_ok=True)
+        temp_ogg.unlink(missing_ok=True)
+
+
+def _convert_wav_file_to_ogg(input_path: Path, output_path: Path) -> bool:
+    tools_dir = _tools_dir()
+    oggenc = (tools_dir / "oggenc.exe").resolve()
+    if not oggenc.is_file() or not input_path.is_file():
+        return False
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path = output_path.resolve()
+    temp_ogg = output_path.with_name(output_path.stem + ".encode.ogg").resolve()
+    try:
+        temp_ogg.unlink(missing_ok=True)
+        encode = subprocess.run(
+            [str(oggenc), "-Q", "-q", "5", str(input_path.resolve()), "-o", str(temp_ogg)],
+            cwd=str(tools_dir),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            check=False,
+        )
+        if encode.returncode != 0 or not temp_ogg.is_file() or temp_ogg.stat().st_size < 1024:
+            return False
+        if output_path.exists():
+            output_path.unlink()
+        temp_ogg.replace(output_path)
+        if output_path.read_bytes().startswith(b"OggS"):
+            return True
+        output_path.unlink(missing_ok=True)
+        return False
+    finally:
         temp_ogg.unlink(missing_ok=True)
 
 

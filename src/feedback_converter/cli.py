@@ -116,6 +116,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Comma-separated stems to request from the Demucs server.",
     )
     parser.add_argument(
+        "--no-full-stem",
+        action="store_true",
+        help="Do not keep the converted full mix after successful stem separation.",
+    )
+    parser.add_argument(
         "--inspect-json",
         action="store_true",
         help="Inspect one PSARC and write metadata JSON to stdout.",
@@ -168,6 +173,7 @@ def main(argv: list[str] | None = None) -> int:
                 demucs_api_key=args.demucs_api_key,
                 demucs_model=args.demucs_model,
                 demucs_stems=_split_csv(args.demucs_stems),
+                keep_full_stem=not args.no_full_stem,
             )
         except Exception as exc:  # noqa: BLE001
             _cleanup_failed_workdir(input_paths[0], output_path, archive=not args.directory)
@@ -196,6 +202,7 @@ def main(argv: list[str] | None = None) -> int:
         demucs_api_key=args.demucs_api_key,
         demucs_model=args.demucs_model,
         demucs_stems=_split_csv(args.demucs_stems),
+        keep_full_stem=not args.no_full_stem,
     )
     for item in batch.items:
         if item.succeeded and item.result is not None:
