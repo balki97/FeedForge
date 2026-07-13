@@ -1,8 +1,5 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
-import os
-import json
-import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -15,8 +12,11 @@ from .converter import (
     _authors_from_metadata,
     _extract_metadata,
     _find_sng_entries,
-    _highest_level,
+    _arrangement_event_count,
+    _arrangement_note_count,
+    _song_chart_data,
     _song_tones_to_feedpak,
+    _template_to_feedpak,
 )
 from .psarc_format.psarc import PSARC
 from .psarc_format.sng import Song
@@ -44,11 +44,6 @@ class ToneGearPreview:
     category: str
     knobs: int
     knob_values: dict[str, Any] = field(default_factory=dict)
-    recommendation_kind: str = ""
-    recommendation: str = ""
-    recommendation_detail: str = ""
-    recommendation_confidence: str = ""
-    recommendation_source: str = ""
 
 
 @dataclass(frozen=True)
@@ -76,26 +71,6 @@ class ArrangementTonePreview:
 
 
 @dataclass(frozen=True)
-class RigBuilderStagePreview:
-    slot: str
-    gear: str
-    kind: str
-    asset: str
-    assigned_mode: str
-    bypassed: bool
-    status: str
-    state_applied: bool = False
-
-
-@dataclass(frozen=True)
-class RigBuilderMappingPreview:
-    tone_key: str
-    preset: str
-    status: str
-    stages: list[RigBuilderStagePreview] = field(default_factory=list)
-
-
-@dataclass(frozen=True)
 class PsarcPreview:
     input_path: Path
     title: str
@@ -107,7 +82,6 @@ class PsarcPreview:
     cover_path: Path | None = None
     arrangements: list[ArrangementPreview] = field(default_factory=list)
     tones: list[ArrangementTonePreview] = field(default_factory=list)
-    rig_builder: list[RigBuilderMappingPreview] = field(default_factory=list)
     lyrics: int = 0
     warnings: list[str] = field(default_factory=list)
 
@@ -146,17 +120,11 @@ def inspect_psarc(input_psarc: Path, *, cover_dir: Path | None = None) -> PsarcP
             first_song = song
 
         arr_id = _unique_preview_id(_arrangement_id(source_path, metadata), used_ids)
-        highest = _highest_level(song)
-        note_count = 0
-        chord_count = 0
-        playable_count = 0
-        for note in highest.notes:
-            if int(note.chordId) == 0xFFFFFFFF:
-                note_count += 1
-                playable_count += 1
-            else:
-                chord_count += 1
-                playable_count += _preview_chord_note_count(song, int(note.chordId))
+        templates = [_template_to_feedpak(template) for template in song.chordTemplates]
+        chart = _song_chart_data(song, templates)
+        note_count = len(chart["notes"])
+        chord_count = len(chart["chords"])
+        chart_counts = {"notes": chart["notes"], "chords": chart["chords"]}
         arrangements.append(
             ArrangementPreview(
                 id=arr_id,
@@ -167,8 +135,8 @@ def inspect_psarc(input_psarc: Path, *, cover_dir: Path | None = None) -> PsarcP
                 difficulties=len(song.levels),
                 notes=note_count,
                 chords=chord_count,
-                event_count=note_count + chord_count,
-                note_count=playable_count,
+                event_count=_arrangement_event_count(chart_counts),
+                note_count=_arrangement_note_count(chart_counts),
             )
         )
         tone_preview = _tone_preview(song, source_path, arr_id, _display_name(arr_id), metadata)
@@ -195,7 +163,6 @@ def inspect_psarc(input_psarc: Path, *, cover_dir: Path | None = None) -> PsarcP
         cover_path=cover_path,
         arrangements=arrangements,
         tones=tones,
-        rig_builder=_rig_builder_preview(input_psarc),
         lyrics=lyric_count,
         warnings=warnings,
     )
@@ -268,7 +235,6 @@ def _tone_definition_preview(definition: dict[str, Any]) -> ToneDefinitionPrevie
 
 def _tone_gear_preview(slot: str, gear: dict[str, Any]) -> ToneGearPreview:
     knobs = gear.get("KnobValues") if isinstance(gear.get("KnobValues"), dict) else {}
-    recommendation = _gear_recommendation(gear)
     return ToneGearPreview(
         slot=str(slot),
         key=str(gear.get("Key") or gear.get("PedalKey") or gear.get("Type") or ""),
@@ -276,372 +242,7 @@ def _tone_gear_preview(slot: str, gear: dict[str, Any]) -> ToneGearPreview:
         category=str(gear.get("Category") or ""),
         knobs=len(knobs),
         knob_values={str(key): value for key, value in knobs.items()},
-        recommendation_kind=str(recommendation.get("kind") or ""),
-        recommendation=str(recommendation.get("name") or ""),
-        recommendation_detail=str(recommendation.get("detail") or ""),
-        recommendation_confidence=str(recommendation.get("confidence") or ""),
-        recommendation_source=str(recommendation.get("source") or ""),
     )
-
-
-def _gear_recommendation(gear: dict[str, Any]) -> dict[str, str]:
-    key = str(gear.get("Key") or gear.get("PedalKey") or gear.get("Type") or "")
-    data_dir = _rig_builder_data_dir()
-    if not key or data_dir is None:
-        return _recommendation("", "", "", "unknown", "")
-
-    cab = _cab_recommendation(data_dir, key)
-    if cab["name"]:
-        return cab
-
-    amp_override = _amp_override_recommendation(data_dir, key)
-    if amp_override["name"]:
-        return amp_override
-
-    vst_map = _load_json_file(data_dir / "rs_gear_to_vst.json")
-    vst_candidates = vst_map.get(key) if isinstance(vst_map, dict) else None
-    if isinstance(vst_candidates, list) and vst_candidates:
-        primary = next((item for item in vst_candidates if isinstance(item, dict) and item.get("bundled")), None)
-        if primary is None:
-            primary = next((item for item in vst_candidates if isinstance(item, dict)), None)
-        if primary:
-            name = primary.get("name") or Path(str(primary.get("bundled") or "")).stem
-            asset = Path(str(primary.get("bundled") or "")).name
-            detail = asset or str(primary.get("notes") or "")
-            return _recommendation("VST", str(name or ""), detail, "curated", "rs_gear_to_vst.json")
-
-    default_captures = _load_json_file(data_dir / "default_captures.json")
-    capture = default_captures.get(key) if isinstance(default_captures, dict) else None
-    if isinstance(capture, dict) and capture.get("tone3000_id"):
-        return {
-            "kind": str(capture.get("kind") or "NAM").upper(),
-            "name": f"tone3000 #{capture['tone3000_id']}",
-            "detail": f"model {capture.get('model_id')}" if capture.get("model_id") else "",
-            "confidence": "curated",
-            "source": "default_captures.json",
-        }
-
-    rs_map = _load_json_file(data_dir / "rs_to_real.json")
-    real = rs_map.get(key) if isinstance(rs_map, dict) else None
-    if isinstance(real, dict):
-        variant = _amp_variant(real, gear)
-        if variant:
-            return variant
-        name = " ".join(str(real.get(part) or "").strip() for part in ("make", "model")).strip()
-        return {
-            "kind": str(real.get("category") or "mapped").upper(),
-            "name": name or str(real.get("name") or key),
-            "detail": str(real.get("tone3000_query") or ""),
-            "confidence": "catalog",
-            "source": "rs_to_real.json",
-        }
-
-    return _recommendation("", "", "", "missing", "")
-
-
-def _amp_override_recommendation(data_dir: Path, key: str) -> dict[str, str]:
-    override = _case_insensitive_get(_feedforge_amp_overrides(), key)
-    if not isinstance(override, dict) or override.get("enabled") is False:
-        return _recommendation("", "", "", "missing", "")
-    prefer = str(override.get("prefer") or "").lower()
-    if prefer == "nam":
-        spec = _first_amp_file_override(override)
-        file_name = str(spec.get("file") or "").strip("/\\") if isinstance(spec, dict) else ""
-        if not file_name:
-            return _recommendation("", "", "", "missing", "")
-        return _recommendation("NAM", Path(file_name).stem, file_name.replace("\\", "/"), "curated", "amp_match_overrides.json")
-    if prefer != "vst":
-        return _recommendation("", "", "", "missing", "")
-    plugin_root = data_dir.parent
-    bundled = str(override.get("bundled") or "").strip("/\\")
-    candidate = plugin_root / bundled if bundled else None
-    if candidate is not None and not candidate.exists():
-        return _recommendation("", "", "", "missing", "")
-    detail = bundled.replace("\\", "/") if bundled else str(override.get("evidence") or "")
-    return _recommendation("VST", candidate.stem if candidate is not None else key, detail, "measured", "amp_match_overrides.json")
-
-
-def _first_amp_file_override(override: dict[str, Any]) -> dict[str, Any] | None:
-    variants = override.get("variants")
-    if isinstance(variants, dict):
-        for spec in variants.values():
-            if isinstance(spec, dict) and spec.get("file"):
-                return spec
-    return override
-
-
-def _feedforge_amp_overrides() -> dict[str, Any]:
-    loaded = _load_json_file(Path(__file__).resolve().parent / "data" / "amp_match_overrides.json")
-    return loaded if isinstance(loaded, dict) else {}
-
-
-def _recommendation(kind: str, name: str, detail: str, confidence: str, source: str) -> dict[str, str]:
-    return {
-        "kind": kind,
-        "name": name,
-        "detail": detail,
-        "confidence": confidence,
-        "source": source,
-    }
-
-
-def _cab_recommendation(data_dir: Path, key: str) -> dict[str, str]:
-    mic_map = _load_json_file(data_dir / "rs_cab_mic_map.json")
-    if not isinstance(mic_map, dict):
-        return _recommendation("", "", "", "missing", "")
-    overrides = _cab_overrides(data_dir)
-    direct_override = _cab_default_override_name(overrides, key)
-    if direct_override:
-        source = "cab_match_overrides.json" if _case_insensitive_get(_feedforge_cab_overrides(), key) else "rb_cab_overrides.json"
-        return _recommendation("IR", direct_override, key, "curated", source)
-    for base, variants in mic_map.items():
-        if not isinstance(variants, dict):
-            continue
-        for spec in variants.values():
-            if isinstance(spec, dict) and str(spec.get("effect_name") or "").lower() == key.lower():
-                override = _cab_override_name(overrides, str(base), spec)
-                if override:
-                    return _recommendation(
-                        "IR",
-                        override,
-                        f"{base} / {spec.get('label') or spec.get('position') or ''}",
-                        "curated",
-                        "rb_cab_overrides.json",
-                    )
-                return {
-                    "kind": "IR",
-                    "name": str(spec.get("ir_file") or ""),
-                    "detail": f"{base} · {spec.get('label') or spec.get('position') or ''}",
-                    "confidence": "mapped",
-                    "source": "rs_cab_mic_map.json",
-                }
-    return _recommendation("", "", "", "missing", "")
-
-
-def _cab_overrides(data_dir: Path) -> dict[str, Any]:
-    installed = _load_json_file(data_dir / "rb_cab_overrides.json")
-    feedforge = _feedforge_cab_overrides()
-    merged: dict[str, Any] = {}
-    if isinstance(installed, dict):
-        merged.update(installed)
-    if isinstance(feedforge, dict):
-        merged.update(feedforge)
-    return merged
-
-
-def _feedforge_cab_overrides() -> dict[str, Any]:
-    loaded = _load_json_file(Path(__file__).resolve().parent / "data" / "cab_match_overrides.json")
-    return loaded if isinstance(loaded, dict) else {}
-
-
-def _case_insensitive_get(values: dict[Any, Any], key: str) -> Any:
-    if key in values:
-        return values[key]
-    folded = key.lower()
-    for candidate, value in values.items():
-        if str(candidate).lower() == folded:
-            return value
-    return None
-
-
-def _cab_default_override_name(overrides: Any, key: str) -> str:
-    if not isinstance(overrides, dict):
-        return ""
-    override = _case_insensitive_get(overrides, key)
-    if not isinstance(override, dict):
-        return ""
-    exact = str(override.get("file") or "").strip("/\\")
-    if exact:
-        return exact.replace("\\", "/")
-    ir_dir = str(override.get("ir_dir") or "cabs").strip("/\\")
-    prefix = str(override.get("prefix") or "")
-    for stem in ("dyn_cone", "cond_cone", "ribbon_cone", "tube_cone"):
-        candidate = f"{prefix}_{stem}" if prefix else stem
-        return f"{ir_dir}/{candidate}.wav"
-    return ""
-
-
-def _cab_override_name(overrides: Any, base: str, spec: dict[str, Any]) -> str:
-    if not isinstance(overrides, dict):
-        return ""
-    override = _case_insensitive_get(overrides, base)
-    if not isinstance(override, dict):
-        return ""
-    effect_name = str(spec.get("effect_name") or "")
-    parts = effect_name.split("_")
-    mic = {
-        "57": "dyn",
-        "condenser": "cond",
-        "ribbon": "ribbon",
-        "tube": "tube",
-    }.get(parts[-2].lower() if len(parts) >= 2 else "")
-    position = parts[-1].lower() if parts else ""
-    if mic is None or position not in {"cone", "edge", "offaxis"}:
-        mic = "dyn"
-        position = "cone"
-    ir_dir = str(override.get("ir_dir") or "cabs").strip("/\\")
-    prefix = str(override.get("prefix") or "")
-    stem = f"{prefix}_{mic}_{position}" if prefix else f"{mic}_{position}"
-    return f"{ir_dir}/{stem}.wav"
-
-
-def _amp_variant(real: dict[str, Any], gear: dict[str, Any]) -> dict[str, str] | None:
-    variants = real.get("gain_variants")
-    knobs = gear.get("KnobValues") if isinstance(gear.get("KnobValues"), dict) else {}
-    gain = knobs.get("Gain")
-    if not isinstance(variants, dict) or gain is None:
-        return None
-    try:
-        gain_value = float(gain)
-    except (TypeError, ValueError):
-        return None
-    for level, spec in variants.items():
-        if not isinstance(spec, dict):
-            continue
-        lo_hi = spec.get("rs_gain_range") or []
-        if len(lo_hi) != 2:
-            continue
-        try:
-            lo, hi = float(lo_hi[0]), float(lo_hi[1])
-        except (TypeError, ValueError):
-            continue
-        if lo <= gain_value <= hi:
-            return {
-                "kind": "NAM",
-                "name": str(spec.get("notes") or f"tone3000 #{spec.get('tone3000_id')}"),
-                "detail": f"{level} · Gain {gain_value:g}",
-            }
-    return None
-
-
-def _load_json_file(path: Path) -> Any:
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-
-
-def _rig_builder_data_dir() -> Path | None:
-    configured = os.environ.get("FEEDFORGE_RIG_BUILDER_DATA_DIR")
-    if configured:
-        resolved = _resolve_rig_builder_data_dir(Path(configured))
-        if resolved is not None:
-            return resolved
-
-    candidates = [
-        Path(r"C:\Program Files\feedback\current\resources\slopsmith\plugins\rig_builder\data"),
-    ]
-    for candidate in candidates:
-        resolved = _resolve_rig_builder_data_dir(candidate)
-        if resolved is not None:
-            return resolved
-    return None
-
-
-def _resolve_rig_builder_data_dir(path: Path) -> Path | None:
-    possible = [
-        path,
-        path / "data",
-        path / "rig_builder" / "data",
-        path / "plugins" / "rig_builder" / "data",
-        path / "slopsmith" / "plugins" / "rig_builder" / "data",
-        path / "resources" / "slopsmith" / "plugins" / "rig_builder" / "data",
-        path / "current" / "resources" / "slopsmith" / "plugins" / "rig_builder" / "data",
-    ]
-    for candidate in possible:
-        if candidate.is_dir() and (candidate / "rs_gear_to_vst.json").is_file():
-            return candidate
-    return None
-
-
-def _rig_builder_preview(input_psarc: Path) -> list[RigBuilderMappingPreview]:
-    db = _rig_builder_db()
-    if db is None:
-        return []
-
-    song_key = input_psarc.with_suffix(".feedpak").name
-    try:
-        conn = sqlite3.connect(db)
-        conn.row_factory = sqlite3.Row
-    except sqlite3.Error:
-        return []
-
-    try:
-        rows = conn.execute(
-            "SELECT tm.tone_key, tm.preset_id, p.name "
-            "FROM tone_mappings tm "
-            "LEFT JOIN presets p ON p.id = tm.preset_id "
-            "WHERE tm.filename = ? "
-            "ORDER BY tm.tone_key",
-            (song_key,),
-        ).fetchall()
-        mappings: list[RigBuilderMappingPreview] = []
-        for row in rows:
-            stages = [_rig_builder_stage_preview(stage) for stage in conn.execute(
-                "SELECT slot, rs_gear_type, kind, file, tone3000_id, assigned_mode, bypassed, vst_path, vst_state "
-                "FROM preset_pieces WHERE preset_id = ? ORDER BY slot_order",
-                (row["preset_id"],),
-            )]
-            if not stages:
-                status = "missing"
-            elif any(stage.status == "missing" for stage in stages):
-                status = "partial"
-            else:
-                status = "ready"
-            mappings.append(
-                RigBuilderMappingPreview(
-                    tone_key=str(row["tone_key"] or ""),
-                    preset=str(row["name"] or ""),
-                    status=status,
-                    stages=stages,
-                )
-            )
-        return mappings
-    except sqlite3.Error:
-        return []
-    finally:
-        conn.close()
-
-
-def _rig_builder_stage_preview(row: sqlite3.Row) -> RigBuilderStagePreview:
-    kind = str(row["kind"] or "none")
-    file_asset = str(row["file"] or "")
-    tone3000_id = row["tone3000_id"]
-    vst_path = str(row["vst_path"] or "")
-    vst_state = str(row["vst_state"] or "")
-    asset = Path(vst_path).name if vst_path else file_asset
-    if not asset and tone3000_id:
-        asset = f"Tone3000 #{tone3000_id}"
-    status = "ready"
-    if kind == "none" or not asset:
-        status = "missing"
-    if bool(row["bypassed"]):
-        status = "bypassed"
-    return RigBuilderStagePreview(
-        slot=str(row["slot"] or ""),
-        gear=str(row["rs_gear_type"] or ""),
-        kind=kind,
-        asset=asset,
-        assigned_mode=str(row["assigned_mode"] or ""),
-        bypassed=bool(row["bypassed"]),
-        status=status,
-        state_applied=bool(vst_state and kind == "vst"),
-    )
-
-
-def _rig_builder_db() -> Path | None:
-    candidates: list[Path] = []
-    for env_name, app_name in (
-        ("APPDATA", "feedback-desktop"),
-        ("APPDATA", "slopsmith-desktop"),
-    ):
-        root = os.environ.get(env_name)
-        if root:
-            candidates.append(Path(root) / app_name / "slopsmith-config" / "nam_tone.db")
-    for candidate in candidates:
-        if candidate.is_file():
-            return candidate
-    return None
 
 
 def _extract_cover(content: dict[str, bytes], cover_dir: Path | None) -> Path | None:
@@ -678,3 +279,4 @@ def _unique_preview_id(value: str, used: set[str]) -> str:
         index += 1
     used.add(candidate)
     return candidate
+

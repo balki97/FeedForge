@@ -38,9 +38,16 @@ $Concurrency = if ($env:FEEDFORGE_DEMUCS_CONCURRENCY) {
     "1"
 }
 $CacheRoot = Join-Path $InstallRoot "model-cache"
+$RuntimeRoot = Join-Path $InstallRoot "runtime"
+$TempRoot = Join-Path $RuntimeRoot "temp"
+$StorageRoot = Join-Path $RuntimeRoot "jobs"
+New-Item -ItemType Directory -Force -Path $CacheRoot, $TempRoot, $StorageRoot | Out-Null
 $env:TORCH_HOME = Join-Path $CacheRoot "torch"
 $env:XDG_CACHE_HOME = $CacheRoot
 $env:PIP_CACHE_DIR = Join-Path $InstallRoot "pip-cache"
+$env:HF_HOME = Join-Path $CacheRoot "huggingface"
+$env:TEMP = $TempRoot
+$env:TMP = $TempRoot
 $TorchIndex = if ($env:FEEDFORGE_TORCH_INDEX) {
     $env:FEEDFORGE_TORCH_INDEX
 } else {
@@ -77,6 +84,7 @@ $SourceStamp = "$SourceRoot|$((Get-Item (Join-Path $SourceRoot "pyproject.toml")
 
 Write-Host "FeedForge: preparing local stem setup"
 Write-Host "FeedForge: install folder $InstallRoot"
+Write-Host "FeedForge: runtime folder $RuntimeRoot"
 Write-Host "FeedForge: selected model $Model"
 Write-Host "FeedForge: selected device $Device"
 
@@ -130,4 +138,4 @@ try {
     Set-Content -Encoding UTF8 -Path $Marker -Value $SourceStamp
 }
 Write-Host "FeedForge: starting Demucs server"
-Invoke-FeedForgeNative $Python @("-m", "feedback_converter.demucs_server", "--host", "127.0.0.1", "--port", "7865", "--model", $Model, "--device", $Device, "--concurrency", $Concurrency, "--preload-model")
+Invoke-FeedForgeNative $Python @("-m", "feedback_converter.demucs_server", "--host", "127.0.0.1", "--port", "7865", "--model", $Model, "--device", $Device, "--concurrency", $Concurrency, "--storage-dir", $StorageRoot, "--preload-model")

@@ -35,6 +35,7 @@ electron-builder.env
 *.feedpak
 *.feedpak.work/
 tmp-*
+outputs/
 
 # Local tooling and logs
 .agents/

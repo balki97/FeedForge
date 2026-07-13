@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import shutil
 import sys
 from dataclasses import asdict, is_dataclass
@@ -16,8 +15,6 @@ from feedback_converter import __version__
 from feedback_converter.batch import _batch_output_path, convert_many
 from feedback_converter.converter import convert_psarc, convert_psarc_songs
 from feedback_converter.inspector import inspect_psarc
-from feedback_converter.rig_builder_seed import seed_rig_builder_routes
-from feedback_converter.tone_lab import run_tone_lab
 
 
 def _jsonable(value: Any) -> Any:
@@ -110,6 +107,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional Demucs server API key sent as X-API-Key.",
     )
     parser.add_argument(
+        "--demucs-model",
+        help="Optional Demucs-compatible server model, such as htdemucs_6s or bs_roformer_sw.",
+    )
+    parser.add_argument(
         "--demucs-stems",
         default="guitar,bass,drums,vocals,other",
         help="Comma-separated stems to request from the Demucs server.",
@@ -123,24 +124,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--inspect-cover-dir",
         help="Folder for cover art written during --inspect-json.",
     )
-    parser.add_argument(
-        "--seed-rig-builder",
-        action="store_true",
-        help="Seed or repair local FeedBack Rig Builder routes from one PSARC.",
-    )
-    parser.add_argument(
-        "--rig-builder-data-dir",
-        help="FeedBack Rig Builder data folder, or a portable FeedBack folder containing it.",
-    )
-    parser.add_argument(
-        "--tone-lab",
-        action="store_true",
-        help="Run automated tone QA: convert, seed Rig Builder, generate dry DI fixtures, and write reports.",
-    )
-    parser.add_argument(
-        "--tone-lab-output",
-        help="Folder for --tone-lab evidence reports, fixtures, and converted FeedPak output.",
-    )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     return parser
 
@@ -148,24 +131,6 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    if args.rig_builder_data_dir:
-        os.environ["FEEDFORGE_RIG_BUILDER_DATA_DIR"] = args.rig_builder_data_dir
-
-    if args.tone_lab:
-        if len(args.input) != 1:
-            parser.error("--tone-lab requires exactly one input")
-        try:
-            result = run_tone_lab(
-                Path(args.input[0]),
-                output_dir=Path(args.tone_lab_output) if args.tone_lab_output else None,
-                rig_builder_data_dir=Path(args.rig_builder_data_dir) if args.rig_builder_data_dir else None,
-                overwrite=args.overwrite,
-            )
-        except Exception as exc:  # noqa: BLE001
-            print(json.dumps({"ok": False, "error": str(exc)}), file=sys.stdout)
-            return 1
-        print(json.dumps({"ok": True, "result": _jsonable(result)}, ensure_ascii=False), file=sys.stdout)
-        return 0
 
     if args.inspect_json:
         if len(args.input) != 1:
@@ -177,17 +142,6 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"ok": False, "error": str(exc)}), file=sys.stdout)
             return 1
         print(json.dumps({"ok": True, "preview": _jsonable(preview)}, ensure_ascii=False), file=sys.stdout)
-        return 0
-
-    if args.seed_rig_builder:
-        if len(args.input) != 1:
-            parser.error("--seed-rig-builder requires exactly one input")
-        try:
-            result = seed_rig_builder_routes(Path(args.input[0]))
-        except Exception as exc:  # noqa: BLE001
-            print(json.dumps({"ok": False, "error": str(exc)}), file=sys.stdout)
-            return 1
-        print(json.dumps({"ok": True, "result": _jsonable(result)}, ensure_ascii=False), file=sys.stdout)
         return 0
 
     if not args.input:
@@ -212,6 +166,7 @@ def main(argv: list[str] | None = None) -> int:
                 separate_stems=args.separate_stems,
                 demucs_url=args.demucs_url,
                 demucs_api_key=args.demucs_api_key,
+                demucs_model=args.demucs_model,
                 demucs_stems=_split_csv(args.demucs_stems),
             )
         except Exception as exc:  # noqa: BLE001
@@ -239,6 +194,7 @@ def main(argv: list[str] | None = None) -> int:
         separate_stems=args.separate_stems,
         demucs_url=args.demucs_url,
         demucs_api_key=args.demucs_api_key,
+        demucs_model=args.demucs_model,
         demucs_stems=_split_csv(args.demucs_stems),
     )
     for item in batch.items:

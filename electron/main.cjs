@@ -59,6 +59,14 @@ const DEMUCS_MODELS = [
     size: "approx. 150 MB",
     description: "MDX model trained with extra data. Can outperform HTDemucs on some mixes, but still 4-source only.",
     signatures: ["e51eebcc", "a1d90b5c", "5d2d6c55", "c5cba043"]
+  },
+  {
+    id: "bs_roformer_sw",
+    name: "BS-RoFormer-SW",
+    size: "remote server",
+    description: "FeedBack Demucs server model. Six-source split returned as FLAC when the remote server supports audio-separator/RoFormer.",
+    signatures: [],
+    remoteOnly: true
   }
 ];
 
@@ -206,17 +214,6 @@ ipcMain.handle("dialog:pickOutput", async (_event, options = {}) => {
   return folder;
 });
 
-ipcMain.handle("dialog:pickRigBuilderData", async (_event, options = {}) => {
-  const result = await dialog.showOpenDialog(mainWindow, {
-    title: "Choose FeedBack Rig Builder data folder",
-    defaultPath: validDefaultPath(options.defaultPath),
-    properties: ["openDirectory"]
-  });
-  const folder = result.canceled ? null : result.filePaths[0];
-  logDebug("dialog.pickRigBuilderData", { selected: folder || "" });
-  return folder;
-});
-
 ipcMain.handle("dialog:pickDemucsInstallDir", async (_event, options = {}) => {
   const result = await dialog.showOpenDialog(mainWindow, {
     title: "Choose Demucs install folder",
@@ -242,15 +239,13 @@ ipcMain.handle("dialog:pickPythonExecutable", async (_event, options = {}) => {
 
 ipcMain.handle("converter:inspect", async (_event, inputPath, options = {}) => {
   logDebug("converter.inspect.start", {
-    inputPath,
-    hasRigBuilderDataDir: Boolean(options.rigBuilderDataDir)
+    inputPath
   });
   const coverDir = createInspectionFolder(inputPath);
   const result = await runConverter([
     "--inspect-json",
     "--inspect-cover-dir",
     coverDir,
-    ...rigBuilderArgs(options.rigBuilderDataDir),
     inputPath
   ]);
   const parsed = parseJson(result.stdout);
@@ -284,50 +279,43 @@ ipcMain.handle("converter:convert", async (_event, payload) => {
     inputPath: payload.inputPath,
     outputPath: payload.outputPath || "",
     overwrite: Boolean(payload.overwrite),
-    includeTones: payload.includeTones === true,
     bStandardTo7String: Boolean(payload.bStandardTo7String),
     separateStems: Boolean(payload.separateStems),
     hasDemucsUrl: Boolean(payload.demucsUrl),
-    hasRigBuilderDataDir: Boolean(payload.rigBuilderDataDir)
+    demucsModel: payload.demucsModel || ""
   });
   const args = [payload.inputPath];
   if (payload.outputPath) args.push("-o", payload.outputPath);
   if (payload.overwrite) args.push("--overwrite");
-  if (payload.includeTones !== true) args.push("--no-tones");
   if (payload.bStandardTo7String) args.push("--b-standard-to-7-string");
   if (payload.separateStems) args.push("--separate-stems");
   if (payload.demucsUrl) args.push("--demucs-url", payload.demucsUrl);
   if (payload.demucsApiKey) args.push("--demucs-api-key", payload.demucsApiKey);
-  args.push(...rigBuilderArgs(payload.rigBuilderDataDir));
+  if (payload.demucsModel) args.push("--demucs-model", payload.demucsModel);
   const result = await runConverter(args);
   const outputPaths = [...result.stdout.matchAll(/^wrote\s+(.+)$/gim)].map((match) => match[1].trim()).filter(Boolean);
+  const warnings = [...`${result.stdout}\n${result.stderr}`.matchAll(/^warning:\s+(.+)$/gim)].map((match) => match[1].trim()).filter(Boolean);
   const outputMatch = outputPaths[0] || null;
   logDebug(result.code === 0 ? "converter.convert.ok" : "converter.convert.failed", {
     inputPath: payload.inputPath,
     outputPath: outputMatch || payload.outputPath || "",
     outputCount: outputPaths.length,
     code: result.code,
+    warnings,
     stdoutTail: tail(result.stdout),
     stderrTail: tail(result.stderr),
     diagnostics: result.diagnostics
   });
-  const seed = payload.includeTones !== true || result.code !== 0 || outputPaths.length > 1
-    ? null
-    : await seedRigBuilder(payload.inputPath, payload);
   return {
     ok: result.code === 0,
     outputPath: outputMatch,
     outputPaths,
-    seed,
+    warnings,
     stdout: result.stdout,
     stderr: result.stderr,
     diagnostics: result.diagnostics,
     error: result.code === 0 ? null : result.stderr || result.stdout || "Conversion failed"
   };
-});
-
-ipcMain.handle("converter:seedRigBuilder", async (_event, inputPath, options = {}) => {
-  return seedRigBuilder(inputPath, options);
 });
 
 ipcMain.handle("stemServer:status", async () => {
@@ -391,6 +379,11 @@ ipcMain.handle("app:openPythonDownload", async () => {
   return { ok: true };
 });
 
+ipcMain.handle("app:openSupport", async () => {
+  await shell.openExternal("https://ko-fi.com/feedforge");
+  return { ok: true };
+});
+
 ipcMain.handle("updates:check", async () => {
   return checkForUpdates();
 });
@@ -404,39 +397,6 @@ ipcMain.handle("updates:openLatest", async (_event, url) => {
 ipcMain.on("app:rendererError", (_event, payload = {}) => {
   logDebug("renderer.error", payload);
 });
-
-async function seedRigBuilder(inputPath, options = {}) {
-  logDebug("converter.seedRigBuilder.start", {
-    inputPath,
-    hasRigBuilderDataDir: Boolean(options.rigBuilderDataDir)
-  });
-  const result = await runConverter(["--seed-rig-builder", ...rigBuilderArgs(options.rigBuilderDataDir), inputPath]);
-  const parsed = parseJson(result.stdout);
-  if (!parsed || !parsed.ok) {
-    logDebug("converter.seedRigBuilder.failed", {
-      inputPath,
-      code: result.code,
-      stdoutTail: tail(result.stdout),
-      stderrTail: tail(result.stderr),
-      diagnostics: result.diagnostics
-    });
-    return {
-      ok: false,
-      error: parsed?.error || result.stderr || "Rig Builder route seeding failed",
-      diagnostics: result.diagnostics
-    };
-  }
-  logDebug("converter.seedRigBuilder.ok", {
-    inputPath,
-    routes: parsed.routes?.length || 0,
-    warnings: parsed.warnings || []
-  });
-  return parsed;
-}
-
-function rigBuilderArgs(folder) {
-  return typeof folder === "string" && folder ? ["--rig-builder-data-dir", folder] : [];
-}
 
 async function checkForUpdates() {
   const currentVersion = app.getVersion();
@@ -535,6 +495,16 @@ function safeGithubReleaseUrl(value) {
 async function startStemServer(options = {}) {
   const installRoot = demucsInstallRoot(options.installDir);
   const model = demucsModelId(options.model);
+  const modelInfo = DEMUCS_MODELS.find((item) => item.id === model);
+  if (modelInfo?.remoteOnly) {
+    return stemServerState({
+      ok: false,
+      healthy: false,
+      running: false,
+      error: `${modelInfo.name} is only available when using a compatible remote FeedBack Demucs server. Enter the remote URL and convert with stem separation enabled.`,
+      model
+    });
+  }
   const device = demucsDeviceId(options.device);
   const concurrency = demucsConcurrency(options.concurrency);
   const pythonExe = pythonExecutablePath(options.pythonPath);
@@ -580,10 +550,16 @@ async function startStemServer(options = {}) {
   stemServerStarting = true;
   stemServerLog = [];
   fs.mkdirSync(installRoot, { recursive: true });
+  const runtimeRoot = path.join(installRoot, "runtime");
+  const tempRoot = path.join(runtimeRoot, "temp");
+  const storageRoot = path.join(runtimeRoot, "jobs");
+  fs.mkdirSync(tempRoot, { recursive: true });
+  fs.mkdirSync(storageRoot, { recursive: true });
   logDebug("stemServer.start", { scriptPath, installRoot, model, device, concurrency, torchIndex, hasPythonOverride: Boolean(pythonExe) });
   appendStemServerLog(`FeedForge: preparing local stem setup`);
   appendStemServerLog(`FeedForge: model=${model}, device=${device}, jobs=${concurrency}`);
   appendStemServerLog(`FeedForge: install folder ${installRoot}`);
+  appendStemServerLog(`FeedForge: runtime folder ${runtimeRoot}`);
   if (pythonExe) appendStemServerLog(`FeedForge: using selected Python ${pythonExe}`);
 
   stemServerProcess = spawn("powershell.exe", [
@@ -604,7 +580,10 @@ async function startStemServer(options = {}) {
       FEEDFORGE_TORCH_INDEX: torchIndex,
       TORCH_HOME: path.join(installRoot, "model-cache", "torch"),
       XDG_CACHE_HOME: path.join(installRoot, "model-cache"),
-      PIP_CACHE_DIR: path.join(installRoot, "pip-cache")
+      HF_HOME: path.join(installRoot, "model-cache", "huggingface"),
+      PIP_CACHE_DIR: path.join(installRoot, "pip-cache"),
+      TEMP: tempRoot,
+      TMP: tempRoot
     },
     windowsHide: true
   });
@@ -646,6 +625,7 @@ async function stemServerStatus() {
     concurrency: Number(health.body?.concurrency) || null,
     accelerators: Array.isArray(health.body?.accelerators) ? health.body.accelerators : [],
     capabilities: health.body?.capabilities || null,
+    storageDir: health.body?.storage_dir || null,
     health: health.body || null,
     error: health.error || ""
   });
@@ -718,6 +698,7 @@ function stemServerState(extra = {}) {
     concurrency: extra.concurrency || null,
     accelerators: extra.accelerators || [],
     capabilities: extra.capabilities || null,
+    storageDir: extra.storageDir || null,
     running,
     starting: Boolean((extra.starting || stemServerStarting) && !running && !healthy),
     healthy,
@@ -992,6 +973,15 @@ function processWorkingDirectory() {
 function modelInstallStates(installRoot) {
   const checkpointFiles = checkpointFileNames(installRoot);
   return DEMUCS_MODELS.map((model) => {
+    if (model.remoteOnly) {
+      return {
+        ...model,
+        installed: false,
+        partial: false,
+        installedCount: 0,
+        requiredCount: 0
+      };
+    }
     const signatures = model.signatures || [];
     const installedCount = signatures.filter((signature) => checkpointFiles.some((file) => file.startsWith(signature))).length;
     const installed = signatures.length > 0 && installedCount === signatures.length;

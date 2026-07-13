@@ -41,7 +41,6 @@ contextBridge.exposeInMainWorld("feedbackConverter", {
   pickFolder: (options) => ipcRenderer.invoke("dialog:pickFolder", options),
   pickFolderWithRoot: (options) => ipcRenderer.invoke("dialog:pickFolderWithRoot", options),
   pickOutput: (options) => ipcRenderer.invoke("dialog:pickOutput", options),
-  pickRigBuilderData: (options) => ipcRenderer.invoke("dialog:pickRigBuilderData", options),
   pickDemucsInstallDir: (options) => ipcRenderer.invoke("dialog:pickDemucsInstallDir", options),
   pickPythonExecutable: (options) => ipcRenderer.invoke("dialog:pickPythonExecutable", options),
   expandPaths: (paths) => ipcRenderer.invoke("files:expandPaths", paths),
@@ -52,7 +51,6 @@ contextBridge.exposeInMainWorld("feedbackConverter", {
   },
   inspect: (inputPath, options) => ipcRenderer.invoke("converter:inspect", inputPath, options),
   convert: (payload) => ipcRenderer.invoke("converter:convert", payload),
-  seedRigBuilder: (inputPath, options) => ipcRenderer.invoke("converter:seedRigBuilder", inputPath, options),
   getStemServerStatus: () => ipcRenderer.invoke("stemServer:status"),
   getStemServerModels: (options) => ipcRenderer.invoke("stemServer:models", options),
   startStemServer: (options) => ipcRenderer.invoke("stemServer:start", options),
@@ -63,6 +61,7 @@ contextBridge.exposeInMainWorld("feedbackConverter", {
   openDebugLogFolder: () => ipcRenderer.invoke("app:openDebugLogFolder"),
   getPythonInfo: (options) => ipcRenderer.invoke("app:pythonInfo", options),
   openPythonDownload: () => ipcRenderer.invoke("app:openPythonDownload"),
+  openSupport: () => ipcRenderer.invoke("app:openSupport"),
   checkForUpdates: () => ipcRenderer.invoke("updates:check"),
   openLatestRelease: (url) => ipcRenderer.invoke("updates:openLatest", url)
 });

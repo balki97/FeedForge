@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -53,6 +54,7 @@ def convert_many(
     separate_stems: bool = False,
     demucs_url: str | None = None,
     demucs_api_key: str | None = None,
+    demucs_model: str | None = None,
     demucs_stems: list[str] | None = None,
 ) -> BatchResult:
     """Convert multiple PSARC files, returning per-file success/error state."""
@@ -79,6 +81,7 @@ def convert_many(
                 separate_stems=separate_stems,
                 demucs_url=demucs_url,
                 demucs_api_key=demucs_api_key,
+                demucs_model=demucs_model,
                 demucs_stems=demucs_stems,
             )
         except Exception as exc:  # noqa: BLE001
@@ -162,7 +165,9 @@ def _render_name_template(template: str, metadata: dict[str, str]) -> str:
 
 
 def _safe_path_segment(value: str, fallback: str = "Unknown Artist") -> str:
-    cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1F]', "_", str(value or ""))
+    normalized = unicodedata.normalize("NFKD", str(value or ""))
+    ascii_value = normalized.encode("ascii", "ignore").decode("ascii")
+    cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1F]', "_", ascii_value or str(value or ""))
     cleaned = re.sub(r"\s+", " ", cleaned).strip().rstrip(". ")
     return cleaned or fallback
 

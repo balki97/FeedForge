@@ -28,7 +28,7 @@ https://discord.gg/9cUe6cacQN
 4. Choose an output layout: one folder, preserve source folders, or artist folders.
 5. Choose output file names: source filename, artist-song, song-artist, or a custom template.
 6. Select the number of conversion workers.
-7. Optional: enable stem separation or B-standard remapping. Tone export is temporarily locked while Rocksmith-to-Rig Builder matching is refined.
+7. Optional: enable stem separation or B-standard remapping.
 8. Click `Convert queue`.
 
 The app writes `.feedpak` files that can be added to FeedBack.

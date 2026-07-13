@@ -2,6 +2,7 @@ import argparse
 import asyncio
 import json
 import sys
+import shutil
 import tempfile
 import uuid
 from pathlib import Path
@@ -52,6 +53,7 @@ def create_app(
             "device": resolved_device,
             "requested_device": device,
             "concurrency": normalize_concurrency(concurrency),
+            "storage_dir": str(root),
             "accelerators": detect_accelerators(),
             "capabilities": {"separate": True, "pitch": False},
             "demucs_available": _demucs_available(),
@@ -101,6 +103,20 @@ def create_app(
             if path.suffix.lower() in {".wav", ".ogg", ".mp3", ".flac", ".opus"}
         }
         return {"status": "complete", "job_id": job_id, "stems": stems}
+
+    @app.delete("/jobs/{job_id}")
+    def delete_job(job_id: str) -> dict[str, Any]:
+        safe_id = _safe_job_id(job_id)
+        job_dir = jobs_dir / safe_id
+        upload_files = list(uploads_dir.glob(f"{safe_id}.*"))
+        for path in upload_files:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        if job_dir.is_dir():
+            shutil.rmtree(job_dir, ignore_errors=True)
+        return {"ok": True, "job_id": safe_id}
 
     @app.get("/files/{job_id}/{filename}")
     def file_result(job_id: str, filename: str) -> FileResponse:
@@ -325,6 +341,7 @@ def main(argv: list[str] | None = None) -> int:
                 "model": args.model,
                 "device": resolve_device(args.device),
                 "concurrency": concurrency,
+                "storage_dir": str(Path(args.storage_dir or Path(tempfile.gettempdir()) / "feedforge-demucs-server")),
             }
         )
     )

@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import {
   AlertTriangle,
   Check,
+  Coffee,
   Download,
   ExternalLink,
   FolderOpen,
@@ -25,11 +26,6 @@ const INSPECTION_WORKERS = 2;
 const QUEUE_RENDER_LIMIT = 500;
 const DEFAULT_CONVERSION_WORKERS = 2;
 const SETTINGS_KEY = "feedforge:desktop-settings";
-const TONE_MAPPING_LOCKED = true;
-const TONE_MIGRATION_WARNING =
-  "Tone mapping is experimental and may not match Rocksmith exactly yet. It can also seed or repair local FeedBack Rig Builder routes on this PC after conversion, replacing existing FeedForge-created routes for these songs. Continue?";
-const TONE_LOCKED_MESSAGE =
-  "Tone mapping is temporarily locked while FeedForge's Rocksmith-to-Rig Builder matching is being refined. FeedForge will convert packages without tone export for now.";
 
 function App() {
   const initialSettingsRef = useRef(null);
@@ -45,7 +41,6 @@ function App() {
   const [outputNameTemplate, setOutputNameTemplate] = useState(() => initialSettingsRef.current.outputNameTemplate || "{artist} - {title}");
   const [lastSourcePath, setLastSourcePath] = useState(() => initialSettingsRef.current.lastSourcePath || null);
   const [overwrite, setOverwrite] = useState(false);
-  const [includeTones, setIncludeTones] = useState(() => TONE_MAPPING_LOCKED ? false : initialSettingsRef.current.includeTones === true);
   const [bStandardTo7String, setBStandardTo7String] = useState(() => initialSettingsRef.current.bStandardTo7String === true);
   const [separateStems, setSeparateStems] = useState(() => initialSettingsRef.current.separateStems === true);
   const [demucsUrl, setDemucsUrl] = useState(() => initialSettingsRef.current.demucsUrl || "");
@@ -66,7 +61,6 @@ function App() {
   const [isCheckingPython, setIsCheckingPython] = useState(false);
   const [updateInfo, setUpdateInfo] = useState(null);
   const [appVersion, setAppVersion] = useState("");
-  const [rigBuilderDataDir, setRigBuilderDataDir] = useState(() => initialSettingsRef.current.rigBuilderDataDir || "");
   const [conversionWorkers, setConversionWorkers] = useState(DEFAULT_CONVERSION_WORKERS);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all");
@@ -88,15 +82,8 @@ function App() {
   }, [items]);
 
   useEffect(() => {
-    if (TONE_MAPPING_LOCKED) {
-      setIncludeTones(false);
-      if (activeView === "tones") setActiveView("workspace");
-    }
-  }, [activeView]);
-
-  useEffect(() => {
-    writeSettings({ outputDir, outputLayout, outputNameFormat, outputNameTemplate, lastSourcePath, includeTones: TONE_MAPPING_LOCKED ? false : includeTones, bStandardTo7String, separateStems, demucsUrl, demucsInstallDir, pythonPath, demucsModel, demucsDevice, demucsStemJobs, rigBuilderDataDir });
-  }, [outputDir, outputLayout, outputNameFormat, outputNameTemplate, lastSourcePath, includeTones, bStandardTo7String, separateStems, demucsUrl, demucsInstallDir, pythonPath, demucsModel, demucsDevice, demucsStemJobs, rigBuilderDataDir]);
+    writeSettings({ outputDir, outputLayout, outputNameFormat, outputNameTemplate, lastSourcePath, bStandardTo7String, separateStems, demucsUrl, demucsInstallDir, pythonPath, demucsModel, demucsDevice, demucsStemJobs });
+  }, [outputDir, outputLayout, outputNameFormat, outputNameTemplate, lastSourcePath, bStandardTo7String, separateStems, demucsUrl, demucsInstallDir, pythonPath, demucsModel, demucsDevice, demucsStemJobs]);
 
   useEffect(() => {
     let cancelled = false;
@@ -329,7 +316,7 @@ function App() {
 
   async function inspectItem(item) {
     updateItem(item.id, { status: "inspecting" });
-    const result = await api.inspect(item.path, { rigBuilderDataDir });
+    const result = await api.inspect(item.path);
     if (!result.ok) {
       updateItem(item.id, (current) => {
         if (current.status === "converted" || current.status === "converting") return current;
@@ -370,17 +357,6 @@ function App() {
   async function chooseOutput() {
     const folder = await api.pickOutput({ defaultPath: outputDir || lastSourcePath || undefined });
     if (folder) setOutputDir(folder);
-  }
-
-  async function chooseRigBuilderData() {
-    const folder = await api.pickRigBuilderData({ defaultPath: rigBuilderDataDir || undefined });
-    if (!folder) return;
-    setRigBuilderDataDir(folder);
-    for (const item of itemsRef.current) {
-      if (item.status === "converted" || item.status === "converting") continue;
-      inspectionQueueRef.current.push(item.id);
-    }
-    pumpInspectionQueue();
   }
 
   async function startLocalStemServer() {
@@ -463,7 +439,6 @@ function App() {
 
   async function convertQueue() {
     if (!items.length || isConverting) return;
-    if (includeTones && !window.confirm(TONE_MIGRATION_WARNING)) return;
     isConvertingRef.current = true;
     stopRequestedRef.current = false;
     setIsStopping(false);
@@ -492,23 +467,21 @@ function App() {
         inputPath: item.path,
         outputPath,
         overwrite,
-        includeTones,
         bStandardTo7String,
         separateStems,
         demucsUrl: demucsUrl.trim(),
         demucsApiKey: demucsApiKey.trim(),
-        rigBuilderDataDir
+        demucsModel
       });
       if (!result.ok) {
         updateItem(item.id, { status: "failed", error: result.error });
-      } else if (result.seed && !result.seed.ok) {
+      } else {
+        const warnings = Array.isArray(result.warnings) ? result.warnings.filter(Boolean) : [];
         updateItem(item.id, {
           status: "converted",
           outputPath: result.outputPath || outputPath,
-          error: `Converted, but Rig Builder route seeding failed: ${result.seed.error || "unknown error"}`
+          error: warnings.length ? warnings.join("\n") : null
         });
-      } else {
-        updateItem(item.id, { status: "converted", outputPath: result.outputPath || outputPath });
       }
       if (stopRequestedRef.current) return;
       await convertNext();
@@ -550,10 +523,14 @@ function App() {
                 <small>FeedBack song toolkit</small>
               </div>
             </div>
-            <h1>Build FeedPak packages</h1>
-            <p>Import CDLC packages, review song details, and export FeedBack-ready files.</p>
+            <h1>Build FeedPaks</h1>
+            <p>Convert, organize, and package CDLC for FeedBack.</p>
           </div>
           <div className="header-actions">
+            <button className="support-link" onClick={() => api.openSupport()} title="Support FeedForge on Ko-fi">
+              <Coffee size={17} />
+              Support
+            </button>
             <button className="primary" onClick={convertQueue} disabled={!items.length || isConverting}>
               {isConverting ? <RotateCw className="spin" size={18} /> : <Download size={18} />}
               Convert queue{isConverting ? ` (${conversionWorkers}x)` : ""}
@@ -589,19 +566,8 @@ function App() {
           </section>
         )}
 
-        <section className="view-tabs" aria-label="FeedForge sections">
+        <section className="view-tabs app-tabs" aria-label="FeedForge sections">
           <button className={activeView === "workspace" ? "active" : ""} onClick={() => setActiveView("workspace")}>Workspace</button>
-          <button
-            className={activeView === "tones" ? "active" : ""}
-            onClick={() => {
-              if (!TONE_MAPPING_LOCKED) setActiveView("tones");
-            }}
-            disabled={TONE_MAPPING_LOCKED}
-            title={TONE_MAPPING_LOCKED ? TONE_LOCKED_MESSAGE : "Inspect Rocksmith tone chains and Rig Builder mappings"}
-          >
-            Tone Mapping
-            {TONE_MAPPING_LOCKED && <span className="tab-lock">Locked</span>}
-          </button>
           <button className={activeView === "settings" ? "active" : ""} onClick={() => setActiveView("settings")}>Settings</button>
         </section>
 
@@ -618,7 +584,7 @@ function App() {
               <div className="settings-card-head">
                 <div>
                   <h2>Conversion</h2>
-                  <p>Output location, worker count, and package options.</p>
+                  <p>Output, naming, and package options.</p>
                 </div>
               </div>
               <div className="settings-grid">
@@ -626,11 +592,6 @@ function App() {
                   <FolderOpen size={17} />
                   <span>Output</span>
                   <b>{outputDir ? outputDir : "Source folder"}</b>
-                </button>
-                <button className="path-action wide" onClick={chooseRigBuilderData} title={rigBuilderDataDir || "Auto-detect FeedBack Rig Builder data"}>
-                  <FolderOpen size={17} />
-                  <span>Rig data</span>
-                  <b>{rigBuilderDataDir ? rigBuilderDataDir : "Auto"}</b>
                 </button>
                 <label className="select-control">
                   Workers
@@ -670,32 +631,6 @@ function App() {
                 )}
                 <div className="option-grid">
                   <label className="toggle"><input type="checkbox" checked={overwrite} onChange={(event) => setOverwrite(event.target.checked)} /> Overwrite existing output</label>
-                  <label className="toggle">
-                    <input
-                      type="checkbox"
-                      checked={TONE_MAPPING_LOCKED ? false : includeTones}
-                      onChange={(event) => {
-                        if (TONE_MAPPING_LOCKED) return;
-                        const checked = event.target.checked;
-                        if (checked && !window.confirm(TONE_MIGRATION_WARNING)) return;
-                        setIncludeTones(checked);
-                      }}
-                      disabled={isConverting || TONE_MAPPING_LOCKED}
-                    />
-                    Include tones {TONE_MAPPING_LOCKED && <span className="option-lock">Locked</span>}
-                  </label>
-                  {TONE_MAPPING_LOCKED && (
-                    <div className="inline-warning tone-locked-warning">
-                      <AlertTriangle size={16} />
-                      <span>{TONE_LOCKED_MESSAGE}</span>
-                    </div>
-                  )}
-                  {includeTones && (
-                    <div className="inline-warning">
-                      <AlertTriangle size={16} />
-                      <span>Experimental: tone mapping may not sound identical to Rocksmith and can overwrite FeedForge-created Rig Builder routes.</span>
-                    </div>
-                  )}
                   <label className="toggle"><input type="checkbox" checked={separateStems} onChange={(event) => setSeparateStems(event.target.checked)} disabled={isConverting} /> Separate stems</label>
                   <label className="toggle lab-toggle">
                     <input type="checkbox" checked={bStandardTo7String} onChange={(event) => setBStandardTo7String(event.target.checked)} disabled={isConverting} />
@@ -711,14 +646,14 @@ function App() {
                 <div className="settings-card-head">
                   <div>
                     <h2>Stem splitting</h2>
-                    <p>Demucs setup, GPU selection, and split concurrency.</p>
+                    <p>Local Demucs or a remote FeedBack stem server.</p>
                   </div>
                   <span className={`server-badge ${stemServerBadge(stemServerStatus, isStartingStemServer, stemServerMatchesSelectedConfig).toLowerCase().replace(/\s+/g, "-")}`}>{stemServerBadge(stemServerStatus, isStartingStemServer, stemServerMatchesSelectedConfig)}</span>
                 </div>
                 {!separateStems ? (
                   <div className="settings-empty">
                     <strong>Stem splitting is disabled</strong>
-                    <span>Enable Separate stems in Conversion settings to configure the local Demucs server.</span>
+                    <span>Enable stems to configure local or remote splitting.</span>
                     <button onClick={() => { setSettingsSection("conversion"); setSeparateStems(true); }}>Enable stems</button>
                   </div>
                 ) : (
@@ -726,13 +661,13 @@ function App() {
                   <div className="stem-summary">
                     <div>
                       <strong>{stemServerReadyForSelection ? "Ready" : "Setup managed by FeedForge"}</strong>
-                      <span>{stemServerReadyForSelection ? stemServerDetail(stemServerStatus, demucsModel, selectedModel) : "FeedForge creates a local Python environment, installs Demucs/PyTorch, downloads the selected model, and reuses it later."}</span>
+                      <span>{stemServerReadyForSelection ? stemServerDetail(stemServerStatus, demucsModel, selectedModel) : "Local splitting runs on this PC. A custom server URL runs splitting on that server."}</span>
                     </div>
                   </div>
                   <div className={`stem-prereq ${pythonInfo?.ok ? "ready" : pythonInfo?.found === false ? "missing" : ""}`}>
                     <div>
                       <strong>{pythonPrereqTitle(pythonInfo, isCheckingPython)}</strong>
-                      <span>{pythonInfo?.message || "Stem splitting needs Python 3.11 or newer installed on Windows. FeedForge handles Demucs, PyTorch, GPU runtime, and model downloads after Python is available."}</span>
+                      <span>{pythonInfo?.message || "Local splitting needs Python 3.11+. FeedForge handles the stem environment after Python is available."}</span>
                       {pythonInfo?.executable && <em>{pythonInfo.executable}</em>}
                     </div>
                     <div className="prereq-actions">
@@ -743,7 +678,7 @@ function App() {
                   <label>
                     Python
                     <div className="path-row">
-                      <input value={pythonPath} onChange={(event) => setPythonPath(event.target.value)} placeholder="Auto-detect, or choose python.exe if Windows discovery fails" disabled={isConverting || stemServerStatus.processRunning || stemServerBusy} />
+                      <input value={pythonPath} onChange={(event) => setPythonPath(event.target.value)} placeholder="Auto-detect or choose python.exe" disabled={isConverting || stemServerStatus.processRunning || stemServerBusy} />
                       <button onClick={choosePythonExecutable} disabled={isConverting || stemServerStatus.processRunning || stemServerBusy}>
                         <FolderOpen size={18} />
                         Browse
@@ -760,9 +695,15 @@ function App() {
                   </label>
                   <div className="demucs-model-note">
                     <strong>{modelStatusLabel(selectedModel)} - {selectedModel?.size || "Model size varies"}</strong>
-                    <span>{selectedModel?.installed ? "This model is already cached locally." : "This model will download the first time you start it or run a stem conversion with it selected."}</span>
-                    <em>{selectedModel?.description || "The selected model downloads on first local server start."}</em>
-                    {!selectedModel?.installed && (
+                    <span>
+                      {selectedModel?.remoteOnly
+                        ? "This model is requested from the configured remote FeedBack Demucs server during conversion."
+                        : selectedModel?.installed
+                          ? "Cached locally."
+                          : "Downloads on first local start."}
+                    </span>
+                    <em>{selectedModel?.description || "Selected model."}</em>
+                    {!selectedModel?.installed && !selectedModel?.remoteOnly && (
                       <button onClick={startLocalStemServer} disabled={isConverting || stemServerBusy || pythonInfo?.ok === false}>
                         {stemServerBusy ? <RotateCw className="spin" size={16} /> : <Download size={16} />}
                         Download/start this model
@@ -803,7 +744,7 @@ function App() {
                   <div className="demucs-install-row">
                     <label>
                       Install folder
-                      <input value={demucsInstallDir} onChange={(event) => setDemucsInstallDir(event.target.value)} placeholder="Choose where Demucs, caches, and models are stored" disabled={isConverting || stemServerBusy} />
+                      <input value={demucsInstallDir} onChange={(event) => setDemucsInstallDir(event.target.value)} placeholder="Install folder" disabled={isConverting || stemServerBusy} />
                     </label>
                     <button onClick={chooseDemucsInstallDir} disabled={isConverting || stemServerBusy}>
                       <FolderOpen size={17} />
@@ -812,7 +753,7 @@ function App() {
                   </div>
                   <label>
                     Demucs server
-                    <input value={demucsUrl} onChange={(event) => setDemucsUrl(event.target.value)} placeholder="Auto from FeedBack, or http://127.0.0.1:8000" disabled={isConverting} />
+                    <input value={demucsUrl} onChange={(event) => setDemucsUrl(event.target.value)} placeholder="Local default or remote server URL" disabled={isConverting} />
                   </label>
                   <label>
                     API key
@@ -827,7 +768,7 @@ function App() {
                       </div>
                     </div>
                     <div className="server-actions">
-                      {!stemServerReadyForSelection && (
+                      {!stemServerReadyForSelection && !selectedModel?.remoteOnly && (
                         <button onClick={startLocalStemServer} disabled={isConverting || stemServerBusy || pythonInfo?.ok === false}>
                           {stemServerBusy ? <RotateCw className="spin" size={17} /> : <Download size={17} />}
                           {stemServerActionText(stemServerStatus, stemServerBusy, selectedModel)}
@@ -858,7 +799,7 @@ function App() {
                 <div className="settings-card-head">
                   <div>
                     <h2>Diagnostics</h2>
-                    <p>Debug logs and live stem server output.</p>
+                    <p>Logs and stem server output.</p>
                   </div>
                 </div>
                 <div className="diagnostics-panel standalone">
@@ -883,15 +824,6 @@ function App() {
               </div>
             )}
           </section>
-        ) : activeView === "tones" ? (
-          <ToneMappingWorkspace
-            items={filtered}
-            selected={selected}
-            selectedId={selected?.id}
-            onSelect={setSelectedId}
-            onRemove={removeItem}
-            canRemove={!isConverting}
-          />
         ) : (
           <>
             <section className="filter-bar">
@@ -1015,17 +947,21 @@ function StemSetupProgress({ status, busy, debugLogInfo }) {
 }
 
 function stemServerDetail(status, demucsModel, selectedModel, matchesSelection = true) {
+  if (selectedModel?.remoteOnly) {
+    return `${selectedModel.name} is requested during conversion through the configured remote Demucs server. The local FeedForge server cannot start this model.`;
+  }
   if (status.healthy && !matchesSelection) {
     const selected = selectedModel?.name || demucsModel;
     return `Current server is ${status.model || "another model"}. Start the selected setup to use ${selected}.`;
   }
   if (status.healthy) {
-    return `${status.url} - ${status.model || demucsModel} on ${resolvedDeviceLabel(status)} is ready for conversions.`;
+    const storage = status.storageDir ? ` Storage: ${status.storageDir}` : "";
+    return `${status.url} - ${status.model || demucsModel} on ${resolvedDeviceLabel(status)} is ready for conversions.${storage}`;
   }
   if (status.message) return status.message;
   if (status.running) return "The port is reachable, but health did not pass. Open the debug log if this stays unresolved.";
-  if (selectedModel?.installed) return "Selected model is installed. Starting this model should reuse the local checkpoint.";
-  return "First start downloads Python dependencies and the selected model into the install folder.";
+  if (selectedModel?.installed) return "Installed locally.";
+  return "First local start installs dependencies and downloads the selected model.";
 }
 
 function stemServerMatchesSelection(status, model, device, jobs) {
@@ -1164,21 +1100,21 @@ function deviceHelpText(device, status) {
   if (!device) return "Auto mode will use CUDA when available, otherwise CPU.";
   if (device.id === "auto") return device.detail || "Auto mode will install and use CUDA PyTorch when an NVIDIA GPU is detected, otherwise CPU.";
   if (device.kind === "cuda" || String(device.id || "").startsWith("cuda")) {
-    return device.detail || "CUDA should be much faster than CPU for stem splitting when enough VRAM is available.";
+    return device.detail || "Uses GPU acceleration when the local PyTorch runtime supports it.";
   }
-  if (device.id === "cpu") return device.detail || "CPU mode is reliable, but usually much slower than GPU.";
-  return device.detail || "This device is reported by the local Demucs Python environment.";
+  if (device.id === "cpu") return device.detail || "Reliable, but slower than GPU.";
+  return device.detail || "Reported by the local stem environment.";
 }
 
 function stemJobHelpText(value, status) {
   const active = Number(status?.concurrency || value || 1);
   if (active <= 1) {
-    return "Safest setting. Conversion workers can still prepare packages in parallel, while Demucs uses one GPU split at a time.";
+    return "Safest. One stem split at a time.";
   }
   if (active === 2) {
-    return "Experimental speed mode. Good GPUs may process two stem splits at once, but VRAM use is much higher.";
+    return "Faster on strong GPUs, higher VRAM use.";
   }
-  return "High risk. Use only on large VRAM GPUs; too many parallel Demucs jobs can be slower or fail with out-of-memory errors.";
+  return "High VRAM use. May be slower or fail on smaller GPUs.";
 }
 
 function resolvedDeviceLabel(status) {
@@ -1191,6 +1127,7 @@ function resolvedDeviceLabel(status) {
 
 function modelStatusLabel(model) {
   if (!model) return "Unknown";
+  if (model.remoteOnly) return "Remote only";
   if (model.installed) return "Installed";
   if (model.partial) return `Partial ${model.installedCount || 0}/${model.requiredCount || 0}`;
   return "Download needed";
@@ -1260,61 +1197,12 @@ function Queue({ items, selectedId, onSelect, onRemove, canRemove }) {
   );
 }
 
-function ToneMappingWorkspace({ items, selected, selectedId, onSelect, onRemove, canRemove }) {
-  const preview = selected?.preview;
-  const tones = preview?.tones || [];
-  const rigBuilder = preview?.rig_builder || [];
-  const arrangements = preview?.arrangements || [];
-  const totalDefinitions = countToneDefinitions(tones);
-  const totalGear = tones.reduce((total, arrangement) => (
-    total + (arrangement.definitions || []).reduce((sum, definition) => sum + (definition.gear || []).length, 0)
-  ), 0);
-  const mappedGear = tones.reduce((total, arrangement) => (
-    total + (arrangement.definitions || []).reduce((sum, definition) => (
-      sum + (definition.gear || []).filter((gear) => gear.recommendation_confidence && gear.recommendation_confidence !== "missing").length
-    ), 0)
-  ), 0);
-  const readyRoutes = tones.reduce((total, arrangement) => (
-    total + (arrangement.definitions || []).filter((definition) => findRigBuilderMapping(rigBuilder, definition)?.status === "ready").length
-  ), 0);
-
-  return (
-    <section className="tone-workspace">
-      <div className="tone-library-column">
-        <Queue items={items} selectedId={selectedId} onSelect={onSelect} onRemove={onRemove} canRemove={canRemove} />
-      </div>
-      <div className="tone-map-column">
-        <section className="tone-map-hero">
-          <div>
-            <span className="eyebrow">Rocksmith to Rig Builder</span>
-            <h2>{preview?.title || selected?.name || "No song selected"}</h2>
-            <p>{preview?.artist || "Import and select a PSARC to inspect its tone chain."}</p>
-          </div>
-          <div className="tone-map-metrics">
-            <Metric label="Tone definitions" value={totalDefinitions} />
-            <Metric label="Gear mapped" value={totalGear ? `${mappedGear}/${totalGear}` : "0"} tone={mappedGear === totalGear && totalGear ? "green" : "blue"} />
-            <Metric label="Ready routes" value={totalDefinitions ? `${readyRoutes}/${totalDefinitions}` : "0"} tone={readyRoutes === totalDefinitions && totalDefinitions ? "green" : "red"} />
-          </div>
-        </section>
-        {selected ? (
-          <ToneInspector arrangements={arrangements} tones={tones} rigBuilder={rigBuilder} mode="mapping" />
-        ) : (
-          <section className="panel tone-panel">
-            <div className="empty">Add PSARC files to inspect Rocksmith tones and Rig Builder equivalents.</div>
-          </section>
-        )}
-      </div>
-    </section>
-  );
-}
-
 function Inspector({ item }) {
   const [tab, setTab] = useState("overview");
   const preview = item?.preview;
   const cover = preview?.cover_path ? `file:///${preview.cover_path.replaceAll("\\", "/")}` : null;
   const arrangements = preview?.arrangements || [];
   const tones = preview?.tones || [];
-  const rigBuilder = preview?.rig_builder || [];
   const authors = preview?.authors || [];
   return (
     <aside className="inspector">
@@ -1391,13 +1279,13 @@ function Inspector({ item }) {
           </section>
         </>
       ) : (
-        <ToneInspector arrangements={arrangements} tones={tones} rigBuilder={rigBuilder} />
+        <ToneInspector arrangements={arrangements} tones={tones} />
       )}
     </aside>
   );
 }
 
-function ToneInspector({ arrangements, tones, rigBuilder, mode = "compact" }) {
+function ToneInspector({ arrangements, tones }) {
   const rows = useMemo(() => (arrangements?.length ? arrangements : tones || []).map((arrangement) => {
     const id = arrangement.id || arrangement.arrangement_id;
     const tone = (tones || []).find((candidate) => candidate.arrangement_id === id);
@@ -1411,7 +1299,6 @@ function ToneInspector({ arrangements, tones, rigBuilder, mode = "compact" }) {
   const [activeArrangement, setActiveArrangement] = useState(rows[0]?.id || "");
   const activeRow = rows.find((arrangement) => arrangement.id === activeArrangement) || rows[0] || null;
   const active = activeRow?.tone || null;
-
   useEffect(() => {
     if (rows.length && !rows.some((arrangement) => arrangement.id === activeArrangement)) {
       setActiveArrangement(rows[0].id);
@@ -1419,10 +1306,10 @@ function ToneInspector({ arrangements, tones, rigBuilder, mode = "compact" }) {
   }, [rows, activeArrangement]);
 
   return (
-    <section className={`panel tone-panel ${mode === "mapping" ? "mapping-mode" : ""}`}>
+    <section className="panel tone-panel">
       <div className="panel-title">
-        <h2>Tone Export</h2>
-        <span>{countToneDefinitions(tones)} definitions</span>
+        <h2>Tone Data</h2>
+        <span>{countToneDefinitions(tones)} definitions / {countToneChanges(tones)} changes</span>
       </div>
       {rows.length === 0 && (
         <div className="empty compact">No playable arrangements were detected for this song.</div>
@@ -1456,8 +1343,6 @@ function ToneInspector({ arrangements, tones, rigBuilder, mode = "compact" }) {
             <code>{active.base_rig || "no-rig"}</code>
           </div>
 
-          <ToneRouteSummary definitions={active.definitions || []} rigBuilder={rigBuilder} />
-
           <div className="tone-section">
             <h3>FeedPak Timeline</h3>
             <div className="tone-changes">
@@ -1474,7 +1359,7 @@ function ToneInspector({ arrangements, tones, rigBuilder, mode = "compact" }) {
           </div>
 
           <div className="tone-section">
-            <h3>Source Tones to FeedBack Audio</h3>
+            <h3>Source Tone Definitions</h3>
             <div className="tone-definitions">
               {(active.definitions || []).map((definition) => (
                 <div className="tone-definition" key={definition.key || definition.name}>
@@ -1483,7 +1368,6 @@ function ToneInspector({ arrangements, tones, rigBuilder, mode = "compact" }) {
                       <strong>{definition.name || "Unnamed tone"}</strong>
                       <span>PSARC key: {definition.key || "no-key"}</span>
                     </div>
-                    <RouteBadge mapping={findRigBuilderMapping(rigBuilder, definition)} />
                   </div>
                   <div className="gear-list">
                     {(definition.gear || []).length === 0 && <span className="muted-text">No gear chain found.</span>}
@@ -1500,13 +1384,11 @@ function ToneInspector({ arrangements, tones, rigBuilder, mode = "compact" }) {
                         </div>
                         <span>{gear.slot}</span>
                         <strong>{gear.key || gear.type || "Unknown gear"}</strong>
-                        <small>{gear.category || gear.type || "mapped by key"} / {gear.knobs} knobs</small>
-                        <GearRecommendation gear={gear} />
+                        <small>{gear.category || gear.type || "source gear"} / {gear.knobs} knobs</small>
                         <KnobValues values={gear.knob_values} />
                       </div>
                     ))}
                   </div>
-                  <RigBuilderRoute mapping={findRigBuilderMapping(rigBuilder, definition)} />
                 </div>
               ))}
             </div>
@@ -1514,41 +1396,6 @@ function ToneInspector({ arrangements, tones, rigBuilder, mode = "compact" }) {
         </div>
       )}
     </section>
-  );
-}
-
-function ToneRouteSummary({ definitions, rigBuilder }) {
-  const total = definitions.length;
-  const mapped = definitions.filter((definition) => findRigBuilderMapping(rigBuilder, definition)?.status === "ready").length;
-  const partial = definitions.filter((definition) => findRigBuilderMapping(rigBuilder, definition)?.status === "partial").length;
-  const missing = Math.max(0, total - mapped - partial);
-  return (
-    <div className="tone-route-summary">
-      <div>
-        <strong>{mapped}/{total}</strong>
-        <span>Ready routes</span>
-      </div>
-      <div>
-        <strong>{partial}</strong>
-        <span>Partial</span>
-      </div>
-      <div>
-        <strong>{missing}</strong>
-        <span>Not seeded</span>
-      </div>
-    </div>
-  );
-}
-
-function GearRecommendation({ gear }) {
-  if (!gear.recommendation && !gear.recommendation_kind) return null;
-  return (
-    <div className="gear-recommendation">
-      <b>{gear.recommendation_kind || "Mapped"}{gear.recommendation_confidence ? ` / ${gear.recommendation_confidence}` : ""}</b>
-      <span>{gear.recommendation || "No named target"}</span>
-      {gear.recommendation_detail && <small>{gear.recommendation_detail}</small>}
-      {gear.recommendation_source && <small>{gear.recommendation_source}</small>}
-    </div>
   );
 }
 
@@ -1609,54 +1456,12 @@ function formatKnob(value) {
   return String(value);
 }
 
-function RouteBadge({ mapping }) {
-  if (!mapping) return <span className="route-badge missing">No local route</span>;
-  return <span className={`route-badge ${mapping.status}`}>{routeStatusText(mapping.status)}</span>;
-}
-
-function RigBuilderRoute({ mapping }) {
-  if (!mapping) {
-    return (
-      <div className="rig-route missing">
-        <strong>FeedBack audio route</strong>
-        <span>No local route has been written for this tone yet. Convert with Include tones enabled to seed it for FeedBack.</span>
-      </div>
-    );
-  }
-  return (
-    <div className={`rig-route ${mapping.status}`}>
-      <div className="rig-route-head">
-        <strong>FeedBack audio route</strong>
-        <code>{mapping.preset || mapping.tone_key}</code>
-      </div>
-      <div className="route-stages">
-        {(mapping.stages || []).map((stage, index) => (
-          <div className={`route-stage ${stage.status}`} key={`${mapping.tone_key}-${stage.slot}-${stage.gear}-${index}`}>
-            <span>{stage.slot}</span>
-            <strong>{stage.gear || "Unknown gear"}</strong>
-            <small>{stage.kind.toUpperCase()} - {stage.asset || "missing assignment"}</small>
-            {stage.kind === "vst" && <em>{stage.state_applied ? "RS knobs applied" : "Default plugin settings"}</em>}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function findRigBuilderMapping(mappings, definition) {
-  const candidates = [definition?.key, definition?.name].filter(Boolean).map((item) => String(item).trim().toLowerCase());
-  return (mappings || []).find((mapping) => candidates.includes(String(mapping.tone_key || "").trim().toLowerCase())) || null;
-}
-
-function routeStatusText(status) {
-  if (status === "ready") return "Mapped";
-  if (status === "partial") return "Partial";
-  if (status === "bypassed") return "Bypassed";
-  return "Missing";
-}
-
 function countToneDefinitions(tones) {
   return (tones || []).reduce((total, arrangement) => total + ((arrangement.definitions || []).length), 0);
+}
+
+function countToneChanges(tones) {
+  return (tones || []).reduce((total, arrangement) => total + ((arrangement.changes || []).length), 0);
 }
 
 function ReadyLine({ ok, text, muted = false }) {
@@ -1808,7 +1613,8 @@ function normalizePath(filePath) {
 }
 
 function safePathSegment(value, fallback = "Unknown Artist") {
-  const cleaned = String(value || "")
+  const normalized = String(value || "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "");
+  const cleaned = (normalized || String(value || ""))
     .replace(/[<>:"/\\|?*\x00-\x1F]/g, "_")
     .replace(/\s+/g, " ")
     .trim()

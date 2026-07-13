@@ -1,7 +1,0 @@
-{
-  "Cab_CA215C": {
-    "file": "cabs/Box_2x12_Alnico_ribbon_offaxis.wav",
-    "source": "feedforge_tone_lab",
-    "evidence": "audlike_p Like a Stone overdrive clean cab sweep with Rocksmith closed: band_mae_db 5.096 vs 14.130 for Bender_1x10_cond_cone"
-  }
-}
