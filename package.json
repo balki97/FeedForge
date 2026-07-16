@@ -1,6 +1,6 @@
 {
   "name": "feedforge",
-  "version": "0.1.11",
+  "version": "0.1.13",
   "private": true,
   "description": "Desktop toolkit for preparing FeedBack-ready song packages.",
   "author": "FeedForge Contributors",
@@ -54,6 +54,18 @@
       {
         "from": "tools/start-demucs-server.ps1",
         "to": "demucs-server/start-demucs-server.ps1"
+      },
+      {
+        "from": "assets/tone-equipment",
+        "to": "tone-equipment"
+      },
+      {
+        "from": "src/feedback_converter/data/equipment.json",
+        "to": "tone-equipment/equipment.json"
+      },
+      {
+        "from": "src/feedback_converter/data/feedback_equipment.json",
+        "to": "tone-equipment/feedback_equipment.json"
       }
     ],
     "directories": {

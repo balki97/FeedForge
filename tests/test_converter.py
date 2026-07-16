@@ -354,6 +354,24 @@ def test_extract_metadata_reads_toolkit_package_author():
     assert metadata["authors"] == [{"name": "nicolobos77", "role": "charter"}]
 
 
+def test_extract_metadata_reads_inline_toolkit_package_author():
+    metadata = converter._extract_metadata(
+        {
+            "manifests/songs_dlc/test/test.json": json.dumps(
+                {"SongName": "Fade to Black", "ArtistName": "Metallica"}
+            ).encode(),
+            "toolkit.version": (
+                b"Toolkit version: DLC Builder v3.1.1 "
+                b"Package Author: Jessiecat "
+                b"Package Version: 1.1 "
+                b"Package Comment: Remastered"
+            ),
+        }
+    )
+
+    assert metadata["authors"] == [{"name": "Jessiecat", "role": "charter"}]
+
+
 def test_extract_metadata_ignores_generic_toolkit_package_author():
     metadata = converter._extract_metadata(
         {
@@ -364,6 +382,51 @@ def test_extract_metadata_ignores_generic_toolkit_package_author():
                 b"Toolkit version: 2.9.2.1\n"
                 b"Package Author: Custom Song Creator\n"
                 b"Package Comment: (Remastered by CDLC Creator) (DDC by CDLC Creator)\n"
+            ),
+        }
+    )
+
+    assert metadata["authors"] == []
+
+
+def test_extract_metadata_ignores_generic_inline_toolkit_comment_author():
+    metadata = converter._extract_metadata(
+        {
+            "manifests/songs_dlc/test/test.json": json.dumps(
+                {
+                    "Entries": {
+                        "abc": {
+                            "Attributes": {
+                                "SongName": "For Whom The Bell Tolls",
+                                "ArtistName": "Metallica",
+                                "DLCKey": "MetallicaForWhomTheBellTollsNa",
+                            }
+                        }
+                    }
+                }
+            ).encode(),
+            "toolkit.version": (
+                b"Package Author: Custom Song Creator "
+                b"Package Version: 1 "
+                b"Package Comment: (Remastered by CDLC Creator) (DDC by CDLC Creator)"
+            ),
+        }
+    )
+
+    assert metadata["authors"] == []
+
+
+def test_extract_metadata_ignores_empty_toolkit_package_author():
+    metadata = converter._extract_metadata(
+        {
+            "manifests/songs_dlc/test/test.json": json.dumps(
+                {"SongName": "Beat It", "ArtistName": "Michael Jackson"}
+            ).encode(),
+            "toolkit.version": (
+                b"Toolkit version: DLC Builder v1.5.2\n"
+                b"Package Author: \n"
+                b"Package Version: 1\n"
+                b"Package Comment: Remastered\n"
             ),
         }
     )
@@ -382,6 +445,76 @@ def test_extract_metadata_reads_explicit_xml_credit_comments():
     )
 
     assert metadata["authors"] == [{"name": "RealCharter", "role": "charter"}]
+
+
+def test_extract_metadata_reads_charter_suffix_from_cdlc_key_when_no_author_field():
+    metadata = converter._extract_metadata(
+        {
+            "manifests/songs_dlc/test/test.json": json.dumps(
+                {
+                    "Entries": {
+                        "abc": {
+                            "Attributes": {
+                                "SongName": "Fade to Black",
+                                "ArtistName": "Metallica",
+                                "DLCKey": "MetallicaFadeToBlackJessiecat",
+                                "SongKey": "MetallicaFadeToBlackJessiecat",
+                                "FullName": "MetallicaFadeToBlackJessiecat_Lead",
+                            }
+                        }
+                    }
+                }
+            ).encode(),
+        }
+    )
+
+    assert metadata["authors"] == [{"name": "Jessiecat", "role": "charter"}]
+
+
+def test_extract_metadata_does_not_guess_author_from_unmatched_cdlc_key():
+    metadata = converter._extract_metadata(
+        {
+            "manifests/songs_dlc/test/test.json": json.dumps(
+                {
+                    "Entries": {
+                        "abc": {
+                            "Attributes": {
+                                "SongName": "Fade to Black",
+                                "ArtistName": "Metallica",
+                                "DLCKey": "FadeBlackRandomPack",
+                            }
+                        }
+                    }
+                }
+            ).encode(),
+        }
+    )
+
+    assert metadata["authors"] == []
+
+
+def test_extract_metadata_does_not_guess_author_from_short_cdlc_key_suffix():
+    content = {
+        "manifests/songs_dlc/test/test.json": json.dumps(
+            {
+                "Entries": {
+                    "entry": {
+                        "Attributes": {
+                            "ArtistName": "Metallica",
+                            "SongName": "For Whom The Bell Tolls",
+                            "DLCKey": "MetallicaForWhomTheBellTollsNa",
+                            "SongKey": "MetallicaForWhomTheBellTollsNa",
+                            "FullName": "MetallicaForWhomTheBellTollsNa_Lead",
+                        }
+                    }
+                }
+            }
+        ).encode()
+    }
+
+    metadata = converter._extract_metadata(content)
+
+    assert metadata["authors"] == []
 
 
 def test_rs1_multisong_grouping_keeps_song_specific_audio():

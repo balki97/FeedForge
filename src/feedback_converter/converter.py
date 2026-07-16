@@ -511,10 +511,14 @@ def _extract_metadata(content: dict[str, bytes]) -> dict[str, Any]:
                 continue
 
     flat = list(_walk_dicts(objects))
+    title = _first_key(flat, "SongName", "Title", "Name", "SongTitle")
+    artist = _first_key(flat, "ArtistName", "Artist", "SongArtist")
     authors = _dedupe_authors([*_metadata_authors(flat), *_metadata_text_authors(text_entries)])
+    if not authors:
+        authors = _metadata_key_suffix_authors(flat, title=title, artist=artist)
     return {
-        "title": _first_key(flat, "SongName", "Title", "Name", "SongTitle"),
-        "artist": _first_key(flat, "ArtistName", "Artist", "SongArtist"),
+        "title": title,
+        "artist": artist,
         "album": _first_key(flat, "AlbumName", "Album"),
         "year": _first_key(flat, "SongYear", "Year"),
         "duration": _first_key(flat, "SongLength", "Duration", "SongLengthSeconds"),
@@ -592,16 +596,21 @@ def _metadata_text_authors(entries: list[tuple[str, str]]) -> list[dict[str, str
     authors: list[dict[str, str]] = []
     for path, text in entries:
         lower_path = path.lower()
+        if lower_path.endswith("toolkit.version"):
+            for raw_line in text.splitlines():
+                match = re.search(
+                    r"(?i)package\s+author\s*:\s*(.*?)(?=[ \t]*package\s+(?:version|comment)\s*:|[ \t]*$)",
+                    raw_line,
+                )
+                if not match:
+                    continue
+                name = _clean_author_name(match.group(1))
+                if name:
+                    authors.append({"name": name, "role": "charter"})
+            continue
         for raw_line in text.splitlines():
             line = re.sub(r"^\s*<!--\s*|\s*-->\s*$", "", raw_line).strip()
             if not line:
-                continue
-            if lower_path.endswith("toolkit.version"):
-                match = re.match(r"(?i)^package\s+author\s*:\s*(.+?)\s*$", line)
-                if match:
-                    name = _clean_author_name(match.group(1))
-                    if name:
-                        authors.append({"name": name, "role": "charter"})
                 continue
             match = re.match(
                 r"(?i)^(?:charted|chart|authored|created|made|converted|arranged|transcribed)\s+by\s*[:\-]?\s*(.+?)\s*$",
@@ -624,6 +633,53 @@ def _metadata_text_authors(entries: list[tuple[str, str]]) -> list[dict[str, str
     return _dedupe_authors(authors)
 
 
+def _metadata_key_suffix_authors(dicts: list[dict[str, Any]], *, title: Any, artist: Any) -> list[dict[str, str]]:
+    title_part = _compact_credit_part(title)
+    artist_part = _compact_credit_part(artist)
+    if not title_part or not artist_part:
+        return []
+
+    candidates: list[dict[str, str]] = []
+    for item in dicts:
+        for key in ("DLCKey", "SongKey", "FullName"):
+            value = item.get(key)
+            if not isinstance(value, str):
+                continue
+            name = _author_from_song_key(value, artist_part=artist_part, title_part=title_part)
+            if name:
+                candidates.append({"name": name, "role": "charter"})
+    return _dedupe_authors(candidates)
+
+
+def _author_from_song_key(value: str, *, artist_part: str, title_part: str) -> str | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    raw = re.sub(r"(?i)_(lead|lead\d+|rhythm|rhythm\d+|bass|bass\d+|vocals?)$", "", raw)
+    compact = _compact_credit_part(raw)
+    prefix = f"{artist_part}{title_part}"
+    if not compact.lower().startswith(prefix.lower()):
+        return None
+    suffix_start = len(prefix)
+    suffix = compact[suffix_start:]
+    author = _clean_author_name(_prettify_compact_author(suffix))
+    if not author or len(_compact_credit_part(author)) < 3:
+        return None
+    return author
+
+
+def _compact_credit_part(value: Any) -> str:
+    return re.sub(r"[^A-Za-z0-9]+", "", str(value or ""))
+
+
+def _prettify_compact_author(value: str) -> str:
+    text = str(value or "").strip("_- ")
+    if not text:
+        return ""
+    text = re.sub(r"(?i)(?:remastered|ddc|rs2014|v\d+|r\d+|p)$", "", text).strip("_- ")
+    return text
+
+
 def _clean_author_name(value: str) -> str | None:
     name = str(value or "").strip().strip("\"'")
     name = re.sub(r"\s+", " ", name)
@@ -631,6 +687,8 @@ def _clean_author_name(value: str) -> str | None:
     if not name:
         return None
     normalized = re.sub(r"[^a-z0-9]+", " ", name.lower()).strip()
+    if not normalized:
+        return None
     if normalized in GENERIC_AUTHOR_NAMES:
         return None
     return name

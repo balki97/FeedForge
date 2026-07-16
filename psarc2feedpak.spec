@@ -27,6 +27,8 @@ a = Analysis(
             'src\\feedback_converter\\tools\\packed_codebooks_aoTuV_603.bin',
             'feedback_converter\\tools',
         ),
+        ('src\\feedback_converter\\data\\equipment.json', 'feedback_converter\\data'),
+        ('src\\feedback_converter\\data\\feedback_equipment.json', 'feedback_converter\\data'),
     ],
     hiddenimports=[],
     hookspath=[],

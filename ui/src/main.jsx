@@ -6,6 +6,7 @@ import {
   Coffee,
   Download,
   ExternalLink,
+  FileMusic,
   FolderOpen,
   Guitar,
   ImageIcon,
@@ -214,12 +215,16 @@ function App() {
     });
   }, []);
 
-  const selected = items.find((item) => item.id === selectedId) || items[0] || null;
+  const selected = items.find((item) => item.id === selectedId) || null;
+  const workspaceItems = useMemo(() => items.filter((item) => item.sourceType !== "feedpak"), [items]);
+  const feedpakItems = useMemo(() => items.filter((item) => item.sourceType === "feedpak"), [items]);
+  const workspaceSelected = selected?.sourceType === "feedpak" ? null : selected || workspaceItems[0] || null;
+  const feedpakSelected = selected?.sourceType === "feedpak" ? selected : feedpakItems[0] || null;
   const filterOptions = useMemo(() => {
     const artists = new Set();
     const albums = new Set();
     const tunings = new Set();
-    for (const item of items) {
+    for (const item of workspaceItems) {
       if (item.preview?.artist) artists.add(item.preview.artist);
       if (item.preview?.album) albums.add(item.preview.album);
       for (const label of arrangementTuningLabels(item.preview?.arrangements || [])) {
@@ -231,9 +236,9 @@ function App() {
       albums: sortedOptions(albums),
       tunings: sortedOptions(tunings)
     };
-  }, [items]);
+  }, [workspaceItems]);
 
-  const filtered = items.filter((item) => {
+  const filtered = workspaceItems.filter((item) => {
     const haystack = `${item.preview?.title || item.name} ${item.preview?.artist || ""} ${item.preview?.album || ""}`.toLowerCase();
     const matchesQuery = haystack.includes(query.toLowerCase());
     const matchesFilter =
@@ -249,11 +254,11 @@ function App() {
   });
 
   const stats = useMemo(() => ({
-    total: items.length,
-    ready: items.filter((item) => item.status === "ready" || item.status === "converted").length,
-    converted: items.filter((item) => item.status === "converted").length,
-    failed: items.filter((item) => item.status === "failed").length
-  }), [items]);
+    total: workspaceItems.length,
+    ready: workspaceItems.filter((item) => item.status === "ready" || item.status === "converted").length,
+    converted: workspaceItems.filter((item) => item.status === "converted").length,
+    failed: workspaceItems.filter((item) => item.status === "failed").length
+  }), [workspaceItems]);
   const stemServerBusy = (isStartingStemServer || stemServerStatus.starting || stemServerStatus.processRunning) && !stemServerStatus.healthy;
   const selectedModel = selectedDemucsModel(demucsModels, demucsModel);
   const selectedDevice = selectedDemucsDevice(demucsDevices, demucsDevice);
@@ -263,7 +268,7 @@ function App() {
   async function addFiles(paths, sourceRoot = null) {
     const existing = new Set(itemsRef.current.map((item) => normalizePathKey(item.path)));
     const incoming = paths
-      .filter((filePath) => filePath.toLowerCase().endsWith(".psarc"))
+      .filter((filePath) => isSongPackage(filePath))
       .filter((filePath) => {
         const key = normalizePathKey(filePath);
         if (existing.has(key)) return false;
@@ -274,6 +279,7 @@ function App() {
         id: crypto.randomUUID(),
         path: filePath,
         name: basename(filePath),
+        sourceType: fileType(filePath),
         sourceRoot,
         status: "queued",
         preview: null,
@@ -286,6 +292,9 @@ function App() {
     itemsRef.current = nextItems;
     setItems(nextItems);
     if (!selectedId) setSelectedId(incoming[0].id);
+    if (incoming.every((item) => item.sourceType === "feedpak")) {
+      setActiveView("feedpak");
+    }
     inspectionQueueRef.current.push(...incoming.map((item) => item.id));
     pumpInspectionQueue();
   }
@@ -473,17 +482,19 @@ function App() {
       if (!item) return;
       updateItem(item.id, { status: "converting", error: null });
       const outputPath = outputDir ? outputPathForItem(item, outputDir, outputLayout, item.sourceRoot || batchSourceRoot, outputNameFormat, outputNameTemplate) : null;
-      const result = await api.convert({
+      const payload = {
         inputPath: item.path,
         outputPath,
         overwrite,
-        bStandardTo7String,
         separateStems,
         demucsUrl: demucsUrl.trim(),
         demucsApiKey: demucsApiKey.trim(),
         demucsModel,
         demucsStems
-      });
+      };
+      const result = item.sourceType === "feedpak"
+        ? await api.updateFeedpak(payload)
+        : await api.convert({ ...payload, bStandardTo7String });
       if (!result.ok) {
         updateItem(item.id, { status: "failed", error: result.error });
       } else {
@@ -516,6 +527,83 @@ function App() {
   function stopConversion() {
     stopRequestedRef.current = true;
     setIsStopping(true);
+  }
+
+  async function saveFeedpakMetadata(item, metadata, authors, options = {}) {
+    if (!item || item.sourceType !== "feedpak") return { ok: false, error: "Select a FeedPak first." };
+    updateItem(item.id, { status: "converting", error: null });
+    const overwriteOriginal = options.overwriteOriginal === true;
+    const outputPath = overwriteOriginal ? null : editedFeedpakPath(item, outputDir);
+    const result = await api.updateFeedpak({
+      inputPath: item.path,
+      outputPath,
+      overwrite: overwriteOriginal,
+      metadata,
+      authors
+    });
+    if (!result.ok) {
+      updateItem(item.id, { status: "failed", error: result.error });
+      return result;
+    }
+    if (overwriteOriginal) {
+      updateItem(item.id, { status: "queued", error: null });
+      await inspectItem({ ...item, status: "queued" });
+    } else {
+      updateItem(item.id, {
+        status: "converted",
+        outputPath: result.outputPath || outputPath,
+        error: null
+      });
+    }
+    return result;
+  }
+
+  async function replaceFeedpakCover(item, options = {}) {
+    if (!item || item.sourceType !== "feedpak") return;
+    const coverPath = await api.pickCoverImage({ defaultPath: parentDir(item.path) || undefined });
+    if (!coverPath) return;
+    updateItem(item.id, { status: "converting", error: null });
+    const overwriteOriginal = options.overwriteOriginal === true;
+    const outputPath = overwriteOriginal ? null : editedFeedpakPath(item, outputDir);
+    const result = await api.updateFeedpak({
+      inputPath: item.path,
+      outputPath,
+      overwrite: overwriteOriginal,
+      coverPath
+    });
+    if (!result.ok) {
+      updateItem(item.id, { status: "failed", error: result.error });
+      return;
+    }
+    if (overwriteOriginal) {
+      updateItem(item.id, { status: "queued", error: null });
+      await inspectItem({ ...item, status: "queued" });
+    } else {
+      updateItem(item.id, { status: "converted", outputPath: result.outputPath || outputPath, error: null });
+    }
+  }
+
+  async function removeFeedpakCover(item, options = {}) {
+    if (!item || item.sourceType !== "feedpak") return;
+    updateItem(item.id, { status: "converting", error: null });
+    const overwriteOriginal = options.overwriteOriginal === true;
+    const outputPath = overwriteOriginal ? null : editedFeedpakPath(item, outputDir);
+    const result = await api.updateFeedpak({
+      inputPath: item.path,
+      outputPath,
+      overwrite: overwriteOriginal,
+      removeCover: true
+    });
+    if (!result.ok) {
+      updateItem(item.id, { status: "failed", error: result.error });
+      return;
+    }
+    if (overwriteOriginal) {
+      updateItem(item.id, { status: "queued", error: null });
+      await inspectItem({ ...item, status: "queued" });
+    } else {
+      updateItem(item.id, { status: "converted", outputPath: result.outputPath || outputPath, error: null });
+    }
   }
 
   function onDrop(event) {
@@ -560,7 +648,7 @@ function App() {
             <Search size={17} />
             <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search title, artist, or album" />
           </div>
-          <button onClick={chooseFiles}><Plus size={17} /> Add PSARCs</button>
+          <button onClick={chooseFiles}><Plus size={17} /> Add files</button>
           <button onClick={chooseFolder}><FolderOpen size={17} /> Add folder</button>
         </section>
 
@@ -580,6 +668,7 @@ function App() {
         <section className="view-tabs app-tabs" aria-label="FeedForge sections">
           <button className={activeView === "workspace" ? "active" : ""} onClick={() => setActiveView("workspace")}>Workspace</button>
           <button className={activeView === "settings" ? "active" : ""} onClick={() => setActiveView("settings")}>Settings</button>
+          <button className={activeView === "feedpak" ? "active" : ""} onClick={() => setActiveView("feedpak")}>FeedPak tools</button>
         </section>
 
         {activeView === "settings" ? (
@@ -860,6 +949,17 @@ function App() {
               </div>
             )}
           </section>
+        ) : activeView === "feedpak" ? (
+          <FeedPakTools
+            item={feedpakSelected}
+            feedpakItems={feedpakItems}
+            selectedId={selectedId}
+            onSelect={setSelectedId}
+            onAddFiles={chooseFiles}
+            onSaveFeedpakMetadata={saveFeedpakMetadata}
+            onReplaceFeedpakCover={replaceFeedpakCover}
+            onRemoveFeedpakCover={removeFeedpakCover}
+          />
         ) : (
           <>
             <section className="filter-bar">
@@ -895,9 +995,14 @@ function App() {
             <section className="content-grid">
               <div className="left-column">
                 <DropZone onClick={chooseFiles} />
-                <Queue items={filtered} selectedId={selected?.id} onSelect={setSelectedId} onRemove={removeItem} canRemove={!isConverting} />
+                <Queue items={filtered} selectedId={workspaceSelected?.id} onSelect={setSelectedId} onRemove={removeItem} canRemove={!isConverting} />
               </div>
-              <Inspector item={selected} />
+              <Inspector
+                item={workspaceSelected}
+                onSaveFeedpakMetadata={saveFeedpakMetadata}
+                onReplaceFeedpakCover={replaceFeedpakCover}
+                onRemoveFeedpakCover={removeFeedpakCover}
+              />
             </section>
           </>
         )}
@@ -1202,8 +1307,8 @@ function DropZone({ onClick }) {
   return (
     <button className="drop-zone" onClick={onClick}>
       <UploadCloud size={30} />
-      <strong>Drop PSARC files here</strong>
-      <span>Batch import, inspect, and convert without leaving this screen.</span>
+      <strong>Drop PSARC or FeedPak files here</strong>
+      <span>Convert CDLC, inspect FeedPaks, edit metadata, or split stems.</span>
     </button>
   );
 }
@@ -1218,7 +1323,7 @@ function Queue({ items, selectedId, onSelect, onRemove, canRemove }) {
         <span>{items.length} file{items.length === 1 ? "" : "s"}</span>
       </div>
       <div className="queue">
-        {items.length === 0 && <div className="empty">No PSARC files imported yet.</div>}
+        {items.length === 0 && <div className="empty">No song packages imported yet.</div>}
         {visibleItems.map((item) => (
           <button
             key={item.id}
@@ -1231,6 +1336,7 @@ function Queue({ items, selectedId, onSelect, onRemove, canRemove }) {
               <span>{item.preview?.artist || item.path}</span>
             </div>
             <div className="queue-meta">
+              <span>{item.sourceType === "feedpak" ? "FeedPak" : "PSARC"}</span>
               <span>{item.preview ? duration(item.preview.duration) : "-"}</span>
               <b>{statusText(item.status)}</b>
             </div>
@@ -1262,21 +1368,174 @@ function Queue({ items, selectedId, onSelect, onRemove, canRemove }) {
   );
 }
 
-function Inspector({ item }) {
+function FeedPakTools({
+  item,
+  feedpakItems,
+  selectedId,
+  onSelect,
+  onAddFiles,
+  onSaveFeedpakMetadata,
+  onReplaceFeedpakCover,
+  onRemoveFeedpakCover
+}) {
+  return (
+    <section className="feedpak-tools-page">
+      <div className="tools-head">
+        <div>
+          <h2>FeedPak tools</h2>
+          <p>Inspect and tune existing FeedPak packages.</p>
+        </div>
+        <button onClick={onAddFiles}><Plus size={17} /> Add FeedPaks</button>
+      </div>
+
+      {feedpakItems.length > 0 && (
+        <div className="feedpak-picker">
+          <span>{feedpakItems.length} FeedPak{feedpakItems.length === 1 ? "" : "s"} loaded</span>
+          <div className="feedpak-strip" aria-label="Imported FeedPaks">
+            {feedpakItems.map((entry) => (
+              <button
+                key={entry.id}
+                className={selectedId === entry.id ? "active" : ""}
+                onClick={() => onSelect(entry.id)}
+                title={entry.path}
+              >
+                <strong>{entry.preview?.title || entry.name}</strong>
+                <span>{entry.preview?.artist || "Unknown artist"}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {!item ? (
+        <div className="tools-empty">
+          <FileMusic size={38} />
+          <strong>No FeedPak selected</strong>
+          <span>Add or select a FeedPak package to inspect and edit it.</span>
+          <button className="primary" onClick={onAddFiles}><Plus size={17} /> Add FeedPaks</button>
+        </div>
+      ) : (
+        <div className="feedpak-tools-grid">
+          <Inspector
+            item={item}
+            onSaveFeedpakMetadata={onSaveFeedpakMetadata}
+            onReplaceFeedpakCover={onReplaceFeedpakCover}
+            onRemoveFeedpakCover={onRemoveFeedpakCover}
+          />
+          <div className="feedpak-tools-main">
+            <FeedPakPackageSummary item={item} />
+            <ToneInspector arrangements={item.preview?.arrangements || []} tones={item.preview?.tones || []} expanded />
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function FeedPakPackageSummary({ item }) {
+  const preview = item?.preview || {};
+  const arrangements = preview.arrangements || [];
+  const stems = preview.stems || [];
+  const tones = preview.tones || [];
+  const authors = preview.authors || [];
+  return (
+    <section className="panel package-summary">
+      <div className="panel-title">
+        <h2>Package contents</h2>
+        <span>{basename(item?.path || "")}</span>
+      </div>
+      <div className="package-summary-grid">
+        <FeedPakMetric label="Arrangements" value={arrangements.length} />
+        <FeedPakMetric label="Stems" value={stems.length} />
+        <FeedPakMetric label="Tone rigs" value={countToneDefinitions(tones)} />
+        <FeedPakMetric label="Credits" value={authors.length} />
+      </div>
+      <div className="compact-list">
+        <h3>Audio stems</h3>
+        {stems.length === 0 && <span className="muted-text">No stems listed in this package.</span>}
+        {stems.map((stem) => (
+          <div className="compact-row" key={`${stem.id}-${stem.file}`}>
+            <strong>{stem.id}</strong>
+            <span>{stem.codec || "audio"} - {formatBytes(stem.size)}</span>
+            {stem.default && <b>default</b>}
+          </div>
+        ))}
+      </div>
+      {authors.length > 0 && (
+        <div className="compact-list">
+          <h3>Credits</h3>
+          {authors.map((author, index) => (
+            <div className="compact-row" key={`${author.name}-${author.role || "credit"}-${index}`}>
+              <strong>{author.name}</strong>
+              <span>{author.role || "contributor"}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function FeedPakMetric({ label, value }) {
+  return (
+    <div className="metric-card">
+      <strong>{value}</strong>
+      <span>{label}</span>
+    </div>
+  );
+}
+
+function Inspector({ item, onSaveFeedpakMetadata, onReplaceFeedpakCover, onRemoveFeedpakCover }) {
   const [tab, setTab] = useState("overview");
+  const [editMetadata, setEditMetadata] = useState(null);
+  const [authorsText, setAuthorsText] = useState("");
+  const [saveMessage, setSaveMessage] = useState("");
+  const [overwriteOriginal, setOverwriteOriginal] = useState(false);
   const preview = item?.preview;
   const cover = preview?.cover_path ? `file:///${preview.cover_path.replaceAll("\\", "/")}` : null;
   const arrangements = preview?.arrangements || [];
   const tones = preview?.tones || [];
   const authors = preview?.authors || [];
+  const stems = preview?.stems || [];
+  const isFeedpak = item?.sourceType === "feedpak" || preview?.source_type === "feedpak";
+
+  useEffect(() => {
+    if (!preview || !isFeedpak) {
+      setEditMetadata(null);
+      setAuthorsText("");
+      setSaveMessage("");
+      setOverwriteOriginal(false);
+      return;
+    }
+    setEditMetadata({
+      title: preview.title || "",
+      artist: preview.artist || "",
+      album: preview.album || "",
+      year: preview.year || "",
+      language: preview.language || ""
+    });
+    setAuthorsText((preview.authors || []).map((author) => `${author.name}${author.role ? ` | ${author.role}` : ""}`).join("\n"));
+    setSaveMessage("");
+    setOverwriteOriginal(false);
+  }, [item?.id, preview?.title, preview?.artist, isFeedpak]);
+
+  async function saveFeedpak() {
+    if (!editMetadata) return;
+    setSaveMessage("Saving...");
+    const result = await onSaveFeedpakMetadata(item, editMetadata, parseAuthors(authorsText), { overwriteOriginal });
+    setSaveMessage(result.ok
+      ? overwriteOriginal ? "Saved original" : `Saved copy: ${basename(result.outputPath || "")}`
+      : result.error || "Save failed");
+  }
+
   return (
     <aside className="inspector">
       <section className="song-hero">
         <div className="cover">{cover ? <img src={cover} alt="" /> : <ImageIcon size={44} />}</div>
         <div className="song-copy">
-          <span className="eyebrow">Selected song</span>
+          <span className="eyebrow">{isFeedpak ? "FeedPak package" : "Selected song"}</span>
           <h2>{preview?.title || item?.name || "No song selected"}</h2>
-          <p>{preview?.artist || "Add PSARC files to inspect metadata and conversion readiness."}</p>
+          <p>{preview?.artist || "Add PSARC or FeedPak files to inspect package details."}</p>
             <div className="chips">
               {preview?.album && <span>{preview.album}</span>}
               {preview?.year && <span>{preview.year}</span>}
@@ -1288,6 +1547,7 @@ function Inspector({ item }) {
 
       <div className="inspector-tabs">
         <button className={tab === "overview" ? "active" : ""} onClick={() => setTab("overview")}>Overview</button>
+        {isFeedpak && <button className={tab === "metadata" ? "active" : ""} onClick={() => setTab("metadata")}>Metadata</button>}
         <button className={tab === "tones" ? "active" : ""} onClick={() => setTab("tones")}>Tones</button>
       </div>
 
@@ -1302,6 +1562,7 @@ function Inspector({ item }) {
               <ReadyLine ok={!!preview} text="Package metadata inspected" />
               <ReadyLine ok={!!cover} text="Cover image detected" />
               <ReadyLine ok={arrangements.length > 0} text={`${arrangements.length || 0} playable arrangement${arrangements.length === 1 ? "" : "s"}`} />
+              {isFeedpak && <ReadyLine ok={stems.length > 0} text={`${stems.length || 0} stem${stems.length === 1 ? "" : "s"} in package`} />}
               <ReadyLine ok={tones.length > 0} text={tones.length ? `${countToneDefinitions(tones)} tone definition${countToneDefinitions(tones) === 1 ? "" : "s"} detected` : "No tone definitions detected"} muted={!tones.length} />
               <ReadyLine ok={authors.length > 0} text={authors.length ? `${authors.length} author credit${authors.length === 1 ? "" : "s"} retained` : "No embedded author credit found"} muted={!authors.length} />
               <ReadyLine ok={!!preview?.lyrics} text={preview?.lyrics ? `${preview.lyrics} lyric timing events for karaoke` : "No vocals lyrics detected"} muted={!preview?.lyrics} />
@@ -1326,6 +1587,25 @@ function Inspector({ item }) {
             </section>
           )}
 
+          {isFeedpak && (
+            <section className="panel">
+              <div className="panel-title">
+                <h2>Stems</h2>
+                <span>{stems.length} file{stems.length === 1 ? "" : "s"}</span>
+              </div>
+              <div className="stem-list">
+                {stems.length === 0 && <div className="empty compact">No stems listed in manifest.</div>}
+                {stems.map((stem) => (
+                  <div className="stem-row" key={`${stem.id}-${stem.file}`}>
+                    <strong>{stem.id}</strong>
+                    <span>{stem.codec || "audio"} - {formatBytes(stem.size)}</span>
+                    {stem.default && <b>default</b>}
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
           <section className="panel">
             <div className="panel-title">
               <h2>Arrangements</h2>
@@ -1343,6 +1623,30 @@ function Inspector({ item }) {
             </div>
           </section>
         </>
+      ) : tab === "metadata" && isFeedpak ? (
+        <section className="panel feedpak-editor">
+          <div className="panel-title">
+            <h2>Edit FeedPak</h2>
+            <span>{saveMessage || (overwriteOriginal ? "Editing original package" : "Saves a copy by default")}</span>
+          </div>
+          <div className="editor-grid">
+            <label>Title<input value={editMetadata?.title || ""} onChange={(event) => setEditMetadata((current) => ({ ...current, title: event.target.value }))} /></label>
+            <label>Artist<input value={editMetadata?.artist || ""} onChange={(event) => setEditMetadata((current) => ({ ...current, artist: event.target.value }))} /></label>
+            <label>Album<input value={editMetadata?.album || ""} onChange={(event) => setEditMetadata((current) => ({ ...current, album: event.target.value }))} /></label>
+            <label>Year<input value={editMetadata?.year || ""} onChange={(event) => setEditMetadata((current) => ({ ...current, year: event.target.value }))} /></label>
+            <label>Language<input value={editMetadata?.language || ""} onChange={(event) => setEditMetadata((current) => ({ ...current, language: event.target.value }))} /></label>
+            <label className="wide">Charters / credits<textarea value={authorsText} onChange={(event) => setAuthorsText(event.target.value)} placeholder="Name | charter" rows={5} /></label>
+          </div>
+          <label className="toggle editor-overwrite">
+            <input type="checkbox" checked={overwriteOriginal} onChange={(event) => setOverwriteOriginal(event.target.checked)} />
+            Overwrite original FeedPak
+          </label>
+          <div className="editor-actions">
+            <button className="primary" onClick={saveFeedpak}><Check size={16} /> {overwriteOriginal ? "Save original" : "Save copy"}</button>
+            <button onClick={() => onReplaceFeedpakCover(item, { overwriteOriginal })}><ImageIcon size={16} /> Replace cover</button>
+            <button className="ghost" onClick={() => onRemoveFeedpakCover(item, { overwriteOriginal })}><XCircle size={16} /> Remove cover</button>
+          </div>
+        </section>
       ) : (
         <ToneInspector arrangements={arrangements} tones={tones} />
       )}
@@ -1350,7 +1654,7 @@ function Inspector({ item }) {
   );
 }
 
-function ToneInspector({ arrangements, tones }) {
+function ToneInspector({ arrangements, tones, expanded = false }) {
   const rows = useMemo(() => (arrangements?.length ? arrangements : tones || []).map((arrangement) => {
     const id = arrangement.id || arrangement.arrangement_id;
     const tone = (tones || []).find((candidate) => candidate.arrangement_id === id);
@@ -1364,6 +1668,9 @@ function ToneInspector({ arrangements, tones }) {
   const [activeArrangement, setActiveArrangement] = useState(rows[0]?.id || "");
   const activeRow = rows.find((arrangement) => arrangement.id === activeArrangement) || rows[0] || null;
   const active = activeRow?.tone || null;
+  const activeChanges = active?.changes || [];
+  const visibleChanges = expanded ? activeChanges : activeChanges.slice(0, 16);
+  const timelineDuration = toneTimelineDuration(activeChanges);
   useEffect(() => {
     if (rows.length && !rows.some((arrangement) => arrangement.id === activeArrangement)) {
       setActiveArrangement(rows[0].id);
@@ -1371,7 +1678,7 @@ function ToneInspector({ arrangements, tones }) {
   }, [rows, activeArrangement]);
 
   return (
-    <section className="panel tone-panel">
+    <section className={`panel tone-panel ${expanded ? "expanded" : ""}`}>
       <div className="panel-title">
         <h2>Tone Data</h2>
         <span>{countToneDefinitions(tones)} definitions / {countToneChanges(tones)} changes</span>
@@ -1410,16 +1717,28 @@ function ToneInspector({ arrangements, tones }) {
 
           <div className="tone-section">
             <h3>FeedPak Timeline</h3>
+            {activeChanges.length > 0 && (
+              <div className="tone-timeline-track" aria-label="Tone change timeline">
+                {activeChanges.map((change, index) => (
+                  <span
+                    className="tone-marker"
+                    key={`${change.time}-${change.name}-${index}-marker`}
+                    style={{ left: `${Math.max(0, Math.min(100, (Number(change.time || 0) / timelineDuration) * 100))}%` }}
+                    title={`${duration(change.time)} ${change.name}`}
+                  />
+                ))}
+              </div>
+            )}
             <div className="tone-changes">
               {(active.changes || []).length === 0 && <span className="muted-text">No tone changes. Base tone is used for the whole song.</span>}
-              {(active.changes || []).slice(0, 16).map((change, index) => (
+              {visibleChanges.map((change, index) => (
                 <div className="tone-change" key={`${change.time}-${change.name}-${index}`}>
                   <b>{duration(change.time)}</b>
                   <span>{change.name}</span>
                   <code>{change.rig}</code>
                 </div>
               ))}
-              {(active.changes || []).length > 16 && <span className="muted-text">Showing first 16 of {active.changes.length} tone changes.</span>}
+              {!expanded && activeChanges.length > 16 && <span className="muted-text">Showing first 16 of {activeChanges.length} tone changes.</span>}
             </div>
           </div>
 
@@ -1440,12 +1759,16 @@ function ToneInspector({ arrangements, tones }) {
                       <div className={`gear-chip ${gearClassName(gear)}`} key={`${definition.key}-${gear.slot}-${gear.key}`}>
                         <div className="gear-visual">
                           <span className="gear-role">{gearRoleLabel(gear)}</span>
-                          <div className="gear-face">
-                            <b>{gearInitials(gear)}</b>
-                            <i />
-                            <i />
-                            <i />
-                          </div>
+                          {gear.asset_path ? (
+                            <img src={`file:///${gear.asset_path.replaceAll("\\", "/")}`} alt="" />
+                          ) : (
+                            <div className="gear-face">
+                              <b>{gearInitials(gear)}</b>
+                              <i />
+                              <i />
+                              <i />
+                            </div>
+                          )}
                         </div>
                         <span>{gear.slot}</span>
                         <strong>{gear.key || gear.type || "Unknown gear"}</strong>
@@ -1521,12 +1844,45 @@ function formatKnob(value) {
   return String(value);
 }
 
+function parseAuthors(value) {
+  return String(value || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const [name, role] = line.split("|").map((part) => part.trim());
+      return { name, role: role || "charter" };
+    })
+    .filter((author) => author.name);
+}
+
+function formatBytes(value) {
+  const bytes = Number(value);
+  if (!Number.isFinite(bytes) || bytes <= 0) return "unknown size";
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function isSongPackage(filePath) {
+  const lower = String(filePath || "").toLowerCase();
+  return lower.endsWith(".psarc") || lower.endsWith(".feedpak");
+}
+
+function fileType(filePath) {
+  return String(filePath || "").toLowerCase().endsWith(".feedpak") ? "feedpak" : "psarc";
+}
+
 function countToneDefinitions(tones) {
   return (tones || []).reduce((total, arrangement) => total + ((arrangement.definitions || []).length), 0);
 }
 
 function countToneChanges(tones) {
   return (tones || []).reduce((total, arrangement) => total + ((arrangement.changes || []).length), 0);
+}
+
+function toneTimelineDuration(changes) {
+  const times = (changes || []).map((change) => Number(change.time || 0)).filter(Number.isFinite);
+  return Math.max(1, ...times);
 }
 
 function ReadyLine({ ok, text, muted = false }) {
@@ -1596,6 +1952,13 @@ function outputPathForItem(item, outputDir, layout, sourceRoot, nameFormat = "so
     return relativeDir ? joinPath(outputDir, relativeDir, fileName) : joinPath(outputDir, fileName);
   }
   return joinPath(outputDir, fileName);
+}
+
+function editedFeedpakPath(item, outputDir) {
+  const sourceName = withoutExtension(item?.name || basename(item?.path || "song.feedpak"));
+  const folder = outputDir || parentDir(item?.path || "") || "";
+  const stamp = new Date().toISOString().replace(/[-:T.Z]/g, "").slice(0, 14);
+  return joinPath(folder, `${safePathSegment(sourceName, "song")}.edited-${stamp}.feedpak`);
 }
 
 function outputFileNameForItem(item, format, customTemplate) {

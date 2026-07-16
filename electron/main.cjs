@@ -11,6 +11,7 @@ let debugLogPath;
 let stemServerProcess = null;
 let stemServerStarting = false;
 let stemServerLog = [];
+let toneAssetCatalog = null;
 const DEBUG_LOG_MAX_BYTES = 2 * 1024 * 1024;
 const LOCAL_STEM_SERVER_URL = "http://127.0.0.1:7865";
 const GITHUB_REPO = "balki97/FeedForge";
@@ -150,13 +151,13 @@ app.on("activate", () => {
 
 ipcMain.handle("dialog:pickPsarc", async (_event, options = {}) => {
   const result = await dialog.showOpenDialog(mainWindow, {
-    title: "Choose PSARC CDLC files",
+    title: "Choose PSARC or FeedPak files",
     defaultPath: validDefaultPath(options.defaultPath),
     properties: ["openFile", "multiSelections"],
-    filters: [{ name: "PSARC files", extensions: ["psarc"] }]
+    filters: [{ name: "Song packages", extensions: ["psarc", "feedpak"] }]
   });
   const paths = result.canceled ? [] : result.filePaths;
-  logDebug("dialog.pickPsarc", { count: paths.length, defaultPath: options.defaultPath || "" });
+  logDebug("dialog.pickSongPackages", { count: paths.length, defaultPath: options.defaultPath || "" });
   return paths;
 });
 
@@ -167,7 +168,7 @@ ipcMain.handle("dialog:pickFolder", async (_event, options = {}) => {
     properties: ["openDirectory"]
   });
   if (result.canceled || !result.filePaths[0]) return [];
-  const files = await findPsarcFiles(result.filePaths[0]);
+  const files = await findSongPackageFiles(result.filePaths[0]);
   logDebug("dialog.pickFolder", { folder: result.filePaths[0], count: files.length });
   return files;
 });
@@ -180,7 +181,7 @@ ipcMain.handle("dialog:pickFolderWithRoot", async (_event, options = {}) => {
   });
   if (result.canceled || !result.filePaths[0]) return { folder: "", files: [] };
   const folder = result.filePaths[0];
-  const files = await findPsarcFiles(folder);
+  const files = await findSongPackageFiles(folder);
   logDebug("dialog.pickFolderWithRoot", { folder, count: files.length });
   return { folder, files };
 });
@@ -191,8 +192,8 @@ ipcMain.handle("files:expandPaths", async (_event, inputPaths) => {
     try {
       const stat = await fs.promises.stat(inputPath);
       if (stat.isDirectory()) {
-        found.push(...await findPsarcFiles(inputPath));
-      } else if (stat.isFile() && inputPath.toLowerCase().endsWith(".psarc")) {
+        found.push(...await findSongPackageFiles(inputPath));
+      } else if (stat.isFile() && isSongPackagePath(inputPath)) {
         found.push(inputPath);
       }
     } catch {
@@ -263,6 +264,9 @@ ipcMain.handle("converter:inspect", async (_event, inputPath, options = {}) => {
       diagnostics: result.diagnostics
     };
   }
+  if (parsed.preview) {
+    parsed.preview = enrichToneAssets(parsed.preview);
+  }
   logDebug("converter.inspect.ok", {
     inputPath,
     title: parsed.preview?.title || "",
@@ -272,6 +276,55 @@ ipcMain.handle("converter:inspect", async (_event, inputPath, options = {}) => {
     warnings: parsed.preview?.warnings || []
   });
   return parsed;
+});
+
+ipcMain.handle("feedpak:update", async (_event, payload) => {
+  logDebug("feedpak.update.start", {
+    inputPath: payload.inputPath,
+    outputPath: payload.outputPath || "",
+    hasCover: Boolean(payload.coverPath),
+    removeCover: Boolean(payload.removeCover),
+    separateStems: Boolean(payload.separateStems)
+  });
+  const args = [payload.inputPath];
+  if (payload.outputPath) args.push("-o", payload.outputPath);
+  if (payload.overwrite) args.push("--overwrite");
+  if (payload.metadata?.title != null) args.push("--feedpak-title", String(payload.metadata.title));
+  if (payload.metadata?.artist != null) args.push("--feedpak-artist", String(payload.metadata.artist));
+  if (payload.metadata?.album != null) args.push("--feedpak-album", String(payload.metadata.album));
+  if (payload.metadata?.year != null) args.push("--feedpak-year", String(payload.metadata.year));
+  if (payload.metadata?.language != null) args.push("--feedpak-language", String(payload.metadata.language));
+  if (Array.isArray(payload.authors)) args.push("--feedpak-authors-json", JSON.stringify(payload.authors));
+  if (payload.coverPath) args.push("--feedpak-cover", payload.coverPath);
+  if (payload.removeCover) args.push("--feedpak-remove-cover");
+  if (payload.separateStems) args.push("--separate-stems");
+  if (payload.demucsUrl) args.push("--demucs-url", payload.demucsUrl);
+  if (payload.demucsApiKey) args.push("--demucs-api-key", payload.demucsApiKey);
+  if (payload.demucsModel) args.push("--demucs-model", payload.demucsModel);
+  if (Array.isArray(payload.demucsStems) && payload.demucsStems.length) {
+    args.push("--demucs-stems", payload.demucsStems.join(","));
+  }
+  const result = await runConverter(args);
+  const outputPath = [...result.stdout.matchAll(/^wrote\s+(.+)$/gim)].map((match) => match[1].trim()).filter(Boolean)[0] || payload.outputPath || payload.inputPath;
+  const warnings = [...`${result.stdout}\n${result.stderr}`.matchAll(/^warning:\s+(.+)$/gim)].map((match) => match[1].trim()).filter(Boolean);
+  logDebug(result.code === 0 ? "feedpak.update.ok" : "feedpak.update.failed", {
+    inputPath: payload.inputPath,
+    outputPath,
+    code: result.code,
+    warnings,
+    stdoutTail: tail(result.stdout),
+    stderrTail: tail(result.stderr),
+    diagnostics: result.diagnostics
+  });
+  return {
+    ok: result.code === 0,
+    outputPath,
+    warnings,
+    stdout: result.stdout,
+    stderr: result.stderr,
+    diagnostics: result.diagnostics,
+    error: result.code === 0 ? null : result.stderr || result.stdout || "FeedPak update failed"
+  };
 });
 
 ipcMain.handle("converter:convert", async (_event, payload) => {
@@ -320,6 +373,18 @@ ipcMain.handle("converter:convert", async (_event, payload) => {
     diagnostics: result.diagnostics,
     error: result.code === 0 ? null : result.stderr || result.stdout || "Conversion failed"
   };
+});
+
+ipcMain.handle("dialog:pickCoverImage", async (_event, options = {}) => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: "Choose cover image",
+    defaultPath: validDefaultPath(options.defaultPath),
+    properties: ["openFile"],
+    filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp"] }]
+  });
+  const filePath = result.canceled ? null : result.filePaths[0];
+  logDebug("dialog.pickCoverImage", { selected: filePath || "" });
+  return filePath;
 });
 
 ipcMain.handle("stemServer:status", async () => {
@@ -1165,7 +1230,7 @@ function runConverter(args) {
   });
 }
 
-async function findPsarcFiles(root) {
+async function findSongPackageFiles(root) {
   const files = [];
   const pending = [root];
   while (pending.length > 0) {
@@ -1180,12 +1245,102 @@ async function findPsarcFiles(root) {
       const fullPath = path.join(folder, entry.name);
       if (entry.isDirectory()) {
         pending.push(fullPath);
-      } else if (entry.isFile() && entry.name.toLowerCase().endsWith(".psarc")) {
+      } else if (entry.isFile() && isSongPackagePath(entry.name)) {
         files.push(fullPath);
       }
     }
   }
   return files;
+}
+
+async function findPsarcFiles(root) {
+  return findSongPackageFiles(root);
+}
+
+function isSongPackagePath(inputPath) {
+  const lower = String(inputPath || "").toLowerCase();
+  return lower.endsWith(".psarc") || lower.endsWith(".feedpak");
+}
+
+function enrichToneAssets(preview) {
+  const catalog = loadToneAssetCatalog();
+  if (!catalog.size || !Array.isArray(preview?.tones)) return preview;
+  for (const arrangement of preview.tones) {
+    for (const definition of arrangement.definitions || []) {
+      for (const gear of definition.gear || []) {
+        const asset = resolveToneAsset(gear, catalog);
+        if (asset) gear.asset_path = asset;
+      }
+    }
+  }
+  return preview;
+}
+
+function resolveToneAsset(gear, catalog) {
+  const candidates = [
+    gear?.key,
+    gear?.name,
+    gear?.route,
+    path.basename(String(gear?.route || ""), ".vst3")
+  ].filter(Boolean);
+  for (const candidate of candidates) {
+    const asset = catalog.get(normalizeToneKey(candidate));
+    if (asset) return asset;
+  }
+  return null;
+}
+
+function loadToneAssetCatalog() {
+  if (toneAssetCatalog) return toneAssetCatalog;
+  toneAssetCatalog = new Map();
+  const roots = [
+    path.join(app.getAppPath(), "assets", "tone-equipment"),
+    path.join(process.resourcesPath || "", "tone-equipment")
+  ];
+  const dataFiles = [
+    path.join(app.getAppPath(), "src", "feedback_converter", "data", "equipment.json"),
+    path.join(app.getAppPath(), "src", "feedback_converter", "data", "feedback_equipment.json"),
+    path.join(process.resourcesPath || "", "tone-equipment", "equipment.json"),
+    path.join(process.resourcesPath || "", "tone-equipment", "feedback_equipment.json")
+  ];
+  for (const dataFile of dataFiles) {
+    let rows = [];
+    try {
+      if (!fs.existsSync(dataFile)) continue;
+      rows = JSON.parse(fs.readFileSync(dataFile, "utf-8"));
+    } catch {
+      continue;
+    }
+    if (!Array.isArray(rows)) continue;
+    for (const row of rows) {
+      const asset = row.feedbackAsset || row.asset;
+      if (!asset) continue;
+      const assetPath = resolveCatalogAssetPath(asset, roots);
+      if (!assetPath) continue;
+      for (const key of [row.id, row.name, row.feedbackRoute, path.basename(String(row.feedbackRoute || ""), ".vst3")]) {
+        if (key) toneAssetCatalog.set(normalizeToneKey(key), assetPath);
+      }
+    }
+  }
+  return toneAssetCatalog;
+}
+
+function resolveCatalogAssetPath(asset, roots) {
+  const relative = String(asset).replace(/^assets[\\/]/, "").replace(/\\/g, path.sep);
+  for (const root of roots) {
+    const direct = path.join(root, relative.replace(/^feedback[\\/]/, "feedback" + path.sep));
+    if (fs.existsSync(direct)) return direct;
+  }
+  return null;
+}
+
+function normalizeToneKey(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/^fb[-_]/, "")
+    .replace(/\.(vst3|dll|png|jpg|jpeg|webp)$/i, "")
+    .replace(/^(amp|cab|cabinet|pedal|rack|bass)[-_ ]+/i, "")
+    .replace(/[^a-z0-9]+/g, "");
 }
 
 function parseJson(value) {
