@@ -18,6 +18,31 @@ from feedback_converter.feedpak import inspect_feedpak, update_feedpak
 from feedback_converter.inspector import inspect_psarc
 
 
+def _configure_stdio() -> None:
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            try:
+                reconfigure(encoding="utf-8", errors="backslashreplace")
+            except Exception:  # noqa: BLE001
+                pass
+
+
+def _safe_text(value: Any) -> str:
+    text = str(value)
+    return text.encode("utf-8", errors="backslashreplace").decode("utf-8", errors="replace")
+
+
+def _print(value: Any, *, stream: Any = None) -> None:
+    target = stream or sys.stdout
+    try:
+        print(_safe_text(value), file=target)
+    except UnicodeEncodeError:
+        encoded = _safe_text(value).encode(getattr(target, "encoding", None) or "utf-8", errors="backslashreplace")
+        target.buffer.write(encoded + b"\n")
+        target.flush()
+
+
 def _jsonable(value: Any) -> Any:
     if is_dataclass(value):
         return _jsonable(asdict(value))
@@ -145,6 +170,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    _configure_stdio()
     parser = build_parser()
     args = parser.parse_args(argv)
 
@@ -160,9 +186,9 @@ def main(argv: list[str] | None = None) -> int:
                 else inspect_psarc(input_path, cover_dir=cover_dir)
             )
         except Exception as exc:  # noqa: BLE001
-            print(json.dumps({"ok": False, "error": str(exc)}), file=sys.stdout)
+            _print(json.dumps({"ok": False, "error": str(exc)}), stream=sys.stdout)
             return 1
-        print(json.dumps({"ok": True, "preview": _jsonable(preview)}, ensure_ascii=False), file=sys.stdout)
+        _print(json.dumps({"ok": True, "preview": _jsonable(preview)}, ensure_ascii=False), stream=sys.stdout)
         return 0
 
     if not args.input:
@@ -192,11 +218,11 @@ def main(argv: list[str] | None = None) -> int:
                     overwrite=args.overwrite,
                 )
             except Exception as exc:  # noqa: BLE001
-                print(f"error: {exc}", file=sys.stderr)
+                _print(f"error: {exc}", stream=sys.stderr)
                 return 1
-            print(f"wrote {result.output_path}")
+            _print(f"wrote {result.output_path}")
             for warning in result.warnings:
-                print(f"warning: {warning.message}", file=sys.stderr)
+                _print(f"warning: {warning.message}", stream=sys.stderr)
             return 0
 
         try:
@@ -216,13 +242,13 @@ def main(argv: list[str] | None = None) -> int:
             )
         except Exception as exc:  # noqa: BLE001
             _cleanup_failed_workdir(input_paths[0], output_path, archive=not args.directory)
-            print(f"error: {exc}", file=sys.stderr)
+            _print(f"error: {exc}", stream=sys.stderr)
             return 1
 
         for result in results:
-            print(f"wrote {result.output_path}")
+            _print(f"wrote {result.output_path}")
             for warning in result.warnings:
-                print(f"warning: {warning.message}", file=sys.stderr)
+                _print(f"warning: {warning.message}", stream=sys.stderr)
         return 0
 
     batch = convert_many(
@@ -244,11 +270,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     for item in batch.items:
         if item.succeeded and item.result is not None:
-            print(f"wrote {item.result.output_path}")
+            _print(f"wrote {item.result.output_path}")
             for warning in item.result.warnings:
-                print(f"warning: {warning.message}", file=sys.stderr)
+                _print(f"warning: {warning.message}", stream=sys.stderr)
         else:
-            print(f"error converting {item.input_path}: {item.error}", file=sys.stderr)
+            _print(f"error converting {item.input_path}: {item.error}", stream=sys.stderr)
     return 0 if batch.ok else 1
 
 
