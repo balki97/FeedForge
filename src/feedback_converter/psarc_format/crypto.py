@@ -46,6 +46,8 @@ def aes_sng(key, iv):
 
 
 def decrypt_sng(data, key):
+    if len(data) < 24:
+        return data
     iv, data = data[8:24], data[24:]
     decryptor = aes_sng(key, iv).decryptor()
     decrypted = decryptor.update(data) + decryptor.finalize()

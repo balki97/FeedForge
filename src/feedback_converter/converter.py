@@ -1800,7 +1800,11 @@ def _copy_audio(
         if path.lower().endswith((".wem", ".ogg", ".wav", ".mp3", ".flac", ".opus"))
     ]
     if not audio:
-        raise ValueError("No audio file found in PSARC; FeedForge will not write a silent placeholder FeedPak.")
+        raise ValueError(
+            "No audio file found in PSARC. This appears to be a charts-only package, such as an RS1 "
+            "compatibility DLC archive. FeedForge will not write a silent placeholder FeedPak because "
+            "FeedBack needs a real full mix audio stem for playback."
+        )
 
     path, data = _select_primary_audio(audio)
     ext = Path(path).suffix.lower() or ".bin"
