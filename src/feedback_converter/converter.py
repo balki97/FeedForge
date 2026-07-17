@@ -96,7 +96,8 @@ def convert_psarc_songs(
         content = PSARC(crypto=True).parse_stream(fh)
 
     groups = _song_groups(content)
-    if len(groups) <= 1:
+    playable_groups = _playable_song_groups(groups)
+    if len(playable_groups) <= 1:
         return [
             convert_psarc(
                 input_psarc,
@@ -121,7 +122,7 @@ def convert_psarc_songs(
         output = Path(output)
         base_dir = output.parent if output.suffix else output
     results: list[ConversionResult] = []
-    for key, paths in sorted(groups.items()):
+    for key, paths in sorted(playable_groups.items()):
         song_content = _content_for_song_group(content, key, paths)
         output = base_dir / f"{_safe_output_stem(_metadata_song_title(song_content) or key)}.feedpak"
         try:
@@ -416,6 +417,15 @@ def _song_groups(content: dict[str, bytes]) -> dict[str, set[str]]:
     return {key: paths for key, paths in groups.items() if any(path.lower().endswith(".sng") for path in paths)}
 
 
+def _playable_song_groups(groups: dict[str, set[str]]) -> dict[str, set[str]]:
+    """Return groups that contain playable arrangements, not vocal-only sidecars."""
+    return {
+        key: paths
+        for key, paths in groups.items()
+        if any(_is_playable_sng_path(path) for path in paths)
+    }
+
+
 def _song_key_from_manifest(data: bytes) -> str:
     try:
         obj = json.loads(data.decode("utf-8-sig"))
@@ -433,6 +443,11 @@ def _song_group_key_from_path(path: str) -> str:
     return _slug(ARRANGEMENT_SUFFIX_RE.sub("", stem))
 
 
+def _is_playable_sng_path(path: str) -> bool:
+    stem = Path(path.replace("\\", "/")).stem.lower()
+    return bool(re.search(r"_(?:lead\d*|rhythm\d*|combo\d*|bass\d*)$", stem))
+
+
 def _content_for_song_group(content: dict[str, bytes], key: str, paths: set[str]) -> dict[str, bytes]:
     key = key.lower()
     selected = {path: content[path] for path in paths if path in content}
@@ -440,7 +455,9 @@ def _content_for_song_group(content: dict[str, bytes], key: str, paths: set[str]
     for path, data in content.items():
         low = path.replace("\\", "/").lower()
         stem_key = _song_group_key_from_path(path)
-        if low.endswith((".json", ".hsan", ".sng", ".xml", ".dds")) and stem_key == key:
+        if low.endswith((".json", ".hsan", ".sng", ".xml", ".dds")) and (
+            stem_key == key or _is_vocal_sidecar_for_key(stem_key, key)
+        ):
             selected[path] = data
         elif f"album_{key}_" in low or f"album_{key}." in low:
             selected[path] = data
@@ -458,6 +475,16 @@ def _content_for_song_group(content: dict[str, bytes], key: str, paths: set[str]
         # later with "No audio file found" than to borrow another song's WEM.
         selected = {path: data for path, data in selected.items() if not path.lower().endswith((".wem", ".ogg", ".wav", ".mp3", ".flac", ".opus"))}
     return selected
+
+
+def _is_vocal_sidecar_for_key(stem_key: str, key: str) -> bool:
+    return stem_key in {
+        f"{key}_vocals",
+        f"{key}_vocal",
+        f"{key}_jvocals",
+        f"{key}_jvocal",
+        f"{key}_lyrics",
+    }
 
 
 def _wem_paths_for_banks(content: dict[str, bytes], bnk_paths: list[str]) -> set[str]:
