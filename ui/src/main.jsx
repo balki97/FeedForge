@@ -183,7 +183,6 @@ function App() {
   }, [activeView, settingsSection, separateStems, demucsInstallDir, pythonPath, demucsModel, isStartingStemServer, stemServerStatus.processRunning, stemServerStatus.starting, stemServerStatus.phase]);
 
   useEffect(() => {
-    if (!separateStems || activeView !== "settings" || settingsSection !== "stems") return undefined;
     let cancelled = false;
     async function refresh() {
       try {
@@ -199,13 +198,17 @@ function App() {
       }
     }
     refresh();
-    const pollMs = (isStartingStemServer || stemServerStatus.starting || stemServerStatus.processRunning) && !stemServerStatus.healthy ? 1000 : 5000;
+    const pollMs = (isStartingStemServer || stemServerStatus.starting || stemServerStatus.processRunning) && !stemServerStatus.healthy
+      ? 1000
+      : separateStems
+        ? 5000
+        : 12000;
     const timer = window.setInterval(refresh, pollMs);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [separateStems, activeView, settingsSection, isStartingStemServer, stemServerStatus.starting, stemServerStatus.processRunning, stemServerStatus.healthy]);
+  }, [separateStems, isStartingStemServer, stemServerStatus.starting, stemServerStatus.processRunning, stemServerStatus.healthy]);
 
   useEffect(() => {
     return api.onDroppedPaths(async (paths) => {
@@ -630,6 +633,20 @@ function App() {
               <Coffee size={17} />
               Support
             </button>
+            <button
+              className={`stem-header-status ${headerStemStatusClass(separateStems, stemServerStatus, isStartingStemServer, stemServerMatchesSelectedConfig)}`}
+              onClick={() => {
+                setActiveView("settings");
+                setSettingsSection("stems");
+              }}
+              title="Open stem splitting settings"
+            >
+              <Server size={16} />
+              <span>
+                <strong>Stem server</strong>
+                <small>{headerStemStatusLabel(separateStems, stemServerStatus, isStartingStemServer, stemServerMatchesSelectedConfig)}</small>
+              </span>
+            </button>
             <button className="primary" onClick={convertQueue} disabled={!items.length || isConverting}>
               {isConverting ? <RotateCw className="spin" size={18} /> : <Download size={18} />}
               Convert queue{isConverting ? ` (${conversionWorkers}x)` : ""}
@@ -1017,6 +1034,26 @@ function stemServerBadge(status, isStarting, matchesSelection = true) {
   if (status.starting || status.processRunning || isStarting) return "Starting";
   if (status.running) return "Unhealthy";
   return "Stopped";
+}
+
+function headerStemStatusClass(separateStems, status, isStarting, matchesSelection = true) {
+  if (!separateStems && status.healthy) return "ready muted";
+  if (!separateStems) return "off";
+  if (status.healthy && matchesSelection) return "ready";
+  if (status.healthy && !matchesSelection) return "changed";
+  if (status.starting || status.processRunning || isStarting) return "starting";
+  if (status.running || status.phase === "error") return "error";
+  return "off";
+}
+
+function headerStemStatusLabel(separateStems, status, isStarting, matchesSelection = true) {
+  if (!separateStems && status.healthy) return "Ready, stems off";
+  if (!separateStems) return "Stems off";
+  if (status.healthy && matchesSelection) return "Ready";
+  if (status.healthy && !matchesSelection) return "Config changed";
+  if (status.starting || status.processRunning || isStarting) return "Starting";
+  if (status.running || status.phase === "error") return "Needs attention";
+  return "Not running";
 }
 
 function stemServerTitle(status, busy, matchesSelection = true) {

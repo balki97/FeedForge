@@ -206,16 +206,100 @@ button:disabled {
   justify-content: flex-end;
 }
 
+.stem-header-status {
+  min-width: 148px;
+  padding: 8px 11px;
+  justify-content: flex-start;
+  background: rgba(145, 163, 186, 0.08);
+  border-color: rgba(145, 163, 186, 0.22);
+  color: #c4d3e5;
+}
+
+.stem-header-status svg {
+  flex: 0 0 auto;
+}
+
+.stem-header-status span {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+  text-align: left;
+  line-height: 1.05;
+}
+
+.stem-header-status strong,
+.stem-header-status small {
+  display: block;
+  white-space: nowrap;
+}
+
+.stem-header-status strong {
+  font-size: 12px;
+}
+
+.stem-header-status small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.stem-header-status.ready {
+  background: rgba(35, 209, 139, 0.11);
+  border-color: rgba(35, 209, 139, 0.36);
+  color: #9fffd1;
+}
+
+.stem-header-status.ready small {
+  color: #60edae;
+}
+
+.stem-header-status.ready.muted {
+  background: rgba(35, 209, 139, 0.07);
+  border-color: rgba(35, 209, 139, 0.22);
+}
+
+.stem-header-status.ready.muted small {
+  color: #9db6c9;
+}
+
+.stem-header-status.starting {
+  background: rgba(255, 201, 74, 0.11);
+  border-color: rgba(255, 201, 74, 0.36);
+  color: #ffe49b;
+}
+
+.stem-header-status.starting small,
+.stem-header-status.changed small {
+  color: #ffd66d;
+}
+
+.stem-header-status.changed {
+  background: rgba(255, 201, 74, 0.1);
+  border-color: rgba(255, 201, 74, 0.34);
+  color: #ffe49b;
+}
+
+.stem-header-status.error {
+  background: rgba(255, 91, 110, 0.12);
+  border-color: rgba(255, 91, 110, 0.4);
+  color: #ffd0d8;
+}
+
+.stem-header-status.error small {
+  color: #ff91a0;
+}
+
 .support-link {
   min-width: 0;
-  background: rgba(255, 201, 74, 0.08);
-  border-color: rgba(255, 201, 74, 0.24);
-  color: #ffe09c;
+  background: linear-gradient(135deg, #ff5f75, #ff3f5f);
+  border-color: rgba(255, 130, 148, 0.52);
+  color: #fff5f7;
+  box-shadow: 0 10px 24px rgba(255, 63, 95, 0.18);
 }
 
 .support-link:hover {
-  background: rgba(255, 201, 74, 0.14);
-  border-color: rgba(255, 201, 74, 0.38);
+  background: linear-gradient(135deg, #ff7287, #ff4f6b);
+  border-color: rgba(255, 160, 174, 0.65);
 }
 
 .toolbar {
