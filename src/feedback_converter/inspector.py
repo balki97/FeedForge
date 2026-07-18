@@ -12,8 +12,10 @@ from .converter import (
     _authors_from_metadata,
     _extract_metadata,
     _find_sng_entries,
+    _playable_song_groups,
     _arrangement_event_count,
     _arrangement_note_count,
+    _song_groups,
     _song_chart_data,
     _song_tones_to_feedpak,
     _template_to_feedpak,
@@ -83,6 +85,8 @@ class PsarcPreview:
     arrangements: list[ArrangementPreview] = field(default_factory=list)
     tones: list[ArrangementTonePreview] = field(default_factory=list)
     lyrics: int = 0
+    song_count: int = 1
+    is_multi_song: bool = False
     warnings: list[str] = field(default_factory=list)
 
 
@@ -97,6 +101,7 @@ def inspect_psarc(input_psarc: Path, *, cover_dir: Path | None = None) -> PsarcP
         content = PSARC(crypto=True).parse_stream(fh)
 
     metadata = _extract_metadata(content)
+    song_count = max(1, len(_playable_song_groups(_song_groups(content))))
     arrangements: list[ArrangementPreview] = []
     tones: list[ArrangementTonePreview] = []
     lyric_count = 0
@@ -164,6 +169,8 @@ def inspect_psarc(input_psarc: Path, *, cover_dir: Path | None = None) -> PsarcP
         arrangements=arrangements,
         tones=tones,
         lyrics=lyric_count,
+        song_count=song_count,
+        is_multi_song=song_count > 1,
         warnings=warnings,
     )
 

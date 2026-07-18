@@ -548,6 +548,13 @@ ipcMain.handle("stemServer:stop", async () => {
   return stemServerStatus();
 });
 
+ipcMain.handle("stemServer:freePort", async () => {
+  const result = await stopLocalStemServerPort();
+  logDebug("stemServer.freePort", result);
+  const status = await stemServerStatus();
+  return { ...status, freePortResult: result };
+});
+
 ipcMain.handle("app:version", async () => app.getVersion());
 
 ipcMain.handle("app:debugLogInfo", async () => {
@@ -726,6 +733,20 @@ async function startStemServer(options = {}) {
   const pythonExe = pythonExecutablePath(options.pythonPath);
   const torchIndex = demucsTorchIndex(device);
   const existing = await stemServerStatus();
+  if (existing.portBlocked && !existing.healthy && !existing.processRunning) {
+    return stemServerState({
+      ok: false,
+      running: true,
+      healthy: false,
+      installRoot,
+      model,
+      requestedDevice: device,
+      concurrency,
+      portBlocked: true,
+      portOwners: existing.portOwners || [],
+      error: `Port 7865 is already in use. Free the port, then start the local stem server again.`
+    });
+  }
   if (existing.running || stemServerStarting) {
     const serverMatchesSelection = stemServerMatchesSelection(existing, model, device, concurrency);
     const installRootChanged = existing.healthy && existing.installRoot && path.resolve(existing.installRoot) !== path.resolve(installRoot);
@@ -837,11 +858,12 @@ async function stemServerStatus() {
   if (health.body) {
     stemServerStarting = false;
   }
+  const portOwners = health.body ? [] : await findStemPortOwners();
   const storageDir = health.body?.storage_dir || null;
   const installRoot = installRootFromStemStorage(storageDir) || defaultDemucsInstallRoot();
   return stemServerState({
     ok: Boolean(health.ok && health.body?.ok),
-    running: Boolean(health.body),
+    running: Boolean(health.body || portOwners.length),
     healthy: Boolean(health.ok && health.body?.ok),
     installRoot,
     model: health.body?.model || null,
@@ -852,6 +874,8 @@ async function stemServerStatus() {
     capabilities: health.body?.capabilities || null,
     storageDir,
     health: health.body || null,
+    portBlocked: Boolean(!health.body && portOwners.length),
+    portOwners,
     error: health.error || ""
   });
 }
@@ -902,24 +926,24 @@ async function stopStemServer(options = {}) {
 }
 
 async function stopLocalStemServerPort() {
-  if (process.platform !== "win32") return;
-  const result = await runProcess("netstat.exe", ["-ano", "-p", "TCP"], { timeoutMs: 7000 });
-  if (result.code !== 0 || !result.stdout) return;
-  const pids = new Set();
-  for (const line of result.stdout.split(/\r?\n/)) {
-    if (!/\sLISTENING\s/i.test(line)) continue;
-    if (!/(?:127\.0\.0\.1|0\.0\.0\.0|\[::1\]|\[::\]):7865\b/i.test(line)) continue;
-    const match = line.trim().match(/\s(\d+)$/);
-    if (match?.[1]) pids.add(match[1]);
-  }
-  for (const listenPid of pids) {
-    try {
-      await runProcess("taskkill.exe", ["/pid", listenPid, "/T", "/F"], { timeoutMs: 7000 });
-      appendStemServerLog(`FeedForge: stopped old stem server process ${listenPid}`);
-    } catch (error) {
-      logDebug("stemServer.portStop.failed", { pid: listenPid, ...errorToLog(error) });
+  const owners = await findStemPortOwners();
+  const killed = [];
+  const failed = [];
+  for (const owner of owners) {
+    const pid = String(owner.pid || "").trim();
+    if (!pid) continue;
+    const result = process.platform === "win32"
+      ? await runProcess("taskkill.exe", ["/pid", pid, "/T", "/F"], { timeoutMs: 7000 })
+      : await runProcess("kill", ["-TERM", pid], { timeoutMs: 7000 });
+    if (result.code === 0) {
+      killed.push(owner);
+      appendStemServerLog(`FeedForge: stopped process ${pid}${owner.processName ? ` (${owner.processName})` : ""} on port 7865`);
+    } else {
+      failed.push({ ...owner, error: result.stderr || result.stdout || "Could not terminate process." });
+      logDebug("stemServer.portStop.failed", { owner, stderrTail: tail(result.stderr), stdoutTail: tail(result.stdout) });
     }
   }
+  return { ok: failed.length === 0, killed, failed, owners };
 }
 
 async function waitForStemServerStop(timeoutMs) {
@@ -949,6 +973,8 @@ function stemServerState(extra = {}) {
     accelerators: extra.accelerators || [],
     capabilities: extra.capabilities || null,
     storageDir: extra.storageDir || null,
+    portBlocked: Boolean(extra.portBlocked),
+    portOwners: extra.portOwners || [],
     running,
     starting: Boolean((extra.starting || stemServerStarting) && !running && !healthy),
     healthy,
@@ -969,6 +995,12 @@ function stemServerProgress(extra, healthy, running, processRunning) {
   const lines = stemServerLog.slice(-30);
   const text = lines.join("\n");
   const lastImportant = [...lines].reverse().find((line) => /error|traceback|feedforge:|successfully installed|installing collected|using cached|downloading|collecting|uvicorn|running/i.test(line)) || "";
+  if (extra.portBlocked) {
+    return {
+      phase: "error",
+      message: portBlockedMessage(extra.portOwners)
+    };
+  }
   if (/10048|address already in use|only one usage of each socket address|socketadresse.*nur jeweils einmal verwendet|attempting to bind/i.test(text)) {
     return {
       phase: "error",
@@ -1444,6 +1476,56 @@ async function findSongPackageFiles(root) {
     }
   }
   return files;
+}
+
+function portBlockedMessage(owners) {
+  const names = (owners || [])
+    .map((owner) => `${owner.processName || "process"} ${owner.pid || ""}`.trim())
+    .filter(Boolean)
+    .slice(0, 3);
+  const ownerText = names.length ? ` Used by ${names.join(", ")}.` : "";
+  return `Port 7865 is already in use.${ownerText} Free the port, then start the local stem server again.`;
+}
+
+async function findStemPortOwners() {
+  if (process.platform === "win32") return findStemPortOwnersWindows();
+  return findStemPortOwnersUnix();
+}
+
+async function findStemPortOwnersWindows() {
+  const result = await runProcess("netstat.exe", ["-ano", "-p", "TCP"], { timeoutMs: 7000 });
+  if (result.code !== 0 || !result.stdout) return [];
+  const pids = new Set();
+  for (const line of result.stdout.split(/\r?\n/)) {
+    if (!/\sLISTENING\s/i.test(line)) continue;
+    if (!/(?:127\.0\.0\.1|0\.0\.0\.0|\[::1\]|\[::\]):7865\b/i.test(line)) continue;
+    const match = line.trim().match(/\s(\d+)$/);
+    if (match?.[1] && match[1] !== "0") pids.add(match[1]);
+  }
+  const owners = [];
+  for (const pid of pids) {
+    owners.push({ pid, processName: await windowsProcessName(pid), port: 7865 });
+  }
+  return owners;
+}
+
+async function windowsProcessName(pid) {
+  const result = await runProcess("tasklist.exe", ["/FI", `PID eq ${pid}`, "/FO", "CSV", "/NH"], { timeoutMs: 5000 });
+  if (result.code !== 0 || !result.stdout.trim() || /no tasks/i.test(result.stdout)) return "";
+  const firstLine = result.stdout.trim().split(/\r?\n/)[0] || "";
+  const match = firstLine.match(/^"([^"]+)"/);
+  return match?.[1] || firstLine.split(",")[0]?.replace(/^"|"$/g, "") || "";
+}
+
+async function findStemPortOwnersUnix() {
+  const result = await runProcess("lsof", ["-nP", "-iTCP:7865", "-sTCP:LISTEN"], { timeoutMs: 7000 });
+  if (result.code !== 0 || !result.stdout) return [];
+  return result.stdout
+    .split(/\r?\n/)
+    .slice(1)
+    .map((line) => line.trim().split(/\s+/))
+    .filter((parts) => parts.length >= 2)
+    .map((parts) => ({ processName: parts[0], pid: parts[1], port: 7865 }));
 }
 
 async function findPsarcFiles(root) {

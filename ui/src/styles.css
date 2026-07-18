@@ -1796,6 +1796,18 @@ button:disabled {
   font-size: 12px;
 }
 
+.queue-main em {
+  display: block;
+  margin-top: 4px;
+  color: #8ee7ff;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 800;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .queue-meta {
   min-width: 0;
   text-align: right;
@@ -2024,6 +2036,24 @@ button:disabled {
   color: #ffc9d0;
   display: flex;
   gap: 8px;
+}
+
+.info-box {
+  margin: 0 16px 16px;
+  padding: 12px;
+  border: 1px solid rgba(35, 185, 245, 0.22);
+  border-radius: 10px;
+  background: rgba(35, 185, 245, 0.1);
+  color: #bfeaff;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.info-box.success {
+  border-color: rgba(35, 209, 139, 0.28);
+  background: rgba(35, 209, 139, 0.1);
+  color: #b7ffd0;
 }
 
 .arrangements {

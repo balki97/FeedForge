@@ -11,6 +11,7 @@ import {
   Globe,
   Guitar,
   ImageIcon,
+  Info,
   Play,
   Plus,
   Power,
@@ -108,6 +109,7 @@ function App() {
   const [demucsSetup, setDemucsSetup] = useState(null);
   const [stemServerStatus, setStemServerStatus] = useState({ url: "http://127.0.0.1:7865", running: false, starting: false, healthy: false });
   const [isStartingStemServer, setIsStartingStemServer] = useState(false);
+  const [isFreeingStemPort, setIsFreeingStemPort] = useState(false);
   const [debugLogInfo, setDebugLogInfo] = useState(null);
   const [pythonInfo, setPythonInfo] = useState(null);
   const [isCheckingPython, setIsCheckingPython] = useState(false);
@@ -333,6 +335,8 @@ function App() {
         status: "queued",
         preview: null,
         outputPath: null,
+        outputPaths: [],
+        message: null,
         error: null
     }));
     if (!incoming.length) return;
@@ -495,6 +499,23 @@ function App() {
     setStemServerStatus(status);
   }
 
+  async function freeStemServerPort() {
+    if (isFreeingStemPort) return;
+    const owners = stemServerPortOwners(stemServerStatus);
+    const detail = owners.length
+      ? owners.map((owner) => `${owner.processName || "Process"} ${owner.pid || ""}`.trim()).join(", ")
+      : "the process currently listening on port 7865";
+    const ok = window.confirm(`Stop ${detail} so FeedForge can start the local stem server?`);
+    if (!ok) return;
+    setIsFreeingStemPort(true);
+    try {
+      const status = await api.freeStemServerPort();
+      setStemServerStatus(status);
+    } finally {
+      setIsFreeingStemPort(false);
+    }
+  }
+
   async function chooseDemucsInstallDir() {
     const folder = await api.pickDemucsInstallDir({ defaultPath: demucsInstallDir || undefined });
     if (folder) setDemucsInstallDir(folder);
@@ -554,7 +575,7 @@ function App() {
       const item = pending[index];
       index += 1;
       if (!item) return;
-      updateItem(item.id, { status: "converting", error: null });
+      updateItem(item.id, { status: "converting", error: null, message: null });
       setConversionProgress((current) => ({
         ...current,
         active: [...current.active.filter((entry) => entry.id !== item.id), { id: item.id, name: item.preview?.title || item.name, artist: item.preview?.artist || "" }]
@@ -580,10 +601,17 @@ function App() {
           updateItem(item.id, { status: "failed", error: result.error });
         } else {
           const warnings = Array.isArray(result.warnings) ? result.warnings.filter(Boolean) : [];
+          const outputPaths = Array.isArray(result.outputPaths) ? result.outputPaths.filter(Boolean) : [];
+          const outputCount = outputPaths.length || (result.outputPath ? 1 : 0);
+          const outputFolder = outputPaths.length ? parentDir(outputPaths[0]) : "";
           updateItem(item.id, {
             status: "converted",
             outputPath: result.outputPath || outputPath,
+            outputPaths,
             validation: result.validation || null,
+            message: outputCount > 1
+              ? `Created ${outputCount} FeedPaks${outputFolder ? ` in ${outputFolder}` : ""}.`
+              : null,
             error: warnings.length ? warnings.join("\n") : null
           });
         }
@@ -1134,6 +1162,12 @@ function App() {
                           {stemServerActionText(stemServerStatus, stemServerBusy, selectedModel)}
                         </button>
                       )}
+                      {stemServerStatus.portBlocked && !stemServerBusy && (
+                        <button className="danger" onClick={freeStemServerPort} disabled={isConverting || isFreeingStemPort}>
+                          {isFreeingStemPort ? <RotateCw className="spin" size={17} /> : <XCircle size={17} />}
+                          Free port 7865
+                        </button>
+                      )}
                       {(stemServerStatus.processRunning || stemServerBusy) && (
                         <button className="ghost" onClick={stopLocalStemServer} disabled={isConverting}>
                           <Power size={17} />
@@ -1364,6 +1398,13 @@ function stemServerDetail(status, demucsModel, selectedModel, matchesSelection =
   if (selectedModel?.remoteOnly) {
     return `${selectedModel.name} is requested during conversion through the configured remote Demucs server. The local FeedForge server cannot start this model.`;
   }
+  if (status?.portBlocked) {
+    const owners = stemServerPortOwners(status);
+    const ownerText = owners.length
+      ? ` Used by ${owners.map((owner) => `${owner.processName || "process"} ${owner.pid || ""}`.trim()).join(", ")}.`
+      : "";
+    return `Port 7865 is already in use.${ownerText} Free the port, then start the local server.`;
+  }
   if (status.healthy && !matchesSelection) {
     const selected = selectedModel?.name || demucsModel;
     return `Current server is ${status.model || "another model"}. Start the selected setup to use ${selected}.`;
@@ -1376,6 +1417,10 @@ function stemServerDetail(status, demucsModel, selectedModel, matchesSelection =
   if (status.running) return "The port is reachable, but health did not pass. Open the debug log if this stays unresolved.";
   if (selectedModel?.installed) return "Installed locally.";
   return "First local start installs dependencies and downloads the selected model.";
+}
+
+function stemServerPortOwners(status) {
+  return Array.isArray(status?.portOwners) ? status.portOwners.filter((owner) => owner?.pid) : [];
 }
 
 function stemServerMatchesSelection(status, model, device, jobs) {
@@ -1732,6 +1777,10 @@ function Queue({ items, selectedId, onSelect, onRemove, canRemove }) {
             <div className="queue-main">
               <strong>{item.preview?.title || item.name}</strong>
               <span>{item.preview?.artist || item.path}</span>
+              {item.preview?.is_multi_song && item.status !== "converted" && (
+                <em>{item.preview.song_count} songs will export as separate FeedPaks</em>
+              )}
+              {item.message && <em>{item.message}</em>}
             </div>
             <div className="queue-meta">
               <span>{item.sourceType === "feedpak" ? "FeedPak" : "PSARC"}</span>
@@ -1899,6 +1948,7 @@ function Inspector({
   const stems = preview?.stems || [];
   const validation = item?.validation || preview?.validation;
   const isFeedpak = item?.sourceType === "feedpak" || preview?.source_type === "feedpak";
+  const outputCount = Array.isArray(item?.outputPaths) ? item.outputPaths.length : 0;
 
   useEffect(() => {
     if (!preview || !isFeedpak) {
@@ -1983,12 +2033,13 @@ function Inspector({
             <span className="eyebrow">{isFeedpak ? "FeedPak package" : "Selected song"}</span>
             <h2>{preview?.title || item?.name || "No song selected"}</h2>
             <p>{preview?.artist || "Add PSARC or FeedPak files to inspect package details."}</p>
-              <div className="chips">
-                {preview?.album && <span>{preview.album}</span>}
-                {preview?.year && <span>{preview.year}</span>}
-                {preview?.duration && <span>{duration(preview.duration)}</span>}
-                {authors.length > 0 && <span>{authors.length} credit{authors.length === 1 ? "" : "s"}</span>}
-              </div>
+            <div className="chips">
+              {preview?.album && <span>{preview.album}</span>}
+              {preview?.year && <span>{preview.year}</span>}
+              {preview?.duration && <span>{duration(preview.duration)}</span>}
+              {preview?.is_multi_song && <span>{preview.song_count} songs</span>}
+              {authors.length > 0 && <span>{authors.length} credit{authors.length === 1 ? "" : "s"}</span>}
+            </div>
           </div>
         </section>
 
@@ -2009,8 +2060,8 @@ function Inspector({
               <span>{item ? statusText(item.status) : "Waiting"}</span>
             </div>
             <div className="overview-metrics">
-              <FeedPakMetric label="Arrangements" value={arrangements.length} />
-              <FeedPakMetric label="Stems" value={stems.length} />
+              <FeedPakMetric label={preview?.is_multi_song ? "Songs" : "Arrangements"} value={preview?.is_multi_song ? preview.song_count : arrangements.length} />
+              <FeedPakMetric label={preview?.is_multi_song ? "Arrangements" : "Stems"} value={preview?.is_multi_song ? arrangements.length : stems.length} />
               <FeedPakMetric label="Tone rigs" value={countToneDefinitions(tones)} />
               <FeedPakMetric label="Credits" value={authors.length} />
             </div>
@@ -2022,6 +2073,12 @@ function Inspector({
               <ReadyLine ok={authors.length > 0} text={authors.length ? `${authors.length} credit${authors.length === 1 ? "" : "s"}` : "No embedded credit"} muted={!authors.length} />
               {isFeedpak && validation && <ReadyLine ok={!!validation.ok} text={validation.ok ? "Spec validation passed" : "Spec validation failed"} />}
             </ul>
+            {preview?.is_multi_song && !outputCount && (
+              <div className="info-box"><Info size={17} /> This multi-song PSARC will create {preview.song_count} separate FeedPaks when converted.</div>
+            )}
+            {outputCount > 1 && (
+              <div className="info-box success"><Check size={17} /> Created {outputCount} separate FeedPaks{item.outputPaths?.[0] ? ` in ${parentDir(item.outputPaths[0])}` : ""}.</div>
+            )}
             {item?.error && <div className="error-box"><AlertTriangle size={17} /> {item.error}</div>}
             {isFeedpak && validation && !validation.ok && (
               <div className="error-box">

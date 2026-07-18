@@ -89,6 +89,7 @@ def convert_psarc_songs(
     demucs_api_key: str | None = None,
     demucs_model: str | None = None,
     demucs_stems: list[str] | None = None,
+    rs1_songs_psarc: Path | None = None,
 ) -> list[ConversionResult]:
     """Convert a PSARC, splitting multi-song containers into one FeedPak per song."""
     input_psarc = Path(input_psarc)
@@ -96,10 +97,12 @@ def convert_psarc_songs(
         raise FileNotFoundError(f"PSARC file not found: {input_psarc}")
     with input_psarc.open("rb") as fh:
         content = PSARC(crypto=True).parse_stream(fh)
+    rs1_songs_content = _load_rs1_songs_content(input_psarc, content, rs1_songs_psarc)
 
     groups = _song_groups(content)
     playable_groups = _playable_song_groups(groups)
     if len(playable_groups) <= 1:
+        merged_content = _content_with_rs1_audio(content, input_psarc.stem, rs1_songs_content)
         return [
             convert_psarc(
                 input_psarc,
@@ -114,7 +117,7 @@ def convert_psarc_songs(
                 demucs_api_key=demucs_api_key,
                 demucs_model=demucs_model,
                 demucs_stems=demucs_stems,
-                _content=content,
+                _content=merged_content,
             )
         ]
 
@@ -125,7 +128,7 @@ def convert_psarc_songs(
         base_dir = output.parent if output.suffix else output
     results: list[ConversionResult] = []
     for key, paths in sorted(playable_groups.items()):
-        song_content = _content_for_song_group(content, key, paths)
+        song_content = _content_for_song_group(content, key, paths, rs1_songs_content=rs1_songs_content)
         output = base_dir / f"{_safe_output_stem(_metadata_song_title(song_content) or key)}.feedpak"
         try:
             result = convert_psarc(
@@ -459,7 +462,13 @@ def _is_playable_sng_path(path: str) -> bool:
     return bool(re.search(r"_(?:lead\d*|rhythm\d*|combo\d*|bass\d*)$", stem))
 
 
-def _content_for_song_group(content: dict[str, bytes], key: str, paths: set[str]) -> dict[str, bytes]:
+def _content_for_song_group(
+    content: dict[str, bytes],
+    key: str,
+    paths: set[str],
+    *,
+    rs1_songs_content: dict[str, bytes] | None = None,
+) -> dict[str, bytes]:
     key = key.lower()
     selected = {path: content[path] for path in paths if path in content}
 
@@ -481,11 +490,69 @@ def _content_for_song_group(content: dict[str, bytes], key: str, paths: set[str]
     wem_paths = _wem_paths_for_banks(content, bnk_paths)
     for path in wem_paths:
         selected[path] = content[path]
-    if bnk_paths and not wem_paths:
+    external_wem_paths: set[str] = set()
+    if rs1_songs_content:
+        external_bnk_paths = _bank_paths_for_song_key(rs1_songs_content, key)
+        external_wem_paths = _wem_paths_for_banks(rs1_songs_content, external_bnk_paths)
+        for path in external_bnk_paths:
+            selected[path] = rs1_songs_content[path]
+        for path in external_wem_paths:
+            selected[path] = rs1_songs_content[path]
+    if (bnk_paths or rs1_songs_content) and not wem_paths and not external_wem_paths:
         # A grouped multi-song PSARC with an unresolvable bank is safer to fail
         # later with "No audio file found" than to borrow another song's WEM.
         selected = {path: data for path, data in selected.items() if not path.lower().endswith((".wem", ".ogg", ".wav", ".mp3", ".flac", ".opus"))}
     return selected
+
+
+def _load_rs1_songs_content(
+    input_psarc: Path,
+    content: dict[str, bytes],
+    rs1_songs_psarc: Path | None,
+) -> dict[str, bytes] | None:
+    source = Path(rs1_songs_psarc) if rs1_songs_psarc else _default_rs1_songs_psarc(input_psarc, content)
+    if source is None:
+        return None
+    if not source.is_file():
+        raise FileNotFoundError(f"RS1 songs.psarc file not found: {source}")
+    with source.open("rb") as fh:
+        return PSARC(crypto=True).parse_stream(fh)
+
+
+def _default_rs1_songs_psarc(input_psarc: Path, content: dict[str, bytes]) -> Path | None:
+    if "rs1compatibility" not in input_psarc.name.lower():
+        return None
+    if any(path.lower().endswith(".wem") for path in content):
+        return None
+    candidate = input_psarc.parent.parent / "songs.psarc"
+    return candidate if candidate.is_file() else None
+
+
+def _content_with_rs1_audio(
+    content: dict[str, bytes],
+    key: str,
+    rs1_songs_content: dict[str, bytes] | None,
+) -> dict[str, bytes]:
+    if not rs1_songs_content:
+        return content
+    selected = dict(content)
+    bnk_paths = _bank_paths_for_song_key(rs1_songs_content, _slug(key))
+    for bnk_path in bnk_paths:
+        selected[bnk_path] = rs1_songs_content[bnk_path]
+    for wem_path in _wem_paths_for_banks(rs1_songs_content, bnk_paths):
+        selected[wem_path] = rs1_songs_content[wem_path]
+    return selected
+
+
+def _bank_paths_for_song_key(content: dict[str, bytes], key: str) -> list[str]:
+    wanted = {f"song_{key}", key}
+    return [
+        path
+        for path in content
+        if path.replace("\\", "/").lower().endswith(".bnk")
+        and Path(path.replace("\\", "/")).stem.lower() in wanted
+        and not Path(path.replace("\\", "/")).stem.lower().endswith("_preview")
+    ]
 
 
 def _is_vocal_sidecar_for_key(stem_key: str, key: str) -> bool:
@@ -933,7 +1000,7 @@ def _song_to_arrangement(
         "templates": templates,
         **({"phrases": chart["phrases"]} if chart["phrases"] else {}),
         "beats": [_beat_to_feedpak(b) for b in song.beats],
-        "sections": [_section_to_feedpak(s) for s in song.sections],
+        "sections": _sections_to_feedpak(song),
     }
     arrangement["stats"] = {
         "events": _arrangement_event_count(arrangement),
@@ -1744,7 +1811,7 @@ def _song_to_timeline(song: Any) -> dict[str, Any]:
     return {
         "version": 1,
         "beats": [_beat_to_feedpak(b) for b in song.beats],
-        "sections": [_section_to_feedpak(s) for s in song.sections],
+        "sections": _sections_to_feedpak(song),
     }
 
 
@@ -1758,6 +1825,30 @@ def _section_to_feedpak(section: Any) -> dict[str, Any]:
     if int(section.number) > 0:
         out["number"] = int(section.number)
     return out
+
+
+def _sections_to_feedpak(song: Any) -> list[dict[str, Any]]:
+    sections = [_section_to_feedpak(section) for section in getattr(song, "sections", [])]
+    if sections:
+        return sections
+    return _sections_from_phrases(song)
+
+
+def _sections_from_phrases(song: Any) -> list[dict[str, Any]]:
+    phrases = list(getattr(song, "phrases", []) or [])
+    iterations = list(getattr(song, "phraseIterations", []) or [])
+    if not phrases or not iterations:
+        return []
+    generated: list[dict[str, Any]] = []
+    counters: dict[str, int] = {}
+    for iteration in iterations:
+        phrase_id = int(getattr(iteration, "phraseId", -1))
+        if phrase_id < 0 or phrase_id >= len(phrases):
+            continue
+        name = str(getattr(phrases[phrase_id], "name", "") or "").strip() or "phrase"
+        counters[name] = counters.get(name, 0) + 1
+        generated.append({"name": name, "time": _num(iteration.time), "number": counters[name]})
+    return generated
 
 
 def _song_to_lyrics(song: Any) -> list[dict[str, Any]]:
@@ -1781,7 +1872,7 @@ def _karaoke_arrangement(song: Any) -> dict[str, Any]:
         "handshapes": [],
         "templates": [],
         "beats": [_beat_to_feedpak(b) for b in getattr(song, "beats", [])],
-        "sections": [_section_to_feedpak(s) for s in getattr(song, "sections", [])],
+        "sections": _sections_to_feedpak(song),
     }
 
 
