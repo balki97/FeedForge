@@ -739,6 +739,35 @@ function App() {
     return result;
   }
 
+  async function reprocessFeedpakStems(item, options = {}) {
+    if (!item || item.sourceType !== "feedpak") return { ok: false, error: "Select a FeedPak first." };
+    if (!separateStems) return { ok: false, error: "Enable Separate stems in Settings first." };
+    updateItem(item.id, { status: "converting", error: null });
+    const overwriteOriginal = options.overwriteOriginal === true;
+    const outputPath = overwriteOriginal ? null : editedFeedpakPath(item, outputDir);
+    const result = await api.updateFeedpak({
+      inputPath: item.path,
+      outputPath,
+      overwrite: overwriteOriginal,
+      separateStems: true,
+      demucsUrl,
+      demucsApiKey,
+      demucsModel,
+      demucsStems
+    });
+    if (!result.ok) {
+      updateItem(item.id, { status: "failed", error: result.error });
+      return result;
+    }
+    if (overwriteOriginal) {
+      updateItem(item.id, { status: "queued", error: null });
+      await inspectItem({ ...item, status: "queued" });
+    } else {
+      updateItem(item.id, { status: "converted", outputPath: result.outputPath || outputPath, validation: result.validation || null, error: null });
+    }
+    return result;
+  }
+
   async function organizeLoadedFeedpaksByArtist() {
     if (!feedpakItems.length) return { ok: false, error: "Add FeedPaks first." };
     let targetDir = outputDir;
@@ -1176,10 +1205,13 @@ function App() {
             onRemoveFeedpakCover={removeFeedpakCover}
             onReplaceFeedpakStem={replaceFeedpakStem}
             onRemoveFeedpakStem={removeFeedpakStem}
+            onReprocessFeedpakStems={reprocessFeedpakStems}
             onOrganizeByArtist={organizeLoadedFeedpaksByArtist}
             onChooseOutput={chooseOutput}
             outputDir={outputDir}
             overwrite={overwrite}
+            separateStems={separateStems}
+            demucsStems={demucsStems}
           />
         ) : (
           <>
@@ -1745,10 +1777,13 @@ function FeedPakTools({
   onRemoveFeedpakCover,
   onReplaceFeedpakStem,
   onRemoveFeedpakStem,
+  onReprocessFeedpakStems,
   onOrganizeByArtist,
   onChooseOutput,
   outputDir,
-  overwrite
+  overwrite,
+  separateStems,
+  demucsStems
 }) {
   const [organizeMessage, setOrganizeMessage] = useState("");
 
@@ -1819,6 +1854,9 @@ function FeedPakTools({
             onRemoveFeedpakCover={onRemoveFeedpakCover}
             onReplaceFeedpakStem={onReplaceFeedpakStem}
             onRemoveFeedpakStem={onRemoveFeedpakStem}
+            onReprocessFeedpakStems={onReprocessFeedpakStems}
+            separateStems={separateStems}
+            demucsStems={demucsStems}
           />
         </div>
       )}
@@ -1841,7 +1879,10 @@ function Inspector({
   onReplaceFeedpakCover,
   onRemoveFeedpakCover,
   onReplaceFeedpakStem,
-  onRemoveFeedpakStem
+  onRemoveFeedpakStem,
+  onReprocessFeedpakStems,
+  separateStems = false,
+  demucsStems = []
 }) {
   const [tab, setTab] = useState("overview");
   const [editMetadata, setEditMetadata] = useState(null);
@@ -1919,6 +1960,18 @@ function Inspector({
     setStemMessage(result?.ok
       ? overwriteOriginal ? `Removed ${stemId}` : `Saved copy without ${stemId}`
       : result?.error || "Stem removal failed");
+  }
+
+  async function reprocessStems() {
+    if (!separateStems) {
+      setStemMessage("Enable Separate stems in Settings first.");
+      return;
+    }
+    setStemMessage("Reprocessing stems...");
+    const result = await onReprocessFeedpakStems(item, { overwriteOriginal });
+    setStemMessage(result?.ok
+      ? overwriteOriginal ? "Reprocessed original stems" : `Saved reprocessed copy: ${basename(result.outputPath || "")}`
+      : result?.error || "Stem reprocess failed");
   }
 
   return (
@@ -2048,6 +2101,15 @@ function Inspector({
           <div className="stem-editor-callout">
             <strong>Full mix stays protected</strong>
             <span>Split-stem packages keep the full mix for fallback playback.</span>
+          </div>
+          <div className="stem-reprocess-card">
+            <div>
+              <strong>Reprocess this FeedPak</strong>
+              <span>{separateStems ? `${stemSelectionSummary(demucsStems)} Existing stems will be refreshed from full.ogg.` : "Turn on Separate stems in Settings to split or refresh stems from full.ogg."}</span>
+            </div>
+            <button className="primary" onClick={reprocessStems} disabled={!separateStems}>
+              <RotateCw size={16} /> Reprocess stems
+            </button>
           </div>
           <div className="stem-editor-toolbar">
             <label>

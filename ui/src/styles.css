@@ -2746,6 +2746,36 @@ button:disabled {
   font-size: 0.9rem;
 }
 
+.stem-reprocess-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid rgba(37, 178, 244, 0.24);
+  border-radius: 12px;
+  background: rgba(37, 178, 244, 0.07);
+}
+
+.stem-reprocess-card div {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.stem-reprocess-card strong {
+  color: var(--text);
+}
+
+.stem-reprocess-card span {
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.stem-reprocess-card button {
+  white-space: nowrap;
+}
+
 .stem-editor-toolbar {
   display: grid;
   grid-template-columns: minmax(240px, 1fr) auto auto;
@@ -2797,6 +2827,7 @@ button:disabled {
 
 @media (max-width: 760px) {
   .stem-editor-toolbar,
+  .stem-reprocess-card,
   .stem-row.editable {
     grid-template-columns: 1fr;
   }
@@ -2812,6 +2843,7 @@ button:disabled {
 
   .stem-row.editable b,
   .stem-editor-toolbar .editor-overwrite,
+  .stem-reprocess-card button,
   .stem-row.editable button {
     justify-self: stretch;
   }

@@ -1,6 +1,6 @@
 {
   "name": "feedforge",
-  "version": "0.1.16",
+  "version": "0.1.17",
   "private": true,
   "description": "Desktop toolkit for preparing FeedBack-ready song packages.",
   "author": "FeedForge Contributors",
@@ -44,7 +44,8 @@
         "from": "src",
         "to": "demucs-server/src",
         "filter": [
-          "feedback_converter/**/*.py"
+          "feedback_converter/**/*.py",
+          "feedback_converter/data/feedpak_schemas/*.json"
         ]
       },
       {
