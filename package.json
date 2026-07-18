@@ -1,6 +1,6 @@
 {
   "name": "feedforge",
-  "version": "0.1.15",
+  "version": "0.1.16",
   "private": true,
   "description": "Desktop toolkit for preparing FeedBack-ready song packages.",
   "author": "FeedForge Contributors",
@@ -71,6 +71,10 @@
     "directories": {
       "output": "release"
     },
+    "compression": "maximum",
+    "electronLanguages": [
+      "en-US"
+    ],
     "win": {
       "icon": "assets/feedforge.ico",
       "target": [

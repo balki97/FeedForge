@@ -15,6 +15,7 @@ from feedback_converter import __version__
 from feedback_converter.batch import _batch_output_path, convert_many
 from feedback_converter.converter import convert_psarc, convert_psarc_songs
 from feedback_converter.feedpak import inspect_feedpak, update_feedpak
+from feedback_converter.feedpak_validator import validate_feedpak
 from feedback_converter.inspector import inspect_psarc
 
 
@@ -150,6 +151,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--inspect-cover-dir",
         help="Folder for cover art written during --inspect-json.",
     )
+    parser.add_argument(
+        "--validate-feedpak",
+        action="store_true",
+        help="Validate one or more FeedPak packages against the bundled FeedPak spec schemas.",
+    )
     parser.add_argument("--feedpak-title", help="Set FeedPak title when editing an existing FeedPak.")
     parser.add_argument("--feedpak-artist", help="Set FeedPak artist when editing an existing FeedPak.")
     parser.add_argument("--feedpak-album", help="Set FeedPak album when editing an existing FeedPak.")
@@ -165,6 +171,14 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Remove the cover image from an existing FeedPak.",
     )
+    parser.add_argument(
+        "--feedpak-stem-updates-json",
+        help="JSON array of stem updates, for example [{\"id\":\"guitar\",\"file\":\"C:/audio/guitar.ogg\"}].",
+    )
+    parser.add_argument(
+        "--feedpak-remove-stems",
+        help="Comma-separated non-full stem ids to remove from an existing FeedPak.",
+    )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     return parser
 
@@ -173,6 +187,19 @@ def main(argv: list[str] | None = None) -> int:
     _configure_stdio()
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    if args.validate_feedpak:
+        if not args.input:
+            parser.error("--validate-feedpak requires at least one input")
+        results = []
+        ok = True
+        for input_item in args.input:
+            input_path = Path(input_item)
+            validation = validate_feedpak(input_path)
+            ok = ok and validation.ok
+            results.append({"input_path": str(input_path), "validation": validation.to_dict()})
+        _print(json.dumps({"ok": ok, "results": _jsonable(results)}, ensure_ascii=False), stream=sys.stdout)
+        return 0 if ok else 1
 
     if args.inspect_json:
         if len(args.input) != 1:
@@ -215,12 +242,16 @@ def main(argv: list[str] | None = None) -> int:
                     demucs_api_key=args.demucs_api_key,
                     demucs_model=args.demucs_model,
                     demucs_stems=_split_csv(args.demucs_stems),
+                    stem_updates=_json_arg(args.feedpak_stem_updates_json, "feedpak stem updates"),
+                    remove_stems=_split_csv(args.feedpak_remove_stems),
                     overwrite=args.overwrite,
                 )
             except Exception as exc:  # noqa: BLE001
                 _print(f"error: {exc}", stream=sys.stderr)
                 return 1
             _print(f"wrote {result.output_path}")
+            if result.validation and result.validation.ok:
+                _print(f"validated {result.output_path}")
             for warning in result.warnings:
                 _print(f"warning: {warning.message}", stream=sys.stderr)
             return 0
@@ -247,6 +278,8 @@ def main(argv: list[str] | None = None) -> int:
 
         for result in results:
             _print(f"wrote {result.output_path}")
+            if result.validation and result.validation.ok:
+                _print(f"validated {result.output_path}")
             for warning in result.warnings:
                 _print(f"warning: {warning.message}", stream=sys.stderr)
         return 0
@@ -271,6 +304,8 @@ def main(argv: list[str] | None = None) -> int:
     for item in batch.items:
         if item.succeeded and item.result is not None:
             _print(f"wrote {item.result.output_path}")
+            if item.result.validation and item.result.validation.ok:
+                _print(f"validated {item.result.output_path}")
             for warning in item.result.warnings:
                 _print(f"warning: {warning.message}", stream=sys.stderr)
         else:
@@ -310,6 +345,15 @@ def _feedpak_authors(value: str | None) -> list[dict[str, str]] | None:
     if not isinstance(parsed, list):
         raise ValueError("--feedpak-authors-json must be a JSON array")
     return parsed
+
+
+def _json_arg(value: str | None, label: str) -> Any:
+    if value is None:
+        return None
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{label} must be valid JSON: {exc}") from exc
 
 
 if __name__ == "__main__":

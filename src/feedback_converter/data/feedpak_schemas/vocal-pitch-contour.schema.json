@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://got-feedback.github.io/feedpak-spec/schemas/vocal-pitch-contour.schema.json",
+  "$comment": "SPDX-License-Identifier: MIT. feedpak vocal_pitch_contour.json (fine-grained Hz contour). See spec/feedpak-v1.md §7.3.",
+  "title": "feedpak vocal pitch contour",
+  "type": "object",
+  "required": ["version", "samples"],
+  "additionalProperties": true,
+  "properties": {
+    "version": { "type": "integer", "minimum": 1 },
+    "samples": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["t", "hz"],
+        "additionalProperties": true,
+        "properties": {
+          "t": { "type": "number" },
+          "hz": { "type": "number" }
+        }
+      }
+    }
+  }
+}

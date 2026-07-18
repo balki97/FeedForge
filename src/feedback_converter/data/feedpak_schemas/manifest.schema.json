@@ -1,0 +1,169 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://got-feedback.github.io/feedpak-spec/schemas/manifest.schema.json",
+  "$comment": "SPDX-License-Identifier: MIT. feedpak manifest.yaml (validated as JSON). See spec/feedpak-v1.md §5.",
+  "title": "feedpak manifest",
+  "type": "object",
+  "required": ["title", "artist", "duration", "arrangements", "stems"],
+  "additionalProperties": true,
+  "properties": {
+    "feedpak_version": {
+      "type": "string",
+      "$ref": "#/$defs/semver",
+      "description": "Format version (semver). Absent is treated as 1.0.0."
+    },
+    "title": { "type": "string" },
+    "artist": { "type": "string" },
+    "album": { "type": "string" },
+    "year": { "type": "integer" },
+    "album_artist": { "type": "string" },
+    "track": { "type": "integer", "minimum": 1 },
+    "disc": { "type": "integer", "minimum": 1 },
+    "genres": { "type": "array", "items": { "type": "string" } },
+    "mbid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "description": "MusicBrainz Recording MBID of the recording this pack transcribes (lowercase canonical UUID). See spec §5.1."
+    },
+    "isrc": {
+      "type": "string",
+      "pattern": "^[A-Z]{2}[A-Z0-9]{3}[0-9]{7}$",
+      "description": "International Standard Recording Code of the recording (12 characters). See spec §5.1."
+    },
+    "language": { "$ref": "#/$defs/bcp47" },
+    "authors": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/author" }
+    },
+    "duration": { "type": "number", "minimum": 0 },
+    "arrangements": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/arrangementEntry" }
+    },
+    "stems": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/stemEntry" }
+    },
+    "stem_separation": { "$ref": "#/$defs/provenance" },
+    "lyrics": { "$ref": "#/$defs/relpath" },
+    "lyrics_source": { "type": "string", "enum": ["authored", "transcribed", "user"] },
+    "lyric_transcription": { "$ref": "#/$defs/provenance" },
+    "lyric_tracks": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/lyricTrack" }
+    },
+    "vocal_pitch": { "$ref": "#/$defs/relpath" },
+    "pitch_extraction": { "$ref": "#/$defs/provenance" },
+    "vocal_pitch_contour": { "$ref": "#/$defs/relpath" },
+    "cover": { "$ref": "#/$defs/relpath" },
+    "preview": { "$ref": "#/$defs/relpath" },
+    "song_timeline": { "$ref": "#/$defs/relpath" },
+    "drum_tab": { "$ref": "#/$defs/relpath" },
+    "keys": { "$ref": "#/$defs/relpath" },
+    "harmony": { "$ref": "#/$defs/relpath" },
+    "rigs": { "$ref": "#/$defs/relpath" }
+  },
+  "$defs": {
+    "semver": {
+      "type": "string",
+      "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?$"
+    },
+    "relpath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*//)(?!.*:)(?!.*\\\\)(?!.*(^|/)\\.\\.(/|$)).+$",
+      "description": "POSIX relative path inside the package: no leading slash, no backslash, no drive letter / colon, no empty segment ('//'), no '..' segment."
+    },
+    "bcp47": {
+      "type": "string",
+      "pattern": "^([A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*|[xiXI](-[A-Za-z0-9]{1,8})+)$",
+      "description": "BCP 47 (RFC 5646) language tag, validated leniently by shape rather than against the IANA registry (e.g. 'en', 'ja', 'ja-Latn', 'zh-Hans', 'pt-BR', 'und'). The second alternative admits well-formed private-use ('x-...') and irregular grandfathered ('i-klingon') tags with a single-letter primary subtag, which Readers MUST accept (spec §5.5)."
+    },
+    "lyricTrack": {
+      "type": "object",
+      "required": ["id", "file", "language", "kind"],
+      "additionalProperties": true,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "file": { "$ref": "#/$defs/relpath" },
+        "language": { "$ref": "#/$defs/bcp47" },
+        "kind": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Track kind. Canonical values: 'original', 'transliteration', 'translation'. Kept open (not an enum) because the spec (§5.5) requires Readers to accept any value and treat an unrecognised one as 'translation', so future kinds must stay schema-valid."
+        },
+        "lyrics_source": { "type": "string", "enum": ["authored", "transcribed", "user"] },
+        "lyric_transcription": { "$ref": "#/$defs/provenance" },
+        "stem": { "type": "string", "minLength": 1 },
+        "name": { "type": "string" }
+      }
+    },
+    "arrangementEntry": {
+      "type": "object",
+      "required": ["id"],
+      "additionalProperties": true,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string" },
+        "file": { "$ref": "#/$defs/relpath" },
+        "tuning": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "integer" }
+        },
+        "capo": { "type": "integer", "minimum": 0 },
+        "centOffset": { "type": "number" },
+        "type": { "type": "string" },
+        "notation": { "$ref": "#/$defs/relpath" }
+      },
+      "anyOf": [
+        { "required": ["file"] },
+        { "required": ["notation"] }
+      ]
+    },
+    "stemEntry": {
+      "type": "object",
+      "required": ["id", "file"],
+      "additionalProperties": true,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Stable stem identifier. The id 'full' is RESERVED for the song's complete mixdown (spec 5.3): a Reader MUST NOT sum it with per-instrument stems, and a Writer that separates a pack MUST retain it alongside them with default:false (packs declaring feedpak_version >= 1.16.0; SHOULD for earlier packs)."
+        },
+        "file": { "$ref": "#/$defs/relpath" },
+        "codec": { "type": "string", "minLength": 1 },
+        "language": { "$ref": "#/$defs/bcp47" },
+        "default": {
+          "oneOf": [
+            { "type": "boolean" },
+            { "type": "string", "pattern": "^([Tt][Rr][Uu][Ee]|[Ff][Aa][Ll][Ss][Ee]|[Oo][Nn]|[Oo][Ff][Ff]|[Yy][Ee][Ss]|[Nn][Oo])$" }
+          ]
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "required": ["engine", "model", "version"],
+      "additionalProperties": true,
+      "properties": {
+        "engine": { "type": "string" },
+        "model": { "type": "string" },
+        "version": { "$ref": "#/$defs/semver" }
+      }
+    },
+    "author": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": true,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "role": { "type": "string" },
+        "email": { "type": "string" },
+        "url": { "type": "string" }
+      }
+    }
+  }
+}

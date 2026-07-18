@@ -21,6 +21,7 @@ from typing import Any
 
 import yaml
 
+from .feedpak_validator import FeedpakValidationResult, require_valid_feedpak
 from .psarc_format.psarc import PSARC
 from .psarc_format.sng import Song
 
@@ -71,6 +72,7 @@ class ConversionResult:
     package_dir: Path
     manifest: dict[str, Any]
     warnings: list[ConversionWarning] = field(default_factory=list)
+    validation: FeedpakValidationResult | None = None
 
 
 def convert_psarc_songs(
@@ -379,6 +381,15 @@ def convert_psarc(
 
     _write_manifest(package_dir / "manifest.yaml", manifest)
 
+    try:
+        validation = require_valid_feedpak(package_dir)
+    except Exception:
+        if not keep_workdir:
+            shutil.rmtree(package_dir, ignore_errors=True)
+        raise
+    for warning in validation.warnings:
+        warnings.append(ConversionWarning(f"FeedPak spec validation warning: {warning}"))
+
     final_output = package_dir
     if archive:
         _zip_dir(package_dir, output)
@@ -386,7 +397,7 @@ def convert_psarc(
         if not keep_workdir:
             shutil.rmtree(package_dir)
 
-    return ConversionResult(final_output, package_dir, manifest, warnings)
+    return ConversionResult(final_output, package_dir, manifest, warnings, validation)
 
 
 def _find_sng_entries(content: dict[str, bytes]) -> list[tuple[str, bytes]]:

@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://got-feedback.github.io/feedpak-spec/schemas/vocal-pitch.schema.json",
+  "$comment": "SPDX-License-Identifier: MIT. feedpak vocal_pitch.json (per-syllable pitch). See spec/feedpak-v1.md §7.2.",
+  "title": "feedpak vocal pitch",
+  "type": "object",
+  "required": ["version", "notes"],
+  "additionalProperties": true,
+  "properties": {
+    "version": { "type": "integer", "minimum": 1 },
+    "notes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["t", "d", "midi"],
+        "additionalProperties": true,
+        "properties": {
+          "t": { "type": "number" },
+          "d": { "type": "number" },
+          "midi": { "type": "integer", "minimum": 0, "maximum": 127 }
+        }
+      }
+    }
+  }
+}

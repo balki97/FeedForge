@@ -8,6 +8,7 @@ import {
   ExternalLink,
   FileMusic,
   FolderOpen,
+  Globe,
   Guitar,
   ImageIcon,
   Play,
@@ -36,6 +37,46 @@ const DEMUCS_STEM_OPTIONS = [
   { id: "piano", label: "Piano" },
   { id: "other", label: "Other" }
 ];
+const DEFAULT_AUDIT_CRITERIA = {
+  requireSpecValidation: true,
+  requireCover: true,
+  requireFullStem: true,
+  requireSplitStems: false,
+  requireBass: false,
+  requireGuitar: false,
+  requireLyrics: false,
+  requireAuthors: false,
+  requireTones: false
+};
+const AUDIT_CRITERIA_OPTIONS = [
+  { key: "requireSpecValidation", label: "Spec valid" },
+  { key: "requireCover", label: "Cover" },
+  { key: "requireFullStem", label: "Full mix" },
+  { key: "requireSplitStems", label: "Split stems" },
+  { key: "requireBass", label: "Bass" },
+  { key: "requireGuitar", label: "Guitar" },
+  { key: "requireLyrics", label: "Lyrics" },
+  { key: "requireAuthors", label: "Credits" },
+  { key: "requireTones", label: "Tones" }
+];
+
+function DiscordIcon({ size = 17 }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      focusable="false"
+      className="discord-icon"
+    >
+      <path
+        fill="currentColor"
+        d="M20.32 4.37A19.8 19.8 0 0 0 15.36 3l-.24.47c-.1.2-.2.42-.28.64a18.4 18.4 0 0 0-5.68 0 8.6 8.6 0 0 0-.52-1.1c-1.73.3-3.4.77-4.96 1.36C.56 9.05-.29 13.6.14 18.08a19.9 19.9 0 0 0 6.08 3.08c.49-.66.92-1.36 1.29-2.1-.7-.26-1.36-.58-1.98-.95l.48-.38a14.2 14.2 0 0 0 11.98 0l.48.38c-.62.37-1.29.69-1.99.95.37.74.8 1.44 1.29 2.1a19.8 19.8 0 0 0 6.09-3.08c.5-5.2-.85-9.7-3.54-13.71ZM8.02 15.32c-1.18 0-2.14-1.08-2.14-2.4 0-1.33.95-2.4 2.14-2.4 1.2 0 2.16 1.08 2.14 2.4 0 1.32-.95 2.4-2.14 2.4Zm7.96 0c-1.18 0-2.14-1.08-2.14-2.4 0-1.33.95-2.4 2.14-2.4 1.2 0 2.16 1.08 2.14 2.4 0 1.32-.95 2.4-2.14 2.4Z"
+      />
+    </svg>
+  );
+}
 
 function App() {
   const initialSettingsRef = useRef(null);
@@ -72,6 +113,10 @@ function App() {
   const [isCheckingPython, setIsCheckingPython] = useState(false);
   const [updateInfo, setUpdateInfo] = useState(null);
   const [appVersion, setAppVersion] = useState("");
+  const [auditFolder, setAuditFolder] = useState(() => initialSettingsRef.current.auditFolder || "");
+  const [auditCriteria, setAuditCriteria] = useState(() => normalizeAuditCriteria(initialSettingsRef.current.auditCriteria));
+  const [auditReport, setAuditReport] = useState(null);
+  const [isAuditingLibrary, setIsAuditingLibrary] = useState(false);
   const [conversionWorkers, setConversionWorkers] = useState(DEFAULT_CONVERSION_WORKERS);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all");
@@ -94,8 +139,8 @@ function App() {
   }, [items]);
 
   useEffect(() => {
-    writeSettings({ outputDir, outputLayout, outputNameFormat, outputNameTemplate, lastSourcePath, bStandardTo7String, separateStems, demucsUrl, demucsInstallDir, pythonPath, demucsModel, demucsDevice, demucsStemJobs, demucsStems });
-  }, [outputDir, outputLayout, outputNameFormat, outputNameTemplate, lastSourcePath, bStandardTo7String, separateStems, demucsUrl, demucsInstallDir, pythonPath, demucsModel, demucsDevice, demucsStemJobs, demucsStems]);
+    writeSettings({ outputDir, outputLayout, outputNameFormat, outputNameTemplate, lastSourcePath, bStandardTo7String, separateStems, demucsUrl, demucsInstallDir, pythonPath, demucsModel, demucsDevice, demucsStemJobs, demucsStems, auditFolder, auditCriteria });
+  }, [outputDir, outputLayout, outputNameFormat, outputNameTemplate, lastSourcePath, bStandardTo7String, separateStems, demucsUrl, demucsInstallDir, pythonPath, demucsModel, demucsDevice, demucsStemJobs, demucsStems, auditFolder, auditCriteria]);
 
   useEffect(() => {
     let cancelled = false;
@@ -455,6 +500,29 @@ function App() {
     if (folder) setDemucsInstallDir(folder);
   }
 
+  async function chooseAuditFolder() {
+    const folder = await api.pickAuditFolder({ defaultPath: auditFolder || outputDir || lastSourcePath || undefined });
+    if (folder) setAuditFolder(folder);
+  }
+
+  async function runLibraryAudit() {
+    if (!auditFolder || isAuditingLibrary) return;
+    setIsAuditingLibrary(true);
+    setAuditReport(null);
+    try {
+      const report = await api.auditFeedpakLibrary({ root: auditFolder, criteria: auditCriteria, workers: 3 });
+      setAuditReport(report);
+    } catch (error) {
+      setAuditReport({ ok: false, error: error?.message || "Library audit failed." });
+    } finally {
+      setIsAuditingLibrary(false);
+    }
+  }
+
+  function updateAuditCriterion(key, value) {
+    setAuditCriteria((current) => ({ ...current, [key]: value }));
+  }
+
   function rememberSourcePath(filePath) {
     const sourcePath = parentDir(filePath);
     if (sourcePath) setLastSourcePath(sourcePath);
@@ -515,6 +583,7 @@ function App() {
           updateItem(item.id, {
             status: "converted",
             outputPath: result.outputPath || outputPath,
+            validation: result.validation || null,
             error: warnings.length ? warnings.join("\n") : null
           });
         }
@@ -579,6 +648,7 @@ function App() {
       updateItem(item.id, {
         status: "converted",
         outputPath: result.outputPath || outputPath,
+        validation: result.validation || null,
         error: null
       });
     }
@@ -606,7 +676,7 @@ function App() {
       updateItem(item.id, { status: "queued", error: null });
       await inspectItem({ ...item, status: "queued" });
     } else {
-      updateItem(item.id, { status: "converted", outputPath: result.outputPath || outputPath, error: null });
+      updateItem(item.id, { status: "converted", outputPath: result.outputPath || outputPath, validation: result.validation || null, error: null });
     }
   }
 
@@ -629,34 +699,131 @@ function App() {
       updateItem(item.id, { status: "queued", error: null });
       await inspectItem({ ...item, status: "queued" });
     } else {
-      updateItem(item.id, { status: "converted", outputPath: result.outputPath || outputPath, error: null });
+      updateItem(item.id, { status: "converted", outputPath: result.outputPath || outputPath, validation: result.validation || null, error: null });
     }
+  }
+
+  async function replaceFeedpakStem(item, stemId, options = {}) {
+    if (!item || item.sourceType !== "feedpak") return { ok: false, error: "Select a FeedPak first." };
+    const audioPath = await api.pickAudioStem({ defaultPath: parentDir(item.path) || undefined });
+    if (!audioPath) return { ok: false, cancelled: true };
+    return updateFeedpakStems(item, [{ id: stemId, file: audioPath }], [], options);
+  }
+
+  async function removeFeedpakStem(item, stemId, options = {}) {
+    if (!item || item.sourceType !== "feedpak") return { ok: false, error: "Select a FeedPak first." };
+    return updateFeedpakStems(item, [], [stemId], options);
+  }
+
+  async function updateFeedpakStems(item, stemUpdates, removeStems, options = {}) {
+    updateItem(item.id, { status: "converting", error: null });
+    const overwriteOriginal = options.overwriteOriginal === true;
+    const outputPath = overwriteOriginal ? null : editedFeedpakPath(item, outputDir);
+    const result = await api.updateFeedpak({
+      inputPath: item.path,
+      outputPath,
+      overwrite: overwriteOriginal,
+      stemUpdates,
+      removeStems
+    });
+    if (!result.ok) {
+      updateItem(item.id, { status: "failed", error: result.error });
+      return result;
+    }
+    if (overwriteOriginal) {
+      updateItem(item.id, { status: "queued", error: null });
+      await inspectItem({ ...item, status: "queued" });
+    } else {
+      updateItem(item.id, { status: "converted", outputPath: result.outputPath || outputPath, validation: result.validation || null, error: null });
+    }
+    return result;
+  }
+
+  async function organizeLoadedFeedpaksByArtist() {
+    if (!feedpakItems.length) return { ok: false, error: "Add FeedPaks first." };
+    let targetDir = outputDir;
+    if (!targetDir) {
+      targetDir = await api.pickOutput({ defaultPath: lastSourcePath || undefined });
+      if (targetDir) setOutputDir(targetDir);
+    }
+    if (!targetDir) return { ok: false, cancelled: true };
+    const result = await api.organizeFeedpaks({
+      outputDir: targetDir,
+      overwrite,
+      items: feedpakItems.map((entry) => ({
+        inputPath: entry.path,
+        artist: entry.preview?.artist || "Unknown Artist"
+      }))
+    });
+    if (result?.results?.length) {
+      for (const row of result.results) {
+        const match = feedpakItems.find((entry) => normalizePathKey(entry.path) === normalizePathKey(row.inputPath));
+        if (!match) continue;
+        updateItem(match.id, row.ok
+          ? { status: "converted", outputPath: row.outputPath, error: null }
+          : { status: "failed", error: row.error || "Organize failed." });
+      }
+    }
+    return result;
   }
 
   function onDrop(event) {
     event.preventDefault();
   }
 
+  const viewMeta = activeView === "settings"
+    ? { title: "Settings", description: "Conversion defaults, stem splitting, and diagnostics." }
+    : activeView === "feedpak"
+      ? { title: "Edit FeedPaks", description: "Inspect packages, update metadata, manage stems, and organize files." }
+      : { title: "Convert", description: "Build FeedBack-ready packages from CDLC files." };
+
   return (
     <div className="app" onDragOver={(event) => event.preventDefault()} onDrop={onDrop}>
+      <aside className="app-sidebar">
+        <div className="brand">
+          <span className="brand-mark">FF</span>
+          <div>
+            <strong>FeedForge {appVersion && <span className="version-badge">v{appVersion}</span>}</strong>
+            <small>FeedBack song toolkit</small>
+          </div>
+        </div>
+        <nav className="side-nav" aria-label="FeedForge sections">
+          <button className={activeView === "workspace" ? "active" : ""} onClick={() => setActiveView("workspace")}>
+            <Guitar size={18} />
+            <span>Convert</span>
+          </button>
+          <button className={activeView === "settings" ? "active" : ""} onClick={() => setActiveView("settings")}>
+            <Server size={18} />
+            <span>Settings</span>
+          </button>
+          <button className={activeView === "feedpak" ? "active" : ""} onClick={() => setActiveView("feedpak")}>
+            <FileMusic size={18} />
+            <span>Edit FeedPaks</span>
+          </button>
+        </nav>
+        <div className="sidebar-links">
+          <button className="support-link sidebar-support" onClick={() => api.openWebsite()} title="Open FeedForge Hub">
+            <Globe size={17} />
+            Website
+          </button>
+          <button className="support-link sidebar-support" onClick={() => api.openDiscord()} title="Join the FeedForge Discord">
+            <DiscordIcon size={17} />
+            Discord
+          </button>
+          <button className="support-link sidebar-support kofi" onClick={() => api.openSupport()} title="Support FeedForge on Ko-fi">
+            <Coffee size={17} />
+            Support us on Ko-fi
+          </button>
+        </div>
+      </aside>
       <main className="workspace">
         <header className="topbar">
           <div className="title-group">
-            <div className="brand">
-              <span className="brand-mark">FF</span>
-              <div>
-                <strong>FeedForge {appVersion && <span className="version-badge">v{appVersion}</span>}</strong>
-                <small>FeedBack song toolkit</small>
-              </div>
-            </div>
-            <h1>Build FeedPaks</h1>
-            <p>Convert, organize, and package CDLC for FeedBack.</p>
+            <span className="page-kicker">FeedForge</span>
+            <h1>{viewMeta.title}</h1>
+            <p>{viewMeta.description}</p>
           </div>
           <div className="header-actions">
-            <button className="support-link" onClick={() => api.openSupport()} title="Support FeedForge on Ko-fi">
-              <Coffee size={17} />
-              Support
-            </button>
             <button
               className={`stem-header-status ${headerStemStatusClass(separateStems, stemServerStatus, isStartingStemServer, stemServerMatchesSelectedConfig)}`}
               onClick={() => {
@@ -709,12 +876,6 @@ function App() {
         {conversionProgress.total > 0 && (
           <ConversionProgress progress={conversionProgress} isConverting={isConverting} />
         )}
-
-        <section className="view-tabs app-tabs" aria-label="FeedForge sections">
-          <button className={activeView === "workspace" ? "active" : ""} onClick={() => setActiveView("workspace")}>Workspace</button>
-          <button className={activeView === "settings" ? "active" : ""} onClick={() => setActiveView("settings")}>Settings</button>
-          <button className={activeView === "feedpak" ? "active" : ""} onClick={() => setActiveView("feedpak")}>FeedPak tools</button>
-        </section>
 
         {activeView === "settings" ? (
           <section className="settings-page">
@@ -969,9 +1130,18 @@ function App() {
                 <div className="settings-card-head">
                   <div>
                     <h2>Diagnostics</h2>
-                    <p>Logs and stem server output.</p>
+                    <p>Logs, stem server output, and library checks.</p>
                   </div>
                 </div>
+                <LibraryAuditPanel
+                  folder={auditFolder}
+                  criteria={auditCriteria}
+                  report={auditReport}
+                  busy={isAuditingLibrary}
+                  onChooseFolder={chooseAuditFolder}
+                  onRun={runLibraryAudit}
+                  onChangeCriterion={updateAuditCriterion}
+                />
                 <div className="diagnostics-panel standalone">
                   <div className="diagnostics-head">
                     <div>
@@ -1004,6 +1174,12 @@ function App() {
             onSaveFeedpakMetadata={saveFeedpakMetadata}
             onReplaceFeedpakCover={replaceFeedpakCover}
             onRemoveFeedpakCover={removeFeedpakCover}
+            onReplaceFeedpakStem={replaceFeedpakStem}
+            onRemoveFeedpakStem={removeFeedpakStem}
+            onOrganizeByArtist={organizeLoadedFeedpaksByArtist}
+            onChooseOutput={chooseOutput}
+            outputDir={outputDir}
+            overwrite={overwrite}
           />
         ) : (
           <>
@@ -1265,6 +1441,81 @@ function Metric({ label, value, tone = "" }) {
   );
 }
 
+function LibraryAuditPanel({ folder, criteria, report, busy, onChooseFolder, onRun, onChangeCriterion }) {
+  const failedRows = (report?.rows || []).filter((row) => row.status !== "pass");
+  const previewRows = failedRows.slice(0, 8);
+  return (
+    <div className="diagnostics-panel audit-panel">
+      <div className="diagnostics-head">
+        <div>
+          <strong>Library audit</strong>
+          <span>{folder || "Choose a folder of FeedPak files to scan recursively."}</span>
+        </div>
+        <div>
+          <button className="ghost" onClick={onChooseFolder} disabled={busy}><FolderOpen size={16} /> Folder</button>
+          <button onClick={onRun} disabled={busy || !folder}>
+            {busy ? <RotateCw className="spin" size={16} /> : <Check size={16} />}
+            {busy ? "Scanning" : "Run audit"}
+          </button>
+        </div>
+      </div>
+
+      <div className="audit-body">
+        <div className="audit-criteria">
+          {AUDIT_CRITERIA_OPTIONS.map((option) => (
+            <label key={option.key} className={`audit-criterion ${criteria[option.key] ? "active" : ""}`}>
+              <input
+                type="checkbox"
+                checked={!!criteria[option.key]}
+                onChange={(event) => onChangeCriterion(option.key, event.target.checked)}
+                disabled={busy}
+              />
+              <span>{option.label}</span>
+            </label>
+          ))}
+        </div>
+
+        {report?.ok === false && <div className="error-box"><AlertTriangle size={17} /> {report.error || "Library audit failed."}</div>}
+
+        {report?.ok && (
+          <>
+            <div className="audit-summary">
+              <Metric label="FeedPaks scanned" value={report.total || 0} />
+              <Metric label="Passed" value={report.passed || 0} />
+              <Metric label="Needs work" value={report.needsWork || 0} />
+            </div>
+            <div className="audit-actions">
+              <span>{report.csvPath ? `Report saved: ${basename(report.csvPath)}` : "Report saved after scan."}</span>
+              <div>
+                <button className="ghost" onClick={() => api.openAuditReport(report.csvPath)} disabled={!report.csvPath}>Open CSV</button>
+                <button className="ghost" onClick={() => api.openAuditReport(report.jsonPath)} disabled={!report.jsonPath}>Open JSON</button>
+              </div>
+            </div>
+            <div className="audit-results">
+              {failedRows.length === 0 ? (
+                <div className="empty compact">No missing items found for the selected criteria.</div>
+              ) : (
+                previewRows.map((row) => (
+                  <div className="audit-row" key={row.filePath}>
+                    <div>
+                      <strong>{row.title || basename(row.filePath)}</strong>
+                      <span>{row.artist || "Unknown Artist"} / {row.relativePath}</span>
+                    </div>
+                    <div className="audit-missing">
+                      {(row.missing || []).map((issue) => <b key={issue}>{issue}</b>)}
+                    </div>
+                  </div>
+                ))
+              )}
+              {failedRows.length > previewRows.length && <span className="muted-text">Showing first {previewRows.length} of {failedRows.length}. Open the CSV for the full report.</span>}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ConversionProgress({ progress, isConverting }) {
   const total = Math.max(0, progress.total || 0);
   const completed = Math.min(total, Math.max(0, progress.completed || 0));
@@ -1491,21 +1742,51 @@ function FeedPakTools({
   onAddFiles,
   onSaveFeedpakMetadata,
   onReplaceFeedpakCover,
-  onRemoveFeedpakCover
+  onRemoveFeedpakCover,
+  onReplaceFeedpakStem,
+  onRemoveFeedpakStem,
+  onOrganizeByArtist,
+  onChooseOutput,
+  outputDir,
+  overwrite
 }) {
+  const [organizeMessage, setOrganizeMessage] = useState("");
+
+  async function organizeByArtist() {
+    setOrganizeMessage("Organizing...");
+    const result = await onOrganizeByArtist();
+    if (result?.cancelled) {
+      setOrganizeMessage("");
+      return;
+    }
+    setOrganizeMessage(result?.ok
+      ? `Copied ${result.copied || 0} FeedPak${result.copied === 1 ? "" : "s"}`
+      : result?.error || "Organize failed");
+  }
+
   return (
     <section className="feedpak-tools-page">
       <div className="tools-head">
-        <div>
-          <h2>FeedPak tools</h2>
-          <p>Inspect and tune existing FeedPak packages.</p>
+        <div className="feedpak-command-copy">
+          <strong>{feedpakItems.length ? `${feedpakItems.length} package${feedpakItems.length === 1 ? "" : "s"} loaded` : "No package loaded"}</strong>
+          <span>{outputDir ? `Output: ${outputDir}` : "Choose an output folder for organized copies."}</span>
         </div>
-        <button onClick={onAddFiles}><Plus size={17} /> Add FeedPaks</button>
+        <div className="tools-actions">
+          <button onClick={onAddFiles}><Plus size={17} /> Add FeedPaks</button>
+          <button className="ghost" onClick={onChooseOutput}><FolderOpen size={17} /> Output</button>
+          <button onClick={organizeByArtist} disabled={!feedpakItems.length}>
+            <FolderOpen size={17} /> Artist folders
+          </button>
+        </div>
+      </div>
+      <div className="feedpak-organize-note">
+        <span>{organizeMessage || "Artist folders keep original filenames."}</span>
+        <b>{overwrite ? "Overwrite on" : "Overwrite off"}</b>
       </div>
 
       {feedpakItems.length > 0 && (
         <div className="feedpak-picker">
-          <span>{feedpakItems.length} FeedPak{feedpakItems.length === 1 ? "" : "s"} loaded</span>
+          <span>Loaded</span>
           <div className="feedpak-strip" aria-label="Imported FeedPaks">
             {feedpakItems.map((entry) => (
               <button
@@ -1536,55 +1817,9 @@ function FeedPakTools({
             onSaveFeedpakMetadata={onSaveFeedpakMetadata}
             onReplaceFeedpakCover={onReplaceFeedpakCover}
             onRemoveFeedpakCover={onRemoveFeedpakCover}
+            onReplaceFeedpakStem={onReplaceFeedpakStem}
+            onRemoveFeedpakStem={onRemoveFeedpakStem}
           />
-          <div className="feedpak-tools-main">
-            <FeedPakPackageSummary item={item} />
-            <ToneInspector arrangements={item.preview?.arrangements || []} tones={item.preview?.tones || []} expanded />
-          </div>
-        </div>
-      )}
-    </section>
-  );
-}
-
-function FeedPakPackageSummary({ item }) {
-  const preview = item?.preview || {};
-  const arrangements = preview.arrangements || [];
-  const stems = preview.stems || [];
-  const tones = preview.tones || [];
-  const authors = preview.authors || [];
-  return (
-    <section className="panel package-summary">
-      <div className="panel-title">
-        <h2>Package contents</h2>
-        <span>{basename(item?.path || "")}</span>
-      </div>
-      <div className="package-summary-grid">
-        <FeedPakMetric label="Arrangements" value={arrangements.length} />
-        <FeedPakMetric label="Stems" value={stems.length} />
-        <FeedPakMetric label="Tone rigs" value={countToneDefinitions(tones)} />
-        <FeedPakMetric label="Credits" value={authors.length} />
-      </div>
-      <div className="compact-list">
-        <h3>Audio stems</h3>
-        {stems.length === 0 && <span className="muted-text">No stems listed in this package.</span>}
-        {stems.map((stem) => (
-          <div className="compact-row" key={`${stem.id}-${stem.file}`}>
-            <strong>{stem.id}</strong>
-            <span>{stem.codec || "audio"} - {formatBytes(stem.size)}</span>
-            {stem.default && <b>default</b>}
-          </div>
-        ))}
-      </div>
-      {authors.length > 0 && (
-        <div className="compact-list">
-          <h3>Credits</h3>
-          {authors.map((author, index) => (
-            <div className="compact-row" key={`${author.name}-${author.role || "credit"}-${index}`}>
-              <strong>{author.name}</strong>
-              <span>{author.role || "contributor"}</span>
-            </div>
-          ))}
         </div>
       )}
     </section>
@@ -1600,11 +1835,20 @@ function FeedPakMetric({ label, value }) {
   );
 }
 
-function Inspector({ item, onSaveFeedpakMetadata, onReplaceFeedpakCover, onRemoveFeedpakCover }) {
+function Inspector({
+  item,
+  onSaveFeedpakMetadata,
+  onReplaceFeedpakCover,
+  onRemoveFeedpakCover,
+  onReplaceFeedpakStem,
+  onRemoveFeedpakStem
+}) {
   const [tab, setTab] = useState("overview");
   const [editMetadata, setEditMetadata] = useState(null);
   const [authorsText, setAuthorsText] = useState("");
   const [saveMessage, setSaveMessage] = useState("");
+  const [stemMessage, setStemMessage] = useState("");
+  const [stemEditId, setStemEditId] = useState("guitar");
   const [overwriteOriginal, setOverwriteOriginal] = useState(false);
   const preview = item?.preview;
   const cover = preview?.cover_path ? `file:///${preview.cover_path.replaceAll("\\", "/")}` : null;
@@ -1612,6 +1856,7 @@ function Inspector({ item, onSaveFeedpakMetadata, onReplaceFeedpakCover, onRemov
   const tones = preview?.tones || [];
   const authors = preview?.authors || [];
   const stems = preview?.stems || [];
+  const validation = item?.validation || preview?.validation;
   const isFeedpak = item?.sourceType === "feedpak" || preview?.source_type === "feedpak";
 
   useEffect(() => {
@@ -1619,6 +1864,8 @@ function Inspector({ item, onSaveFeedpakMetadata, onReplaceFeedpakCover, onRemov
       setEditMetadata(null);
       setAuthorsText("");
       setSaveMessage("");
+      setStemMessage("");
+      setStemEditId("guitar");
       setOverwriteOriginal(false);
       return;
     }
@@ -1631,6 +1878,8 @@ function Inspector({ item, onSaveFeedpakMetadata, onReplaceFeedpakCover, onRemov
     });
     setAuthorsText((preview.authors || []).map((author) => `${author.name}${author.role ? ` | ${author.role}` : ""}`).join("\n"));
     setSaveMessage("");
+    setStemMessage("");
+    setStemEditId("guitar");
     setOverwriteOriginal(false);
   }, [item?.id, preview?.title, preview?.artist, isFeedpak]);
 
@@ -1643,46 +1892,93 @@ function Inspector({ item, onSaveFeedpakMetadata, onReplaceFeedpakCover, onRemov
       : result.error || "Save failed");
   }
 
-  return (
-    <aside className="inspector">
-      <section className="song-hero">
-        <div className="cover">{cover ? <img src={cover} alt="" /> : <ImageIcon size={44} />}</div>
-        <div className="song-copy">
-          <span className="eyebrow">{isFeedpak ? "FeedPak package" : "Selected song"}</span>
-          <h2>{preview?.title || item?.name || "No song selected"}</h2>
-          <p>{preview?.artist || "Add PSARC or FeedPak files to inspect package details."}</p>
-            <div className="chips">
-              {preview?.album && <span>{preview.album}</span>}
-              {preview?.year && <span>{preview.year}</span>}
-              {preview?.duration && <span>{duration(preview.duration)}</span>}
-              {authors.length > 0 && <span>{authors.length} credit{authors.length === 1 ? "" : "s"}</span>}
-            </div>
-        </div>
-      </section>
+  async function replaceStem(stemId) {
+    setStemMessage(`Choosing audio for ${stemId}...`);
+    const result = await onReplaceFeedpakStem(item, stemId, { overwriteOriginal });
+    if (result?.cancelled) {
+      setStemMessage("");
+      return;
+    }
+    setStemMessage(result?.ok
+      ? overwriteOriginal ? `Replaced ${stemId}` : `Saved copy with ${stemId}`
+      : result?.error || "Stem update failed");
+  }
 
-      <div className="inspector-tabs">
-        <button className={tab === "overview" ? "active" : ""} onClick={() => setTab("overview")}>Overview</button>
-        {isFeedpak && <button className={tab === "metadata" ? "active" : ""} onClick={() => setTab("metadata")}>Metadata</button>}
-        <button className={tab === "tones" ? "active" : ""} onClick={() => setTab("tones")}>Tones</button>
+  async function addStem() {
+    const stemId = stemEditId.trim();
+    if (!stemId) {
+      setStemMessage("Enter a stem name first.");
+      return;
+    }
+    await replaceStem(stemId);
+  }
+
+  async function removeStem(stemId) {
+    setStemMessage(`Removing ${stemId}...`);
+    const result = await onRemoveFeedpakStem(item, stemId, { overwriteOriginal });
+    setStemMessage(result?.ok
+      ? overwriteOriginal ? `Removed ${stemId}` : `Saved copy without ${stemId}`
+      : result?.error || "Stem removal failed");
+  }
+
+  return (
+    <aside className={isFeedpak ? "inspector feedpak-inspector" : "inspector convert-inspector"}>
+      <div className="inspector-rail">
+        <section className="song-hero">
+          <div className="cover">{cover ? <img src={cover} alt="" /> : <ImageIcon size={44} />}</div>
+          <div className="song-copy">
+            <span className="eyebrow">{isFeedpak ? "FeedPak package" : "Selected song"}</span>
+            <h2>{preview?.title || item?.name || "No song selected"}</h2>
+            <p>{preview?.artist || "Add PSARC or FeedPak files to inspect package details."}</p>
+              <div className="chips">
+                {preview?.album && <span>{preview.album}</span>}
+                {preview?.year && <span>{preview.year}</span>}
+                {preview?.duration && <span>{duration(preview.duration)}</span>}
+                {authors.length > 0 && <span>{authors.length} credit{authors.length === 1 ? "" : "s"}</span>}
+              </div>
+          </div>
+        </section>
+
+        <div className="inspector-tabs">
+          <button className={tab === "overview" ? "active" : ""} onClick={() => setTab("overview")}>Overview</button>
+          {isFeedpak && <button className={tab === "metadata" ? "active" : ""} onClick={() => setTab("metadata")}>Metadata</button>}
+          {isFeedpak && <button className={tab === "stems" ? "active" : ""} onClick={() => setTab("stems")}>Stems</button>}
+          <button className={tab === "tones" ? "active" : ""} onClick={() => setTab("tones")}>Tones</button>
+        </div>
       </div>
 
+      <div className="inspector-content">
       {tab === "overview" ? (
         <>
           <section className="panel">
             <div className="panel-title">
-              <h2>Readiness</h2>
+              <h2>Package Overview</h2>
               <span>{item ? statusText(item.status) : "Waiting"}</span>
             </div>
-            <ul className="readiness">
-              <ReadyLine ok={!!preview} text="Package metadata inspected" />
-              <ReadyLine ok={!!cover} text="Cover image detected" />
-              <ReadyLine ok={arrangements.length > 0} text={`${arrangements.length || 0} playable arrangement${arrangements.length === 1 ? "" : "s"}`} />
-              {isFeedpak && <ReadyLine ok={stems.length > 0} text={`${stems.length || 0} stem${stems.length === 1 ? "" : "s"} in package`} />}
-              <ReadyLine ok={tones.length > 0} text={tones.length ? `${countToneDefinitions(tones)} tone definition${countToneDefinitions(tones) === 1 ? "" : "s"} detected` : "No tone definitions detected"} muted={!tones.length} />
-              <ReadyLine ok={authors.length > 0} text={authors.length ? `${authors.length} author credit${authors.length === 1 ? "" : "s"} retained` : "No embedded author credit found"} muted={!authors.length} />
-              <ReadyLine ok={!!preview?.lyrics} text={preview?.lyrics ? `${preview.lyrics} lyric timing events for karaoke` : "No vocals lyrics detected"} muted={!preview?.lyrics} />
+            <div className="overview-metrics">
+              <FeedPakMetric label="Arrangements" value={arrangements.length} />
+              <FeedPakMetric label="Stems" value={stems.length} />
+              <FeedPakMetric label="Tone rigs" value={countToneDefinitions(tones)} />
+              <FeedPakMetric label="Credits" value={authors.length} />
+            </div>
+            <ul className="readiness readiness-grid">
+              <ReadyLine ok={!!cover} text={cover ? "Cover image detected" : "No cover image"} muted={!cover} />
+              <ReadyLine ok={arrangements.length > 0} text={`${arrangements.length || 0} arrangement${arrangements.length === 1 ? "" : "s"}`} />
+              {isFeedpak && <ReadyLine ok={stems.some((stem) => String(stem.id || "").toLowerCase() === "full")} text="Full mix present" />}
+              <ReadyLine ok={!!preview?.lyrics} text={preview?.lyrics ? `${preview.lyrics} lyric timing events` : "No lyric timing"} muted={!preview?.lyrics} />
+              <ReadyLine ok={authors.length > 0} text={authors.length ? `${authors.length} credit${authors.length === 1 ? "" : "s"}` : "No embedded credit"} muted={!authors.length} />
+              {isFeedpak && validation && <ReadyLine ok={!!validation.ok} text={validation.ok ? "Spec validation passed" : "Spec validation failed"} />}
             </ul>
             {item?.error && <div className="error-box"><AlertTriangle size={17} /> {item.error}</div>}
+            {isFeedpak && validation && !validation.ok && (
+              <div className="error-box">
+                <AlertTriangle size={17} />
+                <div>
+                  {(validation.errors || []).slice(0, 4).map((error, index) => <p key={`${error}-${index}`}>{error}</p>)}
+                  {(validation.errors || []).length > 4 && <p>+{validation.errors.length - 4} more validation issue{validation.errors.length - 4 === 1 ? "" : "s"}</p>}
+                </div>
+              </div>
+            )}
           </section>
 
           {authors.length > 0 && (
@@ -1696,25 +1992,6 @@ function Inspector({ item, onSaveFeedpakMetadata, onReplaceFeedpakCover, onRemov
                   <div className="credit-row" key={`${author.name}-${author.role || "credit"}-${index}`}>
                     <strong>{author.name}</strong>
                     <span>{author.role || "contributor"}</span>
-                  </div>
-                ))}
-              </div>
-            </section>
-          )}
-
-          {isFeedpak && (
-            <section className="panel">
-              <div className="panel-title">
-                <h2>Stems</h2>
-                <span>{stems.length} file{stems.length === 1 ? "" : "s"}</span>
-              </div>
-              <div className="stem-list">
-                {stems.length === 0 && <div className="empty compact">No stems listed in manifest.</div>}
-                {stems.map((stem) => (
-                  <div className="stem-row" key={`${stem.id}-${stem.file}`}>
-                    <strong>{stem.id}</strong>
-                    <span>{stem.codec || "audio"} - {formatBytes(stem.size)}</span>
-                    {stem.default && <b>default</b>}
                   </div>
                 ))}
               </div>
@@ -1762,9 +2039,65 @@ function Inspector({ item, onSaveFeedpakMetadata, onReplaceFeedpakCover, onRemov
             <button className="ghost" onClick={() => onRemoveFeedpakCover(item, { overwriteOriginal })}><XCircle size={16} /> Remove cover</button>
           </div>
         </section>
+      ) : tab === "stems" && isFeedpak ? (
+        <section className="panel feedpak-editor stem-editor-panel">
+          <div className="panel-title">
+            <h2>Stems</h2>
+            <span>{stemMessage || `${stems.length} audio file${stems.length === 1 ? "" : "s"}`}</span>
+          </div>
+          <div className="stem-editor-callout">
+            <strong>Full mix stays protected</strong>
+            <span>Split-stem packages keep the full mix for fallback playback.</span>
+          </div>
+          <div className="stem-editor-toolbar">
+            <label>
+              Stem name
+              <input
+                list="feedforge-stem-ids"
+                value={stemEditId}
+                onChange={(event) => setStemEditId(event.target.value)}
+                placeholder="guitar, bass, vocals, custom"
+              />
+            </label>
+            <button className="primary" onClick={addStem}><Plus size={16} /> Add / replace</button>
+            <label className="toggle editor-overwrite">
+              <input type="checkbox" checked={overwriteOriginal} onChange={(event) => setOverwriteOriginal(event.target.checked)} />
+              Overwrite original
+            </label>
+          </div>
+          <datalist id="feedforge-stem-ids">
+            {["full", "guitar", "bass", "drums", "vocals", "piano", "other"].map((id) => <option key={id} value={id} />)}
+          </datalist>
+          <div className="stem-list editable">
+            {stems.length === 0 && <div className="empty compact">No stems listed in manifest.</div>}
+            {stems.map((stem) => {
+              const stemId = String(stem.id || "").toLowerCase();
+              return (
+                <div className="stem-row editable" key={`${stem.id}-${stem.file}`}>
+                  <div>
+                    <strong>{stem.id}</strong>
+                    <span>{stem.file}</span>
+                  </div>
+                  <span>{stem.codec || "audio"} - {formatBytes(stem.size)}</span>
+                  {stem.default && <b>default</b>}
+                  <button onClick={() => replaceStem(stem.id)}><FileMusic size={15} /> Replace</button>
+                  <button
+                    className="ghost"
+                    onClick={() => removeStem(stem.id)}
+                    disabled={stemId === "full"}
+                    title={stemId === "full" ? "The full mix is required by the FeedPak spec." : `Remove ${stem.id}`}
+                  >
+                    <XCircle size={15} /> Remove
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </section>
       ) : (
         <ToneInspector arrangements={arrangements} tones={tones} />
       )}
+      </div>
     </aside>
   );
 }
@@ -2182,6 +2515,10 @@ function readSettings() {
   } catch {
     return {};
   }
+}
+
+function normalizeAuditCriteria(value) {
+  return { ...DEFAULT_AUDIT_CRITERIA, ...(value && typeof value === "object" ? value : {}) };
 }
 
 function writeSettings(settings) {

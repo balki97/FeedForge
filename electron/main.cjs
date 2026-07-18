@@ -186,6 +186,17 @@ ipcMain.handle("dialog:pickFolderWithRoot", async (_event, options = {}) => {
   return { folder, files };
 });
 
+ipcMain.handle("dialog:pickAuditFolder", async (_event, options = {}) => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: "Choose FeedPak library folder",
+    defaultPath: validDefaultPath(options.defaultPath),
+    properties: ["openDirectory"]
+  });
+  const folder = result.canceled ? null : result.filePaths[0];
+  logDebug("dialog.pickAuditFolder", { selected: folder || "" });
+  return folder;
+});
+
 ipcMain.handle("files:expandPaths", async (_event, inputPaths) => {
   const found = [];
   for (const inputPath of inputPaths || []) {
@@ -284,6 +295,8 @@ ipcMain.handle("feedpak:update", async (_event, payload) => {
     outputPath: payload.outputPath || "",
     hasCover: Boolean(payload.coverPath),
     removeCover: Boolean(payload.removeCover),
+    stemUpdates: Array.isArray(payload.stemUpdates) ? payload.stemUpdates.length : 0,
+    removeStems: Array.isArray(payload.removeStems) ? payload.removeStems.length : 0,
     separateStems: Boolean(payload.separateStems)
   });
   const args = [payload.inputPath];
@@ -297,6 +310,12 @@ ipcMain.handle("feedpak:update", async (_event, payload) => {
   if (Array.isArray(payload.authors)) args.push("--feedpak-authors-json", JSON.stringify(payload.authors));
   if (payload.coverPath) args.push("--feedpak-cover", payload.coverPath);
   if (payload.removeCover) args.push("--feedpak-remove-cover");
+  if (Array.isArray(payload.stemUpdates) && payload.stemUpdates.length) {
+    args.push("--feedpak-stem-updates-json", JSON.stringify(payload.stemUpdates));
+  }
+  if (Array.isArray(payload.removeStems) && payload.removeStems.length) {
+    args.push("--feedpak-remove-stems", payload.removeStems.join(","));
+  }
   if (payload.separateStems) args.push("--separate-stems");
   if (payload.demucsUrl) args.push("--demucs-url", payload.demucsUrl);
   if (payload.demucsApiKey) args.push("--demucs-api-key", payload.demucsApiKey);
@@ -306,10 +325,12 @@ ipcMain.handle("feedpak:update", async (_event, payload) => {
   }
   const result = await runConverter(args);
   const outputPath = [...result.stdout.matchAll(/^wrote\s+(.+)$/gim)].map((match) => match[1].trim()).filter(Boolean)[0] || payload.outputPath || payload.inputPath;
+  const validatedPaths = [...result.stdout.matchAll(/^validated\s+(.+)$/gim)].map((match) => match[1].trim()).filter(Boolean);
   const warnings = [...`${result.stdout}\n${result.stderr}`.matchAll(/^warning:\s+(.+)$/gim)].map((match) => match[1].trim()).filter(Boolean);
   logDebug(result.code === 0 ? "feedpak.update.ok" : "feedpak.update.failed", {
     inputPath: payload.inputPath,
     outputPath,
+    validation: { ok: result.code === 0 && validatedPaths.length > 0 },
     code: result.code,
     warnings,
     stdoutTail: tail(result.stdout),
@@ -319,12 +340,111 @@ ipcMain.handle("feedpak:update", async (_event, payload) => {
   return {
     ok: result.code === 0,
     outputPath,
+    validation: { ok: result.code === 0 && validatedPaths.length > 0 },
     warnings,
     stdout: result.stdout,
     stderr: result.stderr,
     diagnostics: result.diagnostics,
     error: result.code === 0 ? null : result.stderr || result.stdout || "FeedPak update failed"
   };
+});
+
+ipcMain.handle("feedpak:organize", async (_event, payload = {}) => {
+  const outputDir = String(payload.outputDir || "").trim();
+  const items = Array.isArray(payload.items) ? payload.items : [];
+  const overwrite = payload.overwrite === true;
+  if (!outputDir) return { ok: false, error: "Choose an output folder first." };
+  if (!items.length) return { ok: false, error: "No FeedPaks selected to organize." };
+  fs.mkdirSync(outputDir, { recursive: true });
+
+  const results = [];
+  for (const item of items) {
+    const inputPath = String(item.inputPath || "");
+    if (!inputPath || !fs.existsSync(inputPath)) {
+      results.push({ ok: false, inputPath, error: "Source FeedPak was not found." });
+      continue;
+    }
+    const artist = safePathSegment(item.artist || "Unknown Artist", "Unknown Artist");
+    const fileName = path.basename(inputPath);
+    const artistDir = path.join(outputDir, artist);
+    const outputPath = path.join(artistDir, fileName);
+    try {
+      fs.mkdirSync(artistDir, { recursive: true });
+      if (fs.existsSync(outputPath) && !overwrite) {
+        results.push({ ok: false, inputPath, outputPath, artist, error: "Output already exists." });
+        continue;
+      }
+      if (path.resolve(inputPath) !== path.resolve(outputPath)) {
+        fs.copyFileSync(inputPath, outputPath);
+      }
+      results.push({ ok: true, inputPath, outputPath, artist });
+    } catch (error) {
+      results.push({ ok: false, inputPath, outputPath, artist, error: error?.message || "Copy failed." });
+    }
+  }
+
+  const failed = results.filter((result) => !result.ok);
+  logDebug("feedpak.organize", { outputDir, total: results.length, failed: failed.length });
+  return {
+    ok: failed.length === 0,
+    outputDir,
+    total: results.length,
+    copied: results.length - failed.length,
+    failed: failed.length,
+    results,
+    error: failed.length ? `${failed.length} FeedPak${failed.length === 1 ? "" : "s"} could not be organized.` : null
+  };
+});
+
+ipcMain.handle("audit:feedpakLibrary", async (_event, payload = {}) => {
+  const root = String(payload.root || "");
+  const criteria = normalizeAuditCriteria(payload.criteria || {});
+  if (!root || !fs.existsSync(root)) {
+    return { ok: false, error: "Choose an existing FeedPak library folder." };
+  }
+  logDebug("audit.feedpakLibrary.start", { root, criteria });
+  const startedAt = Date.now();
+  const files = await findFeedpakFiles(root);
+  const rows = [];
+  const workerCount = Math.min(3, Math.max(1, Number(payload.workers || 2) || 2));
+  let index = 0;
+
+  async function next() {
+    const filePath = files[index];
+    index += 1;
+    if (!filePath) return;
+    rows.push(await inspectFeedpakForAudit(root, filePath, criteria));
+    await next();
+  }
+
+  await Promise.all(Array.from({ length: workerCount }, () => next()));
+  rows.sort((left, right) => left.relativePath.localeCompare(right.relativePath, undefined, { sensitivity: "base" }));
+  const report = {
+    ok: true,
+    root,
+    createdAt: new Date().toISOString(),
+    criteria,
+    total: rows.length,
+    passed: rows.filter((row) => row.status === "pass").length,
+    needsWork: rows.filter((row) => row.status !== "pass").length,
+    rows
+  };
+  const paths = writeAuditReports(report);
+  logDebug("audit.feedpakLibrary.done", {
+    root,
+    total: report.total,
+    needsWork: report.needsWork,
+    durationMs: Date.now() - startedAt,
+    csvPath: paths.csvPath,
+    jsonPath: paths.jsonPath
+  });
+  return { ...report, ...paths };
+});
+
+ipcMain.handle("audit:openReport", async (_event, filePath) => {
+  if (!filePath || !fs.existsSync(filePath)) return { ok: false, error: "Report file was not found." };
+  await shell.openPath(filePath);
+  return { ok: true, path: filePath };
 });
 
 ipcMain.handle("converter:convert", async (_event, payload) => {
@@ -351,6 +471,7 @@ ipcMain.handle("converter:convert", async (_event, payload) => {
   }
   const result = await runConverter(args);
   const outputPaths = [...result.stdout.matchAll(/^wrote\s+(.+)$/gim)].map((match) => match[1].trim()).filter(Boolean);
+  const validatedPaths = [...result.stdout.matchAll(/^validated\s+(.+)$/gim)].map((match) => match[1].trim()).filter(Boolean);
   const warnings = [...`${result.stdout}\n${result.stderr}`.matchAll(/^warning:\s+(.+)$/gim)].map((match) => match[1].trim()).filter(Boolean);
   const outputMatch = outputPaths[0] || null;
   logDebug(result.code === 0 ? "converter.convert.ok" : "converter.convert.failed", {
@@ -367,6 +488,7 @@ ipcMain.handle("converter:convert", async (_event, payload) => {
     ok: result.code === 0,
     outputPath: outputMatch,
     outputPaths,
+    validation: { ok: result.code === 0 && validatedPaths.length === outputPaths.length && outputPaths.length > 0 },
     warnings,
     stdout: result.stdout,
     stderr: result.stderr,
@@ -384,6 +506,21 @@ ipcMain.handle("dialog:pickCoverImage", async (_event, options = {}) => {
   });
   const filePath = result.canceled ? null : result.filePaths[0];
   logDebug("dialog.pickCoverImage", { selected: filePath || "" });
+  return filePath;
+});
+
+ipcMain.handle("dialog:pickAudioStem", async (_event, options = {}) => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: "Choose stem audio",
+    defaultPath: validDefaultPath(options.defaultPath),
+    properties: ["openFile"],
+    filters: [
+      { name: "Audio", extensions: ["ogg", "wav", "mp3", "flac", "opus"] },
+      { name: "All files", extensions: ["*"] }
+    ]
+  });
+  const filePath = result.canceled ? null : result.filePaths[0];
+  logDebug("dialog.pickAudioStem", { selected: filePath || "" });
   return filePath;
 });
 
@@ -450,6 +587,16 @@ ipcMain.handle("app:openPythonDownload", async () => {
 
 ipcMain.handle("app:openSupport", async () => {
   await shell.openExternal("https://ko-fi.com/feedforge");
+  return { ok: true };
+});
+
+ipcMain.handle("app:openWebsite", async () => {
+  await shell.openExternal("https://feedforge.org");
+  return { ok: true };
+});
+
+ipcMain.handle("app:openDiscord", async () => {
+  await shell.openExternal("https://discord.gg/9cUe6cacQN");
   return { ok: true };
 });
 
@@ -580,7 +727,13 @@ async function startStemServer(options = {}) {
   const torchIndex = demucsTorchIndex(device);
   const existing = await stemServerStatus();
   if (existing.running || stemServerStarting) {
-    const configChanged = existing.installRoot !== installRoot || existing.model !== model || existing.requestedDevice !== device || Number(existing.concurrency || 1) !== concurrency;
+    const serverMatchesSelection = stemServerMatchesSelection(existing, model, device, concurrency);
+    const installRootChanged = existing.healthy && existing.installRoot && path.resolve(existing.installRoot) !== path.resolve(installRoot);
+    const configChanged = !serverMatchesSelection || installRootChanged;
+    if (serverMatchesSelection && !installRootChanged) {
+      appendStemServerLog(`FeedForge: using existing local stem server on ${LOCAL_STEM_SERVER_URL}`);
+      return { ...existing, ok: true, starting: false, url: LOCAL_STEM_SERVER_URL };
+    }
     if (existing.processRunning && configChanged) {
       await stopStemServer({ forcePort: true });
       await waitForStemServerStop(4500);
@@ -684,20 +837,48 @@ async function stemServerStatus() {
   if (health.body) {
     stemServerStarting = false;
   }
+  const storageDir = health.body?.storage_dir || null;
+  const installRoot = installRootFromStemStorage(storageDir) || defaultDemucsInstallRoot();
   return stemServerState({
     ok: Boolean(health.ok && health.body?.ok),
     running: Boolean(health.body),
     healthy: Boolean(health.ok && health.body?.ok),
+    installRoot,
     model: health.body?.model || null,
     device: health.body?.device || null,
     requestedDevice: health.body?.requested_device || null,
     concurrency: Number(health.body?.concurrency) || null,
     accelerators: Array.isArray(health.body?.accelerators) ? health.body.accelerators : [],
     capabilities: health.body?.capabilities || null,
-    storageDir: health.body?.storage_dir || null,
+    storageDir,
     health: health.body || null,
     error: health.error || ""
   });
+}
+
+function stemServerMatchesSelection(status, model, device, concurrency) {
+  if (!status?.healthy) return false;
+  const runningModel = String(status.model || "").trim();
+  const runningRequestedDevice = String(status.requestedDevice || status.device || "").trim().toLowerCase();
+  const selectedDevice = demucsDeviceId(device);
+  const modelMatches = !runningModel || runningModel === model;
+  const deviceMatches = !runningRequestedDevice || selectedDevice === "auto" || runningRequestedDevice === selectedDevice || (selectedDevice === "cuda" && runningRequestedDevice.startsWith("cuda"));
+  const jobsMatch = !status.concurrency || Number(status.concurrency) === Number(concurrency || 1);
+  return modelMatches && deviceMatches && jobsMatch;
+}
+
+function installRootFromStemStorage(storageDir) {
+  if (typeof storageDir !== "string" || !storageDir.trim()) return "";
+  const normalized = path.resolve(storageDir.trim());
+  const base = path.basename(normalized).toLowerCase();
+  const parent = path.dirname(normalized);
+  if (base === "jobs" && path.basename(parent).toLowerCase() === "runtime") {
+    return path.dirname(parent);
+  }
+  if (base === "runtime") {
+    return parent;
+  }
+  return "";
 }
 
 async function stopStemServer(options = {}) {
@@ -788,10 +969,22 @@ function stemServerProgress(extra, healthy, running, processRunning) {
   const lines = stemServerLog.slice(-30);
   const text = lines.join("\n");
   const lastImportant = [...lines].reverse().find((line) => /error|traceback|feedforge:|successfully installed|installing collected|using cached|downloading|collecting|uvicorn|running/i.test(line)) || "";
+  if (/10048|address already in use|only one usage of each socket address|socketadresse.*nur jeweils einmal verwendet|attempting to bind/i.test(text)) {
+    return {
+      phase: "error",
+      message: `Another process is already using ${LOCAL_STEM_SERVER_URL}. If it is FeedForge, open Settings and press Stop, then start again.`
+    };
+  }
   if (/traceback|error:/i.test(text)) {
     return {
       phase: "error",
       message: lastImportant || extra.error || "The stem server reported an error. Open the debug log for details."
+    };
+  }
+  if (/failed while loading model|model preload failed|command failed with exit code/i.test(text)) {
+    return {
+      phase: "error",
+      message: lastImportant || "The selected stem model failed to load. Open the debug log for the exact dependency, download, or GPU error."
     };
   }
   if (/successfully installed/i.test(text)) {
@@ -1255,6 +1448,169 @@ async function findSongPackageFiles(root) {
 
 async function findPsarcFiles(root) {
   return findSongPackageFiles(root);
+}
+
+async function findFeedpakFiles(root) {
+  const files = [];
+  const pending = [root];
+  while (pending.length > 0) {
+    const folder = pending.pop();
+    let entries;
+    try {
+      entries = await fs.promises.readdir(folder, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const fullPath = path.join(folder, entry.name);
+      if (entry.isDirectory()) {
+        pending.push(fullPath);
+      } else if (entry.isFile() && String(entry.name || "").toLowerCase().endsWith(".feedpak")) {
+        files.push(fullPath);
+      }
+    }
+  }
+  return files;
+}
+
+async function inspectFeedpakForAudit(root, filePath, criteria) {
+  const result = await runConverter(["--inspect-json", filePath]);
+  const parsed = parseJson(result.stdout);
+  const relativePath = path.relative(root, filePath) || path.basename(filePath);
+  if (result.code !== 0 || !parsed?.ok || !parsed.preview) {
+    return {
+      filePath,
+      relativePath,
+      status: "error",
+      title: "",
+      artist: "",
+      album: "",
+      year: "",
+      arrangements: 0,
+      stems: 0,
+      missing: ["Unreadable package"],
+      suggestions: ["Open this package in FeedForge or reconvert it from the source CDLC."],
+      error: parsed?.error || result.stderr || result.stdout || "Inspection failed"
+    };
+  }
+  const preview = parsed.preview;
+  const missing = [];
+  const suggestions = [];
+  const stems = Array.isArray(preview.stems) ? preview.stems : [];
+  const arrangements = Array.isArray(preview.arrangements) ? preview.arrangements : [];
+  const stemIds = new Set(stems.map((stem) => String(stem.id || "").toLowerCase()));
+  const arrangementText = arrangements.map((arrangement) => `${arrangement.id || ""} ${arrangement.name || ""} ${arrangement.type || ""}`.toLowerCase());
+
+  const addMissing = (label, suggestion) => {
+    missing.push(label);
+    suggestions.push(suggestion);
+  };
+
+  if (criteria.requireSpecValidation && preview.validation && preview.validation.ok === false) {
+    addMissing("Spec validation", "Open the package in FeedForge and save/reprocess it with the current converter.");
+  }
+  if (criteria.requireCover && !preview.cover) {
+    addMissing("Cover image", "Add cover art in FeedPak tools.");
+  }
+  if (criteria.requireFullStem && !stemIds.has("full")) {
+    addMissing("Full mix stem", "Reconvert or re-save with a current FeedForge build so stems/full.ogg is retained.");
+  }
+  if (criteria.requireSplitStems && stems.filter((stem) => String(stem.id || "").toLowerCase() !== "full").length === 0) {
+    addMissing("Split stems", "Run stem separation for this FeedPak.");
+  }
+  if (criteria.requireBass && !arrangementText.some((value) => value.includes("bass"))) {
+    addMissing("Bass arrangement", "Reconvert from a source package that contains bass, or add a bass arrangement in FeedBack.");
+  }
+  if (criteria.requireGuitar && !arrangementText.some((value) => value.includes("lead") || value.includes("rhythm") || value.includes("guitar"))) {
+    addMissing("Guitar arrangement", "Reconvert from a source package that contains guitar arrangements.");
+  }
+  if (criteria.requireLyrics && Number(preview.lyrics || 0) <= 0) {
+    addMissing("Lyrics/karaoke", "Reconvert a package with authored vocals or add lyrics in FeedBack.");
+  }
+  if (criteria.requireAuthors && (!Array.isArray(preview.authors) || preview.authors.length === 0)) {
+    addMissing("Author credit", "Edit FeedPak metadata and add the original charter/creator credit.");
+  }
+  if (criteria.requireTones && countAuditToneDefinitions(preview.tones) === 0) {
+    addMissing("Tone data", "Reconvert from a package with tone definitions or manage tones separately.");
+  }
+
+  return {
+    filePath,
+    relativePath,
+    status: missing.length ? "needs-work" : "pass",
+    title: String(preview.title || ""),
+    artist: String(preview.artist || ""),
+    album: String(preview.album || ""),
+    year: String(preview.year || ""),
+    arrangements: arrangements.length,
+    stems: stems.length,
+    stemIds: [...stemIds].filter(Boolean).sort(),
+    authors: (preview.authors || []).map((author) => author.name || "").filter(Boolean),
+    missing,
+    suggestions,
+    validationErrors: preview.validation?.errors || [],
+    error: ""
+  };
+}
+
+function countAuditToneDefinitions(tones) {
+  return (tones || []).reduce((total, arrangement) => total + ((arrangement.definitions || []).length), 0);
+}
+
+function normalizeAuditCriteria(criteria) {
+  return {
+    requireSpecValidation: criteria.requireSpecValidation !== false,
+    requireCover: criteria.requireCover === true,
+    requireFullStem: criteria.requireFullStem === true,
+    requireSplitStems: criteria.requireSplitStems === true,
+    requireBass: criteria.requireBass === true,
+    requireGuitar: criteria.requireGuitar === true,
+    requireLyrics: criteria.requireLyrics === true,
+    requireAuthors: criteria.requireAuthors === true,
+    requireTones: criteria.requireTones === true
+  };
+}
+
+function writeAuditReports(report) {
+  const reportDir = path.join(app.getPath("userData"), "reports");
+  fs.mkdirSync(reportDir, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[-:T.Z]/g, "").slice(0, 14);
+  const csvPath = path.join(reportDir, `feedpak-library-audit-${stamp}.csv`);
+  const jsonPath = path.join(reportDir, `feedpak-library-audit-${stamp}.json`);
+  const csvRows = [
+    ["Status", "Artist", "Title", "Album", "Year", "Arrangements", "Stems", "Missing", "Suggestions", "Relative Path", "File Path"],
+    ...report.rows.map((row) => [
+      row.status,
+      row.artist,
+      row.title,
+      row.album,
+      row.year,
+      row.arrangements,
+      row.stems,
+      (row.missing || []).join("; "),
+      (row.suggestions || []).join("; "),
+      row.relativePath,
+      row.filePath
+    ])
+  ];
+  fs.writeFileSync(csvPath, csvRows.map((row) => row.map(csvCell).join(",")).join("\r\n") + "\r\n", "utf8");
+  fs.writeFileSync(jsonPath, JSON.stringify(report, null, 2), "utf8");
+  return { csvPath, jsonPath };
+}
+
+function csvCell(value) {
+  const text = String(value ?? "");
+  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+function safePathSegment(value, fallback = "Unknown Artist") {
+  const normalized = String(value || "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "");
+  const cleaned = (normalized || String(value || ""))
+    .replace(/[<>:"/\\|?*\x00-\x1F]/g, "_")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/[. ]+$/g, "");
+  return cleaned || fallback;
 }
 
 function isSongPackagePath(inputPath) {

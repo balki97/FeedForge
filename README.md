@@ -35,6 +35,12 @@ https://discord.gg/9cUe6cacQN
 
 The app writes `.feedpak` files that can be added to FeedBack.
 
+Every converted or edited package is checked against the bundled official
+FeedPak schemas before FeedForge reports success. Invalid packages are rejected
+with validation details instead of being written as completed output. The
+validator is included in the portable app and works offline; users do not need
+to install Python or any validation tools.
+
 ## FeedPak tools
 
 FeedForge can open existing `.feedpak` files to inspect package contents, song
@@ -43,6 +49,13 @@ be edited and saved back into the package.
 
 Existing FeedPaks can also be sent through stem separation without converting a
 `.psarc` again.
+
+For troubleshooting or release checks, the packaged converter can validate an
+existing package directly:
+
+```powershell
+psarc2feedpak.exe --validate-feedpak "song.feedpak"
+```
 
 ## Stem splitting
 

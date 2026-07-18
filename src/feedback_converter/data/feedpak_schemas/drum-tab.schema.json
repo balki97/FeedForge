@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://got-feedback.github.io/feedpak-spec/schemas/drum-tab.schema.json",
+  "$comment": "SPDX-License-Identifier: MIT. feedpak drum_tab.json (per-piece drum hits). See spec/feedpak-v1.md §7.5.",
+  "title": "feedpak drum tab",
+  "type": "object",
+  "required": ["version", "hits"],
+  "additionalProperties": true,
+  "properties": {
+    "version": { "type": "integer", "minimum": 1 },
+    "name": { "type": "string" },
+    "kit": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id"],
+        "additionalProperties": true,
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" }
+        }
+      }
+    },
+    "hits": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["t", "p"],
+        "additionalProperties": true,
+        "properties": {
+          "t": { "type": "number" },
+          "p": { "type": "string" },
+          "v": { "type": "integer", "minimum": 1, "maximum": 127 },
+          "g": { "type": "boolean" },
+          "f": { "type": "boolean" },
+          "k": { "type": "number" }
+        }
+      }
+    }
+  }
+}

@@ -29,6 +29,7 @@ a = Analysis(
         ),
         ('src\\feedback_converter\\data\\equipment.json', 'feedback_converter\\data'),
         ('src\\feedback_converter\\data\\feedback_equipment.json', 'feedback_converter\\data'),
+        ('src\\feedback_converter\\data\\feedpak_schemas', 'feedback_converter\\data\\feedpak_schemas'),
     ],
     hiddenimports=[],
     hookspath=[],

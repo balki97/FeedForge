@@ -1,0 +1,173 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://got-feedback.github.io/feedpak-spec/schemas/arrangement.schema.json",
+  "$comment": "SPDX-License-Identifier: MIT. feedpak arrangement JSON (wire format). See spec/feedpak-v1.md §6.",
+  "title": "feedpak arrangement",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "name": { "type": "string" },
+    "tuning": { "type": "array", "items": { "type": "integer" } },
+    "capo": { "type": "integer" },
+    "centOffset": { "type": "number" },
+    "notes": { "type": "array", "items": { "$ref": "#/$defs/note" } },
+    "chords": { "type": "array", "items": { "$ref": "#/$defs/chord" } },
+    "anchors": { "type": "array", "items": { "$ref": "#/$defs/anchor" } },
+    "handshapes": { "type": "array", "items": { "$ref": "#/$defs/handshape" } },
+    "templates": { "type": "array", "items": { "$ref": "#/$defs/template" } },
+    "phrases": {
+      "type": "array",
+      "minItems": 1,
+      "$comment": "Spec §6.7: omit the key entirely when there is no ladder; an empty array is non-conformant.",
+      "items": { "$ref": "#/$defs/phrase" }
+    },
+    "tones": { "type": "object" },
+    "tempos": {
+      "type": "array",
+      "minItems": 1,
+      "$comment": "Spec §6.10: omit the key entirely when the chart follows the song tempo; an empty array is non-conformant.",
+      "items": { "$ref": "#/$defs/tempoEvent" }
+    },
+    "beats": { "type": "array", "items": { "$ref": "#/$defs/beat" } },
+    "sections": { "type": "array", "items": { "$ref": "#/$defs/section" } }
+  },
+  "$defs": {
+    "note": {
+      "type": "object",
+      "required": ["t", "s", "f"],
+      "additionalProperties": true,
+      "properties": {
+        "t": { "type": "number" },
+        "s": { "type": "integer", "minimum": 0 },
+        "f": { "type": "integer" },
+        "sus": { "type": "number" },
+        "sl": { "type": "integer" },
+        "slu": { "type": "integer" },
+        "bn": { "type": "number" },
+        "bt": { "type": "integer", "minimum": 0, "maximum": 4 },
+        "bnv": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["t", "v"],
+            "additionalProperties": true,
+            "properties": {
+              "t": { "type": "number" },
+              "v": { "type": "number" }
+            }
+          }
+        },
+        "fg": { "type": "integer", "minimum": -1, "maximum": 4 },
+        "ch": { "type": "integer", "minimum": -1 },
+        "sd": { "type": "integer", "minimum": -1, "maximum": 11 }
+      }
+    },
+    "chordNote": {
+      "type": "object",
+      "required": ["s", "f"],
+      "additionalProperties": true,
+      "properties": {
+        "s": { "type": "integer", "minimum": 0 },
+        "f": { "type": "integer" },
+        "sus": { "type": "number" }
+      }
+    },
+    "chord": {
+      "type": "object",
+      "required": ["t"],
+      "additionalProperties": true,
+      "properties": {
+        "t": { "type": "number" },
+        "id": { "type": "integer" },
+        "hd": { "type": "boolean" },
+        "notes": { "type": "array", "items": { "$ref": "#/$defs/chordNote" } },
+        "fn": {
+          "type": "object",
+          "required": ["rn", "q", "deg"],
+          "additionalProperties": true,
+          "properties": {
+            "rn": { "type": "string" },
+            "q": { "type": "string" },
+            "deg": { "type": "integer", "minimum": 0, "maximum": 11 }
+          }
+        }
+      }
+    },
+    "anchor": {
+      "type": "object",
+      "required": ["time", "fret"],
+      "additionalProperties": true,
+      "properties": {
+        "time": { "type": "number" },
+        "fret": { "type": "integer" },
+        "width": { "type": "integer" }
+      }
+    },
+    "handshape": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "chord_id": { "type": "integer" },
+        "start_time": { "type": "number" },
+        "end_time": { "type": "number" },
+        "arp": { "type": "boolean" }
+      }
+    },
+    "template": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "name": { "type": "string" },
+        "displayName": { "type": "string" },
+        "arp": { "type": "boolean" },
+        "fingers": { "type": "array", "items": { "type": "integer" } },
+        "frets": { "type": "array", "items": { "type": "integer" } },
+        "voicing": { "type": "string" },
+        "caged": { "type": "string", "enum": ["C", "A", "G", "E", "D"] },
+        "guideTones": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 0, "maximum": 11 }
+        }
+      }
+    },
+    "phrase": {
+      "type": "object",
+      "required": ["start_time", "end_time"],
+      "additionalProperties": true,
+      "properties": {
+        "start_time": { "type": "number" },
+        "end_time": { "type": "number" },
+        "max_difficulty": { "type": "integer" },
+        "levels": { "type": "array" }
+      }
+    },
+    "tempoEvent": {
+      "type": "object",
+      "required": ["time", "bpm"],
+      "additionalProperties": true,
+      "properties": {
+        "time": { "type": "number" },
+        "bpm": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+    "beat": {
+      "type": "object",
+      "required": ["time", "measure"],
+      "additionalProperties": true,
+      "properties": {
+        "time": { "type": "number" },
+        "measure": { "type": "integer" }
+      }
+    },
+    "section": {
+      "type": "object",
+      "required": ["name", "time"],
+      "additionalProperties": true,
+      "properties": {
+        "name": { "type": "string" },
+        "number": { "type": "integer" },
+        "time": { "type": "number" }
+      }
+    }
+  }
+}

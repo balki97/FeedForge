@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://got-feedback.github.io/feedpak-spec/schemas/lyrics.schema.json",
+  "$comment": "SPDX-License-Identifier: MIT. feedpak lyrics.json (flat syllable list). See spec/feedpak-v1.md §7.1.",
+  "title": "feedpak lyrics",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": ["t", "d", "w"],
+    "additionalProperties": true,
+    "properties": {
+      "t": { "type": "number" },
+      "d": { "type": "number" },
+      "w": { "type": "string" }
+    }
+  }
+}

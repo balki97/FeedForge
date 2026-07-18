@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://got-feedback.github.io/feedpak-spec/schemas/harmony.schema.json",
+  "$comment": "SPDX-License-Identifier: MIT. feedpak harmony.json (song-level intended chord progression). See spec/feedpak-v1.md §7.8.",
+  "title": "feedpak song-level harmony track",
+  "type": "object",
+  "required": ["version", "events"],
+  "additionalProperties": true,
+  "properties": {
+    "version": { "type": "integer", "minimum": 1 },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["t"],
+        "additionalProperties": true,
+        "properties": {
+          "t": { "type": "number" },
+          "root": {
+            "type": ["string", "null"],
+            "$comment": "Absolute chord root note name (e.g. \"G\", \"F#\", \"Bb\"); null marks a no-chord (N.C.) event."
+          },
+          "quality": { "type": "string" },
+          "rn": { "type": "string" },
+          "bass": { "type": "string" }
+        }
+      }
+    }
+  }
+}

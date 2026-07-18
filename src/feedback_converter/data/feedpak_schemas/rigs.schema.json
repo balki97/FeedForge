@@ -1,0 +1,150 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://got-feedback.github.io/feedpak-spec/schemas/rigs.schema.json",
+  "$comment": "SPDX-License-Identifier: MIT. feedpak rigs.json (engine-agnostic rig library). See spec/feedpak-v1.md §7.9.",
+  "title": "feedpak rigs",
+  "type": "object",
+  "required": ["version", "rigs"],
+  "additionalProperties": true,
+  "properties": {
+    "version": { "type": "integer", "minimum": 1 },
+    "rigs": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/rig" }
+    }
+  },
+  "$defs": {
+    "rig": {
+      "type": "object",
+      "required": ["id", "blocks"],
+      "additionalProperties": true,
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "$comment": "Stable id referenced by arrangement tones.base_rig / changes[].rig." },
+        "name": { "type": "string" },
+        "instrument": { "type": "string", "$comment": "Non-normative hint, e.g. 'guitar', 'bass'." },
+        "channels": { "type": "integer", "minimum": 1, "$comment": "Channel count the rig is authored for; default 1 (mono)." },
+        "blocks": {
+          "type": "array",
+          "$comment": "Ordered serial signal chain (input → block[0] → … → output) unless `graph` overrides.",
+          "items": { "$ref": "#/$defs/block" }
+        },
+        "graph": { "$ref": "#/$defs/graph" },
+        "ext": { "type": "object", "$comment": "Vendor/experimental namespace; readers MUST preserve verbatim." }
+      }
+    },
+    "block": {
+      "type": "object",
+      "additionalProperties": true,
+      "$comment": "One effect stage. `intent` says what it is (engine-agnostic); `realizations` say how to render it.",
+      "properties": {
+        "id": { "type": "string", "$comment": "Required only if the block is referenced from `graph`." },
+        "role": { "type": "string", "$comment": "Open vocabulary: gain, drive, amp, cab, eq, dynamics, modulation, delay, reverb, pitch, filter, utility, … Unknown values MUST be preserved." },
+        "name": { "type": "string" },
+        "bypassed": { "type": "boolean" },
+        "mix": { "type": "number", "minimum": 0, "maximum": 1, "$comment": "Wet/dry mix, 0..1. Default 1 (fully wet)." },
+        "intent": { "$ref": "#/$defs/intent" },
+        "realizations": {
+          "type": "array",
+          "$comment": "Ordered by preference; a reader renders the FIRST realization whose `engine` it supports. If it supports none, it falls back to `intent`.",
+          "items": { "$ref": "#/$defs/realization" }
+        },
+        "params": { "$ref": "#/$defs/params" },
+        "automation": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/automationLane" }
+        },
+        "ext": { "type": "object" }
+      }
+    },
+    "intent": {
+      "type": "object",
+      "additionalProperties": true,
+      "$comment": "Engine-independent description of the block, so a reader with no matching realization can still display/approximate/map it.",
+      "properties": {
+        "kind": { "type": "string", "$comment": "Open vocabulary: amp, cab, drive, fuzz, compressor, eq, chorus, phaser, flanger, tremolo, delay, reverb, pitch, gate, boost, … " },
+        "family": { "type": "string", "$comment": "Non-normative family/character, e.g. 'british-hi-gain', '4x12', 'tube-screamer'." },
+        "model": { "type": "string", "$comment": "Non-normative model hint. MUST NOT be a trademarked product name in distributed packs." },
+        "tags": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "realization": {
+      "type": "object",
+      "required": ["engine"],
+      "additionalProperties": true,
+      "$comment": "A concrete way to render the block. New engines are new `engine` values; older readers skip what they don't support.",
+      "properties": {
+        "engine": { "type": "string", "$comment": "Open vocabulary. Reserved values: 'nam' (Neural Amp Modeler capture), 'ir' (impulse response), 'plugin' (host plugin), 'builtin' (host DSP by id)." },
+        "ref": { "type": "string", "$comment": "For 'nam'/'ir': pack-relative path (no leading '/', no '..') or absolute URI to the asset." },
+        "sha256": { "type": "string", "pattern": "^[0-9a-fA-F]{64}$", "$comment": "Optional integrity hash of the referenced asset." },
+        "channels": { "type": "integer", "minimum": 1 },
+        "format": { "type": "string", "$comment": "For engine='plugin': 'vst3' | 'au' | 'lv2' | 'clap' | … (open)." },
+        "id": { "type": "string", "$comment": "For 'plugin': unique/bundle id; for 'builtin': the host DSP id." },
+        "name": { "type": "string" },
+        "vendor": { "type": "string" },
+        "preset": { "type": "string" },
+        "state": { "type": "string", "$comment": "Optional opaque plugin state, base64. Exact-recall; never the ONLY representation (pair with intent/params)." },
+        "params": { "$ref": "#/$defs/params" }
+      }
+    },
+    "params": {
+      "type": "object",
+      "$comment": "Open map of named controls. A value is either a normalized number in 0..1, or a typed object {value, unit}. Discrete/enum controls use a string. Not limited to any fixed knob set.",
+      "additionalProperties": {
+        "oneOf": [
+          { "type": "number" },
+          { "type": "string" },
+          { "type": "boolean" },
+          {
+            "type": "object",
+            "required": ["value"],
+            "additionalProperties": true,
+            "properties": {
+              "value": { "type": ["number", "string", "boolean"] },
+              "unit": { "type": "string", "$comment": "e.g. 'dB', 'Hz', 'ms', 'ratio'." }
+            }
+          }
+        ]
+      }
+    },
+    "automationLane": {
+      "type": "object",
+      "required": ["param", "points"],
+      "additionalProperties": true,
+      "$comment": "Time-varying value for one param. Points are time-sorted; value held until the next point.",
+      "properties": {
+        "param": { "type": "string" },
+        "points": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["t", "v"],
+            "additionalProperties": true,
+            "properties": {
+              "t": { "type": "number", "$comment": "Time (s)." },
+              "v": { "type": ["number", "string", "boolean"] }
+            }
+          }
+        }
+      }
+    },
+    "graph": {
+      "type": "object",
+      "required": ["nodes", "edges"],
+      "additionalProperties": true,
+      "$comment": "Optional explicit topology for non-serial rigs (parallel amps, wet/dry, stereo split/merge). Node ids are block ids plus the reserved 'input' and 'output'. When omitted, `blocks` is a serial chain.",
+      "properties": {
+        "nodes": { "type": "array", "items": { "type": "string" } },
+        "edges": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": { "type": "string" },
+            "minItems": 2,
+            "maxItems": 2,
+            "$comment": "[from, to] node ids."
+          }
+        }
+      }
+    }
+  }
+}

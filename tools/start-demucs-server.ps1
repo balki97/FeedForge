@@ -138,4 +138,11 @@ try {
     Set-Content -Encoding UTF8 -Path $Marker -Value $SourceStamp
 }
 Write-Host "FeedForge: starting Demucs server"
-Invoke-FeedForgeNative $Python @("-m", "feedback_converter.demucs_server", "--host", "127.0.0.1", "--port", "7865", "--model", $Model, "--device", $Device, "--concurrency", $Concurrency, "--storage-dir", $StorageRoot, "--preload-model")
+Write-Host "FeedForge: loading selected model. First launch may download model files and can take several minutes."
+& $Python @("-m", "feedback_converter.demucs_server", "--host", "127.0.0.1", "--port", "7865", "--model", $Model, "--device", $Device, "--concurrency", $Concurrency, "--storage-dir", $StorageRoot, "--preload-model")
+$ServerExitCode = $LASTEXITCODE
+if ($ServerExitCode -ne 0) {
+    Write-Host "FeedForge: local stem server failed while loading model '$Model' on device '$Device'."
+    Write-Host "FeedForge: open Diagnostics -> Open log and send the full log if this continues."
+    exit $ServerExitCode
+}

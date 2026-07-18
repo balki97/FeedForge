@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://got-feedback.github.io/feedpak-spec/schemas/notation.schema.json",
+  "$comment": "SPDX-License-Identifier: MIT. feedpak notation_<id>.json (standard notation). See spec/feedpak-v1.md §7.6.",
+  "title": "feedpak notation",
+  "type": "object",
+  "required": ["version", "staves", "measures"],
+  "additionalProperties": true,
+  "properties": {
+    "version": { "type": "integer", "minimum": 1 },
+    "instrument": { "type": "string" },
+    "rights": { "type": "string" },
+    "lyricist": { "type": "string" },
+    "arranger": { "type": "string" },
+    "staves": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "clef"],
+        "additionalProperties": true,
+        "properties": {
+          "id": { "type": "string" },
+          "clef": { "type": "string", "enum": ["G2", "F4", "C3", "C4", "neutral"] },
+          "label": { "type": "string" }
+        }
+      }
+    },
+    "measures": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["idx", "t"],
+        "additionalProperties": true,
+        "properties": {
+          "idx": { "type": "integer", "minimum": 1 },
+          "t": { "type": "number" },
+          "ts": {
+            "type": "array",
+            "items": { "type": "integer", "minimum": 1 },
+            "minItems": 2,
+            "maxItems": 2
+          },
+          "beat_groups": { "type": "array", "items": { "type": "integer", "minimum": 1 } },
+          "ks": { "type": "integer", "minimum": -7, "maximum": 7 },
+          "tempo": { "type": "number", "exclusiveMinimum": 0 },
+          "pickup": { "type": "boolean" },
+          "staves": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": true,
+              "properties": {
+                "clef": { "type": "string", "enum": ["G2", "F4", "C3", "C4", "neutral"] },
+                "voices": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true,
+                    "properties": {
+                      "v": { "type": "integer" },
+                      "beats": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "required": ["t", "dur"],
+                          "additionalProperties": true,
+                          "properties": {
+                            "t": { "type": "number" },
+                            "dur": { "type": "integer", "enum": [1, 2, 4, 8, 16, 32] },
+                            "dot": { "type": "integer", "minimum": 1, "maximum": 2 },
+                            "rest": { "type": "boolean" },
+                            "notes": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "required": ["midi"],
+                                "additionalProperties": true,
+                                "properties": {
+                                  "midi": { "type": "integer", "minimum": 0, "maximum": 127 }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

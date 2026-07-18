@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://got-feedback.github.io/feedpak-spec/schemas/keys.schema.json",
+  "$comment": "SPDX-License-Identifier: MIT. feedpak keys.json (key/scale annotations). See spec/feedpak-v1.md §7.7.",
+  "title": "feedpak key/scale annotations",
+  "type": "object",
+  "required": ["version", "events"],
+  "additionalProperties": true,
+  "properties": {
+    "version": { "type": "integer", "minimum": 1 },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["t", "key"],
+        "additionalProperties": true,
+        "properties": {
+          "t": { "type": "number" },
+          "key": { "type": "string" },
+          "scale": { "type": "string" }
+        }
+      }
+    }
+  }
+}

@@ -17,24 +17,30 @@ from .converter import (
     _write_manifest,
     _zip_dir,
 )
+from .feedpak_validator import FeedpakValidationResult, require_valid_feedpak, validate_feedpak
 
 
 @dataclass
 class FeedpakEditResult:
     output_path: Path
     warnings: list[ConversionWarning] = field(default_factory=list)
+    validation: FeedpakValidationResult | None = None
 
 
 METADATA_FIELDS = ("title", "artist", "album", "year", "duration", "language")
 AUTHOR_ROLES = {"charter", "creator", "arranger", "author", "contributor"}
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
+AUDIO_SUFFIXES = {".ogg", ".wav", ".mp3", ".flac", ".opus"}
 
 
 def inspect_feedpak(input_path: Path, *, cover_dir: Path | None = None) -> dict[str, Any]:
     """Read FeedPak metadata without changing the package."""
     input_path = Path(input_path)
+    validation = validate_feedpak(input_path).to_dict()
     if input_path.is_file():
-        return _inspect_feedpak_zip(input_path, cover_dir=cover_dir)
+        result = _inspect_feedpak_zip(input_path, cover_dir=cover_dir)
+        result["validation"] = validation
+        return result
     with _open_feedpak(input_path) as package_dir:
         manifest = _read_manifest(package_dir)
         cover_path = _extract_cover(package_dir, manifest, cover_dir)
@@ -44,7 +50,7 @@ def inspect_feedpak(input_path: Path, *, cover_dir: Path | None = None) -> dict[
         tones = _arrangement_tone_previews(arrangement_payloads)
         if not tones:
             tones = _rig_previews(rigs)
-        return {
+        result = {
             "source_type": "feedpak",
             "title": str(manifest.get("title") or input_path.stem),
             "artist": str(manifest.get("artist") or "Unknown Artist"),
@@ -62,6 +68,8 @@ def inspect_feedpak(input_path: Path, *, cover_dir: Path | None = None) -> dict[
             "lyrics": _lyrics_count(package_dir, manifest),
             "warnings": [],
         }
+        result["validation"] = validation
+        return result
 
 
 def _inspect_feedpak_zip(input_path: Path, *, cover_dir: Path | None) -> dict[str, Any]:
@@ -107,6 +115,8 @@ def update_feedpak(
     demucs_api_key: str | None = None,
     demucs_model: str | None = None,
     demucs_stems: list[str] | None = None,
+    stem_updates: list[dict[str, Any]] | None = None,
+    remove_stems: list[str] | None = None,
     overwrite: bool = False,
 ) -> FeedpakEditResult:
     """Edit an existing FeedPak and write a new package or overwrite it."""
@@ -125,6 +135,7 @@ def update_feedpak(
         if authors is not None:
             manifest["authors"] = _normalize_authors(authors)
         _apply_cover(package_dir, manifest, cover_path=cover_path, remove_cover=remove_cover)
+        _apply_stem_edits(package_dir, manifest, stem_updates=stem_updates, remove_stems=remove_stems)
 
         if separate_stems:
             full_entry = _full_stem_entry(manifest)
@@ -143,9 +154,12 @@ def update_feedpak(
                 manifest["stem_separation"] = separation
 
         _write_manifest(package_dir / "manifest.yaml", manifest)
+        validation = require_valid_feedpak(package_dir)
+        for warning in validation.warnings:
+            warnings.append(ConversionWarning(f"FeedPak spec validation warning: {warning}"))
         _write_package(package_dir, target, overwrite=overwrite or target.resolve() == input_path.resolve())
 
-    return FeedpakEditResult(output_path=target, warnings=warnings)
+    return FeedpakEditResult(output_path=target, warnings=warnings, validation=validation)
 
 
 class _FeedpakContext:
@@ -570,6 +584,83 @@ def _apply_cover(
     target = f"cover{suffix}"
     shutil.copy2(source, package_dir / target)
     manifest["cover"] = target
+
+
+def _apply_stem_edits(
+    package_dir: Path,
+    manifest: dict[str, Any],
+    *,
+    stem_updates: list[dict[str, Any]] | None,
+    remove_stems: list[str] | None,
+) -> None:
+    stems = [stem for stem in manifest.get("stems") or [] if isinstance(stem, dict)]
+    by_id = {
+        _safe_stem_id(stem.get("id") or Path(str(stem.get("file") or "")).stem): dict(stem)
+        for stem in stems
+    }
+
+    for raw_id in remove_stems or []:
+        stem_id = _safe_stem_id(raw_id)
+        if not stem_id:
+            continue
+        if stem_id == "full":
+            raise ValueError("stems/full is required by the FeedPak spec and cannot be removed.")
+        stem = by_id.pop(stem_id, None)
+        if stem:
+            _remove_package_file(package_dir, stem.get("file"))
+
+    for update in stem_updates or []:
+        if not isinstance(update, dict):
+            continue
+        stem_id = _safe_stem_id(update.get("id"))
+        source = Path(str(update.get("file") or ""))
+        if not stem_id:
+            raise ValueError("Stem id is required.")
+        if not source.is_file():
+            raise FileNotFoundError(f"Stem audio file was not found: {source}")
+        suffix = source.suffix.lower()
+        if suffix not in AUDIO_SUFFIXES:
+            raise ValueError("Stem audio must be OGG, WAV, MP3, FLAC, or OPUS.")
+
+        stems_dir = package_dir / "stems"
+        stems_dir.mkdir(parents=True, exist_ok=True)
+        target = stems_dir / f"{stem_id}{suffix}"
+        existing = by_id.get(stem_id)
+        if existing:
+            old_file = (package_dir / str(existing.get("file") or "")).resolve()
+            if old_file != target.resolve():
+                _remove_package_file(package_dir, existing.get("file"))
+        shutil.copy2(source, target)
+        by_id[stem_id] = {
+            "id": stem_id,
+            "file": target.relative_to(package_dir).as_posix(),
+            "codec": _codec_for_audio_path(target),
+            "default": True if stem_id == "full" else bool(update.get("default")),
+        }
+
+    if stem_updates or remove_stems:
+        if "full" not in by_id:
+            raise ValueError("FeedPak packages must contain stems/full.")
+        manifest["stems"] = [by_id["full"]] + [by_id[key] for key in sorted(by_id) if key != "full"]
+
+
+def _safe_stem_id(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    cleaned = "".join(char if char.isalnum() or char in {"_", "-"} else "_" for char in text)
+    return "_".join(part for part in cleaned.split("_") if part)
+
+
+def _remove_package_file(package_dir: Path, file_name: Any) -> None:
+    if not file_name:
+        return
+    package_root = package_dir.resolve()
+    target = (package_dir / str(file_name)).resolve()
+    try:
+        target.relative_to(package_root)
+    except ValueError:
+        return
+    if target.is_file():
+        target.unlink()
 
 
 def _full_stem_entry(manifest: dict[str, Any]) -> dict[str, Any]:
