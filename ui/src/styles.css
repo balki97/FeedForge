@@ -1513,7 +1513,7 @@ button:disabled {
 
 .audit-summary {
   display: grid;
-  grid-template-columns: repeat(3, minmax(120px, 1fr));
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
   gap: 10px;
 }
 
@@ -1592,6 +1592,115 @@ button:disabled {
   font-size: 11px;
 }
 
+.duplicate-results {
+  display: grid;
+  gap: 10px;
+  margin-top: 2px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(50, 76, 108, 0.65);
+}
+
+.duplicate-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.duplicate-head strong,
+.duplicate-head span {
+  display: block;
+}
+
+.duplicate-head span {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 3px;
+}
+
+.duplicate-group {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid #29405f;
+  border-radius: 13px;
+  background: rgba(8, 17, 29, 0.62);
+}
+
+.duplicate-title {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--text);
+}
+
+.duplicate-title span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.duplicate-files {
+  display: grid;
+  gap: 7px;
+}
+
+.duplicate-file {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  gap: 10px;
+  align-items: center;
+  padding: 9px 10px;
+  border: 1px solid #243956;
+  border-radius: 12px;
+  background: rgba(17, 30, 47, 0.72);
+}
+
+.duplicate-file.recommended {
+  border-color: rgba(62, 224, 151, 0.45);
+  background: rgba(19, 79, 67, 0.28);
+}
+
+.duplicate-file strong,
+.duplicate-file span {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.duplicate-file strong b {
+  margin-left: 7px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: rgba(62, 224, 151, 0.14);
+  color: #74f0ae;
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.duplicate-file span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.duplicate-stats {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 5px;
+  max-width: 330px;
+}
+
+.duplicate-stats span {
+  padding: 4px 7px;
+  border: 1px solid #304966;
+  border-radius: 999px;
+  background: rgba(10, 22, 36, 0.72);
+  color: #bcd3ee;
+  font-size: 11px;
+}
+
 .stem-log {
   display: grid;
   gap: 2px;
@@ -1646,6 +1755,7 @@ button:disabled {
 .metric.blue strong { color: var(--blue); }
 .metric.green strong { color: var(--green); }
 .metric.red strong { color: var(--red); }
+.metric.warn strong { color: #ffc94a; }
 
 .content-grid {
   margin-top: 18px;

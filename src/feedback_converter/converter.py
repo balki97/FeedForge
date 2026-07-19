@@ -127,9 +127,14 @@ def convert_psarc_songs(
         output = Path(output)
         base_dir = output.parent if output.suffix else output
     results: list[ConversionResult] = []
+    reserved_outputs: set[Path] = set()
     for key, paths in sorted(playable_groups.items()):
         song_content = _content_for_song_group(content, key, paths, rs1_songs_content=rs1_songs_content)
-        output = base_dir / f"{_safe_output_stem(_metadata_song_title(song_content) or key)}.feedpak"
+        output = _unique_output_path(
+            base_dir / f"{_safe_output_stem(_metadata_song_title(song_content) or key)}.feedpak",
+            reserved_outputs,
+            overwrite=overwrite,
+        )
         try:
             result = convert_psarc(
                 input_psarc,
@@ -151,6 +156,22 @@ def convert_psarc_songs(
             raise
         results.append(result)
     return results
+
+
+def _unique_output_path(path: Path, reserved: set[Path], *, overwrite: bool) -> Path:
+    """Return a batch-unique output path without touching the filesystem."""
+    resolved = path.resolve()
+    if resolved not in reserved and (overwrite or not path.exists()):
+        reserved.add(resolved)
+        return path
+    counter = 2
+    while True:
+        candidate = path.with_name(f"{path.stem} ({counter}){path.suffix}")
+        resolved_candidate = candidate.resolve()
+        if resolved_candidate not in reserved and (overwrite or not candidate.exists()):
+            reserved.add(resolved_candidate)
+            return candidate
+        counter += 1
 
 
 def _cleanup_output(output: Path, *, archive: bool, keep_workdir: bool) -> None:

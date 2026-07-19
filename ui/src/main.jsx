@@ -47,7 +47,8 @@ const DEFAULT_AUDIT_CRITERIA = {
   requireGuitar: false,
   requireLyrics: false,
   requireAuthors: false,
-  requireTones: false
+  requireTones: false,
+  checkDuplicates: false
 };
 const AUDIT_CRITERIA_OPTIONS = [
   { key: "requireSpecValidation", label: "Spec valid" },
@@ -58,7 +59,8 @@ const AUDIT_CRITERIA_OPTIONS = [
   { key: "requireGuitar", label: "Guitar" },
   { key: "requireLyrics", label: "Lyrics" },
   { key: "requireAuthors", label: "Credits" },
-  { key: "requireTones", label: "Tones" }
+  { key: "requireTones", label: "Tones" },
+  { key: "checkDuplicates", label: "Duplicates" }
 ];
 
 function DiscordIcon({ size = 17 }) {
@@ -568,6 +570,7 @@ function App() {
     setConversionProgress({ total: pending.length, completed: 0, failed: 0, active: [], stopped: false });
     const stopManagedStemServerAfterQueue = separateStems && stemServerStatus.processRunning;
     const batchSourceRoot = commonAncestorDir(pending.map((item) => item.path));
+    const reservedOutputPaths = reserveBatchOutputPaths(pending, outputDir, outputLayout, batchSourceRoot, outputNameFormat, outputNameTemplate);
     let index = 0;
 
     async function convertNext() {
@@ -580,7 +583,7 @@ function App() {
         ...current,
         active: [...current.active.filter((entry) => entry.id !== item.id), { id: item.id, name: item.preview?.title || item.name, artist: item.preview?.artist || "" }]
       }));
-      const outputPath = outputDir ? outputPathForItem(item, outputDir, outputLayout, item.sourceRoot || batchSourceRoot, outputNameFormat, outputNameTemplate) : null;
+      const outputPath = reservedOutputPaths.get(item.id) || null;
       const payload = {
         inputPath: item.path,
         outputPath,
@@ -1519,8 +1522,45 @@ function Metric({ label, value, tone = "" }) {
 }
 
 function LibraryAuditPanel({ folder, criteria, report, busy, onChooseFolder, onRun, onChangeCriterion }) {
+  const [selectedDuplicatePaths, setSelectedDuplicatePaths] = useState([]);
+  const [deleteMessage, setDeleteMessage] = useState("");
+  const [isDeletingDuplicates, setIsDeletingDuplicates] = useState(false);
   const failedRows = (report?.rows || []).filter((row) => row.status !== "pass");
   const previewRows = failedRows.slice(0, 8);
+  const duplicateGroups = report?.duplicates || [];
+  const selectedSet = new Set(selectedDuplicatePaths);
+
+  useEffect(() => {
+    setSelectedDuplicatePaths([]);
+    setDeleteMessage("");
+  }, [report?.jsonPath]);
+
+  function toggleDuplicatePath(filePath, checked) {
+    setSelectedDuplicatePaths((current) => {
+      const next = new Set(current);
+      if (checked) next.add(filePath);
+      else next.delete(filePath);
+      return [...next];
+    });
+  }
+
+  async function deleteSelectedDuplicates() {
+    if (!selectedDuplicatePaths.length || isDeletingDuplicates) return;
+    const ok = window.confirm(`Move ${selectedDuplicatePaths.length} selected FeedPak file${selectedDuplicatePaths.length === 1 ? "" : "s"} to the Recycle Bin?`);
+    if (!ok) return;
+    setIsDeletingDuplicates(true);
+    setDeleteMessage("");
+    try {
+      const result = await api.deleteFiles(selectedDuplicatePaths);
+      setDeleteMessage(result.ok ? `Moved ${result.deleted || 0} file${result.deleted === 1 ? "" : "s"} to the Recycle Bin.` : result.error || "Some files could not be deleted.");
+      if (result.ok) setSelectedDuplicatePaths([]);
+    } catch (error) {
+      setDeleteMessage(error?.message || "Delete failed.");
+    } finally {
+      setIsDeletingDuplicates(false);
+    }
+  }
+
   return (
     <div className="diagnostics-panel audit-panel">
       <div className="diagnostics-head">
@@ -1560,6 +1600,7 @@ function LibraryAuditPanel({ folder, criteria, report, busy, onChooseFolder, onR
               <Metric label="FeedPaks scanned" value={report.total || 0} />
               <Metric label="Passed" value={report.passed || 0} />
               <Metric label="Needs work" value={report.needsWork || 0} />
+              <Metric label="Duplicate groups" value={report.duplicateGroups || 0} tone={report.duplicateGroups ? "warn" : ""} />
             </div>
             <div className="audit-actions">
               <span>{report.csvPath ? `Report saved: ${basename(report.csvPath)}` : "Report saved after scan."}</span>
@@ -1586,6 +1627,53 @@ function LibraryAuditPanel({ folder, criteria, report, busy, onChooseFolder, onR
               )}
               {failedRows.length > previewRows.length && <span className="muted-text">Showing first {previewRows.length} of {failedRows.length}. Open the CSV for the full report.</span>}
             </div>
+            {criteria.checkDuplicates && (
+              <div className="duplicate-results">
+                <div className="duplicate-head">
+                  <div>
+                    <strong>Duplicate songs</strong>
+                    <span>{duplicateGroups.length ? `${duplicateGroups.length} group${duplicateGroups.length === 1 ? "" : "s"} found. FeedForge recommends one file per group, but you decide what to keep.` : "No duplicates found by metadata."}</span>
+                  </div>
+                  <button className="danger" onClick={deleteSelectedDuplicates} disabled={!selectedDuplicatePaths.length || isDeletingDuplicates}>
+                    {isDeletingDuplicates ? <RotateCw className="spin" size={16} /> : <XCircle size={16} />}
+                    Move selected to Recycle Bin
+                  </button>
+                </div>
+                {deleteMessage && <div className="info-box"><Info size={16} /> {deleteMessage}</div>}
+                {duplicateGroups.map((group) => (
+                  <div className="duplicate-group" key={group.key}>
+                    <div className="duplicate-title">
+                      <strong>{group.artist || "Unknown Artist"} - {group.title || "Untitled"}</strong>
+                      <span>{group.album || "No album"} {group.year ? ` / ${group.year}` : ""}</span>
+                    </div>
+                    <div className="duplicate-files">
+                      {group.files.map((file) => (
+                        <label className={`duplicate-file ${file.recommended ? "recommended" : ""}`} key={file.filePath}>
+                          <input
+                            type="checkbox"
+                            checked={selectedSet.has(file.filePath)}
+                            onChange={(event) => toggleDuplicatePath(file.filePath, event.target.checked)}
+                            disabled={file.recommended}
+                          />
+                          <div>
+                            <strong>{basename(file.filePath)} {file.recommended && <b>Recommended keep</b>}</strong>
+                            <span>{file.relativePath}</span>
+                          </div>
+                          <div className="duplicate-stats">
+                            <span>{file.arrangements || 0} arrangements</span>
+                            <span>{file.stems || 0} stems</span>
+                            <span>{formatBytes(file.size || 0)}</span>
+                          </div>
+                          <button type="button" className="ghost" onClick={(event) => { event.preventDefault(); api.showFileInFolder(file.filePath); }}>
+                            <FolderOpen size={15} /> Folder
+                          </button>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </>
         )}
       </div>
@@ -2519,6 +2607,37 @@ function outputPathForItem(item, outputDir, layout, sourceRoot, nameFormat = "so
     return relativeDir ? joinPath(outputDir, relativeDir, fileName) : joinPath(outputDir, fileName);
   }
   return joinPath(outputDir, fileName);
+}
+
+function reserveBatchOutputPaths(items, outputDir, layout, batchSourceRoot, nameFormat, customTemplate) {
+  const reserved = new Map();
+  const used = new Set();
+  for (const item of items || []) {
+    const rawPath = outputDir ? outputPathForItem(item, outputDir, layout, item.sourceRoot || batchSourceRoot, nameFormat, customTemplate) : null;
+    if (!rawPath) {
+      reserved.set(item.id, null);
+      continue;
+    }
+    const uniquePath = uniqueOutputPath(rawPath, used);
+    used.add(normalizePath(uniquePath).toLowerCase());
+    reserved.set(item.id, uniquePath);
+  }
+  return reserved;
+}
+
+function uniqueOutputPath(filePath, used) {
+  const normalized = normalizePath(filePath).toLowerCase();
+  if (!used.has(normalized)) return filePath;
+  const folder = parentDir(filePath);
+  const name = basename(filePath);
+  const stem = withoutExtension(name);
+  const extension = name.slice(stem.length);
+  let counter = 2;
+  while (true) {
+    const candidate = joinPath(folder, `${stem} (${counter})${extension}`);
+    if (!used.has(normalizePath(candidate).toLowerCase())) return candidate;
+    counter += 1;
+  }
 }
 
 function editedFeedpakPath(item, outputDir) {

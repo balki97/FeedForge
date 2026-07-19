@@ -58,6 +58,8 @@ contextBridge.exposeInMainWorld("feedbackConverter", {
   organizeFeedpaks: (payload) => ipcRenderer.invoke("feedpak:organize", payload),
   auditFeedpakLibrary: (payload) => ipcRenderer.invoke("audit:feedpakLibrary", payload),
   openAuditReport: (filePath) => ipcRenderer.invoke("audit:openReport", filePath),
+  showFileInFolder: (filePath) => ipcRenderer.invoke("files:showInFolder", filePath),
+  deleteFiles: (filePaths) => ipcRenderer.invoke("files:delete", filePaths),
   getStemServerStatus: () => ipcRenderer.invoke("stemServer:status"),
   getStemServerModels: (options) => ipcRenderer.invoke("stemServer:models", options),
   startStemServer: (options) => ipcRenderer.invoke("stemServer:start", options),

@@ -419,6 +419,20 @@ ipcMain.handle("audit:feedpakLibrary", async (_event, payload = {}) => {
 
   await Promise.all(Array.from({ length: workerCount }, () => next()));
   rows.sort((left, right) => left.relativePath.localeCompare(right.relativePath, undefined, { sensitivity: "base" }));
+  const duplicates = criteria.checkDuplicates ? duplicateGroupsFromAuditRows(rows) : [];
+  const duplicatePaths = new Set(duplicates.flatMap((group) => group.files.map((file) => file.filePath)));
+  if (duplicatePaths.size) {
+    for (const row of rows) {
+      if (duplicatePaths.has(row.filePath)) {
+        row.duplicate = true;
+        row.status = row.status === "pass" ? "needs-work" : row.status;
+        if (!row.missing.includes("Duplicate song")) row.missing.push("Duplicate song");
+        if (!row.suggestions.includes("Review duplicate group and keep the preferred package.")) {
+          row.suggestions.push("Review duplicate group and keep the preferred package.");
+        }
+      }
+    }
+  }
   const report = {
     ok: true,
     root,
@@ -427,6 +441,9 @@ ipcMain.handle("audit:feedpakLibrary", async (_event, payload = {}) => {
     total: rows.length,
     passed: rows.filter((row) => row.status === "pass").length,
     needsWork: rows.filter((row) => row.status !== "pass").length,
+    duplicateGroups: duplicates.length,
+    duplicateFiles: duplicatePaths.size,
+    duplicates,
     rows
   };
   const paths = writeAuditReports(report);
@@ -445,6 +462,43 @@ ipcMain.handle("audit:openReport", async (_event, filePath) => {
   if (!filePath || !fs.existsSync(filePath)) return { ok: false, error: "Report file was not found." };
   await shell.openPath(filePath);
   return { ok: true, path: filePath };
+});
+
+ipcMain.handle("files:showInFolder", async (_event, filePath) => {
+  if (!filePath || !fs.existsSync(filePath)) return { ok: false, error: "File was not found." };
+  shell.showItemInFolder(filePath);
+  return { ok: true, path: filePath };
+});
+
+ipcMain.handle("files:delete", async (_event, filePaths = []) => {
+  const paths = Array.isArray(filePaths) ? filePaths.filter(Boolean) : [];
+  const results = [];
+  for (const filePath of paths) {
+    try {
+      if (!fs.existsSync(filePath)) {
+        results.push({ filePath, ok: false, error: "File was not found." });
+        continue;
+      }
+      const stat = fs.statSync(filePath);
+      if (!stat.isFile() || path.extname(filePath).toLowerCase() !== ".feedpak") {
+        results.push({ filePath, ok: false, error: "Only FeedPak files can be deleted here." });
+        continue;
+      }
+      const trashResult = await shell.trashItem(filePath);
+      results.push({ filePath, ok: trashResult === undefined || trashResult === "" });
+    } catch (error) {
+      results.push({ filePath, ok: false, error: error?.message || "Delete failed." });
+    }
+  }
+  const failed = results.filter((result) => !result.ok);
+  logDebug("files.delete", { total: results.length, failed: failed.length });
+  return {
+    ok: failed.length === 0,
+    deleted: results.length - failed.length,
+    failed: failed.length,
+    results,
+    error: failed.length ? `${failed.length} file${failed.length === 1 ? "" : "s"} could not be moved to Recycle Bin.` : null
+  };
 });
 
 ipcMain.handle("converter:convert", async (_event, payload) => {
@@ -1620,6 +1674,7 @@ async function inspectFeedpakForAudit(root, filePath, criteria) {
     filePath,
     relativePath,
     status: missing.length ? "needs-work" : "pass",
+    duplicateKey: duplicateAuditKey(preview),
     title: String(preview.title || ""),
     artist: String(preview.artist || ""),
     album: String(preview.album || ""),
@@ -1639,6 +1694,86 @@ function countAuditToneDefinitions(tones) {
   return (tones || []).reduce((total, arrangement) => total + ((arrangement.definitions || []).length), 0);
 }
 
+function duplicateGroupsFromAuditRows(rows) {
+  const grouped = new Map();
+  for (const row of rows) {
+    if (row.status === "error" || !row.duplicateKey) continue;
+    const list = grouped.get(row.duplicateKey) || [];
+    list.push(row);
+    grouped.set(row.duplicateKey, list);
+  }
+  return [...grouped.values()]
+    .filter((files) => files.length > 1)
+    .map((files) => {
+      const sorted = [...files].sort((left, right) => scoreDuplicateCandidate(right) - scoreDuplicateCandidate(left));
+      const first = sorted[0];
+      return {
+        key: first.duplicateKey,
+        artist: first.artist,
+        title: first.title,
+        album: first.album,
+        year: first.year,
+        count: sorted.length,
+        files: sorted.map((row, index) => ({
+          filePath: row.filePath,
+          relativePath: row.relativePath,
+          size: safeFileSize(row.filePath),
+          stems: row.stems,
+          stemIds: row.stemIds,
+          arrangements: row.arrangements,
+          authors: row.authors,
+          status: row.status,
+          missing: row.missing,
+          recommended: index === 0,
+          score: scoreDuplicateCandidate(row)
+        }))
+      };
+    })
+    .sort((left, right) => `${left.artist} ${left.title}`.localeCompare(`${right.artist} ${right.title}`, undefined, { sensitivity: "base" }));
+}
+
+function duplicateAuditKey(preview) {
+  const title = normalizeDuplicateText(preview.title);
+  const artist = normalizeDuplicateText(preview.artist);
+  if (!title || !artist || artist === "unknown artist") return "";
+  const album = normalizeDuplicateText(preview.album);
+  const year = String(preview.year || "").trim();
+  const durationBucket = Number.isFinite(Number(preview.duration)) ? String(Math.round(Number(preview.duration) / 5) * 5) : "";
+  return [artist, title, album, year, durationBucket].join("|");
+}
+
+function normalizeDuplicateText(value) {
+  return String(value || "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/['’`]/g, "")
+    .replace(/&/g, "and")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\b(remaster(?:ed)?|deluxe|explicit|clean|version|mono|stereo)\b/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function scoreDuplicateCandidate(row) {
+  let score = 0;
+  score += Number(row.arrangements || 0) * 10;
+  score += Number(row.stems || 0) * 3;
+  score += (row.authors || []).length * 5;
+  score += (row.stemIds || []).includes("full") ? 10 : 0;
+  score -= (row.missing || []).length * 2;
+  score += safeFileSize(row.filePath) / (1024 * 1024 * 100);
+  return score;
+}
+
+function safeFileSize(filePath) {
+  try {
+    return fs.statSync(filePath).size;
+  } catch {
+    return 0;
+  }
+}
+
 function normalizeAuditCriteria(criteria) {
   return {
     requireSpecValidation: criteria.requireSpecValidation !== false,
@@ -1649,7 +1784,8 @@ function normalizeAuditCriteria(criteria) {
     requireGuitar: criteria.requireGuitar === true,
     requireLyrics: criteria.requireLyrics === true,
     requireAuthors: criteria.requireAuthors === true,
-    requireTones: criteria.requireTones === true
+    requireTones: criteria.requireTones === true,
+    checkDuplicates: criteria.checkDuplicates === true
   };
 }
 
@@ -1660,9 +1796,10 @@ function writeAuditReports(report) {
   const csvPath = path.join(reportDir, `feedpak-library-audit-${stamp}.csv`);
   const jsonPath = path.join(reportDir, `feedpak-library-audit-${stamp}.json`);
   const csvRows = [
-    ["Status", "Artist", "Title", "Album", "Year", "Arrangements", "Stems", "Missing", "Suggestions", "Relative Path", "File Path"],
+    ["Status", "Duplicate", "Artist", "Title", "Album", "Year", "Arrangements", "Stems", "Missing", "Suggestions", "Relative Path", "File Path"],
     ...report.rows.map((row) => [
       row.status,
+      row.duplicate ? "yes" : "",
       row.artist,
       row.title,
       row.album,
