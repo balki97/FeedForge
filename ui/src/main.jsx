@@ -27,7 +27,9 @@ import "./styles.css";
 const api = window.feedbackConverter;
 const INSPECTION_WORKERS = 2;
 const QUEUE_RENDER_LIMIT = 500;
-const DEFAULT_CONVERSION_WORKERS = 2;
+const AUTO_SETTING = "auto";
+const DEFAULT_CONVERSION_WORKERS = AUTO_SETTING;
+const DEFAULT_DEMUCS_STEM_JOBS = AUTO_SETTING;
 const SETTINGS_KEY = "feedforge:desktop-settings";
 const DEFAULT_DEMUCS_STEMS = ["guitar", "bass", "drums", "vocals", "other"];
 const DEMUCS_STEM_OPTIONS = [
@@ -103,7 +105,7 @@ function App() {
   const [pythonPath, setPythonPath] = useState(() => initialSettingsRef.current.pythonPath || "");
   const [demucsModel, setDemucsModel] = useState(() => initialSettingsRef.current.demucsModel || "htdemucs_6s");
   const [demucsDevice, setDemucsDevice] = useState(() => initialSettingsRef.current.demucsDevice || "auto");
-  const [demucsStemJobs, setDemucsStemJobs] = useState(() => Number(initialSettingsRef.current.demucsStemJobs) || 1);
+  const [demucsStemJobs, setDemucsStemJobs] = useState(() => normalizeInitialStemJobs(initialSettingsRef.current));
   const [demucsStems, setDemucsStems] = useState(() => normalizeStemSelection(initialSettingsRef.current.demucsStems));
   const [demucsDevices, setDemucsDevices] = useState(defaultDemucsDevices());
   const [demucsModels, setDemucsModels] = useState([]);
@@ -121,7 +123,7 @@ function App() {
   const [auditCriteria, setAuditCriteria] = useState(() => normalizeAuditCriteria(initialSettingsRef.current.auditCriteria));
   const [auditReport, setAuditReport] = useState(null);
   const [isAuditingLibrary, setIsAuditingLibrary] = useState(false);
-  const [conversionWorkers, setConversionWorkers] = useState(DEFAULT_CONVERSION_WORKERS);
+  const [conversionWorkers, setConversionWorkers] = useState(() => normalizeAutoNumberSetting(initialSettingsRef.current.conversionWorkers, DEFAULT_CONVERSION_WORKERS));
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all");
   const [artistFilter, setArtistFilter] = useState("all");
@@ -143,8 +145,8 @@ function App() {
   }, [items]);
 
   useEffect(() => {
-    writeSettings({ outputDir, outputLayout, outputNameFormat, outputNameTemplate, lastSourcePath, bStandardTo7String, separateStems, demucsUrl, demucsInstallDir, pythonPath, demucsModel, demucsDevice, demucsStemJobs, demucsStems, auditFolder, auditCriteria });
-  }, [outputDir, outputLayout, outputNameFormat, outputNameTemplate, lastSourcePath, bStandardTo7String, separateStems, demucsUrl, demucsInstallDir, pythonPath, demucsModel, demucsDevice, demucsStemJobs, demucsStems, auditFolder, auditCriteria]);
+    writeSettings({ outputDir, outputLayout, outputNameFormat, outputNameTemplate, lastSourcePath, bStandardTo7String, separateStems, conversionWorkers, demucsUrl, demucsInstallDir, pythonPath, demucsModel, demucsDevice, demucsStemJobs, demucsStems, auditFolder, auditCriteria, performanceSettingsVersion: 2 });
+  }, [outputDir, outputLayout, outputNameFormat, outputNameTemplate, lastSourcePath, bStandardTo7String, separateStems, conversionWorkers, demucsUrl, demucsInstallDir, pythonPath, demucsModel, demucsDevice, demucsStemJobs, demucsStems, auditFolder, auditCriteria]);
 
   useEffect(() => {
     let cancelled = false;
@@ -247,7 +249,7 @@ function App() {
         if (!cancelled) setStemServerStatus((current) => ({ ...current, running: false, healthy: false }));
       }
     }
-    refresh();
+    const initialTimer = window.setTimeout(refresh, 800);
     const pollMs = (isStartingStemServer || stemServerStatus.starting || stemServerStatus.processRunning) && !stemServerStatus.healthy
       ? 1000
       : separateStems
@@ -256,6 +258,7 @@ function App() {
     const timer = window.setInterval(refresh, pollMs);
     return () => {
       cancelled = true;
+      window.clearTimeout(initialTimer);
       window.clearInterval(timer);
     };
   }, [separateStems, isStartingStemServer, stemServerStatus.starting, stemServerStatus.processRunning, stemServerStatus.healthy]);
@@ -315,7 +318,9 @@ function App() {
   const stemServerBusy = (isStartingStemServer || stemServerStatus.starting || stemServerStatus.processRunning) && !stemServerStatus.healthy;
   const selectedModel = selectedDemucsModel(demucsModels, demucsModel);
   const selectedDevice = selectedDemucsDevice(demucsDevices, demucsDevice);
-  const stemServerMatchesSelectedConfig = stemServerMatchesSelection(stemServerStatus, demucsModel, demucsDevice, demucsStemJobs);
+  const effectiveDemucsStemJobs = resolveStemJobCount(demucsStemJobs, demucsDevice, demucsDevices);
+  const effectiveConversionWorkers = resolveConversionWorkerCount(conversionWorkers, { separateStems, stemJobs: effectiveDemucsStemJobs });
+  const stemServerMatchesSelectedConfig = stemServerMatchesSelection(stemServerStatus, demucsModel, demucsDevice, effectiveDemucsStemJobs);
   const stemServerReadyForSelection = stemServerStatus.healthy && stemServerMatchesSelectedConfig;
 
   async function addFiles(paths, sourceRoot = null) {
@@ -447,11 +452,12 @@ function App() {
         ...(current.log || []).slice(-12),
         "FeedForge: preparing local stem setup",
         `FeedForge: selected model ${demucsModel}`,
-        `FeedForge: selected device ${demucsDevice}`
+        `FeedForge: selected device ${demucsDevice}`,
+        `FeedForge: stem jobs ${effectiveDemucsStemJobs}${demucsStemJobs === AUTO_SETTING ? " (auto)" : ""}`
       ]
     }));
     try {
-      const status = await api.startStemServer({ installDir: demucsInstallDir, pythonPath, model: demucsModel, device: demucsDevice, concurrency: demucsStemJobs });
+      const status = await api.startStemServer({ installDir: demucsInstallDir, pythonPath, model: demucsModel, device: demucsDevice, concurrency: effectiveDemucsStemJobs });
       setStemServerStatus(status);
       if (status.url) setDemucsUrl(status.url);
       const result = await api.getStemServerModels({ installDir: demucsInstallDir });
@@ -634,7 +640,7 @@ function App() {
     }
 
     try {
-      const workerCount = Math.min(Math.max(1, conversionWorkers), pending.length);
+      const workerCount = Math.min(Math.max(1, effectiveConversionWorkers), pending.length);
       await Promise.all(Array.from({ length: workerCount }, () => convertNext()));
     } finally {
       const stopped = stopRequestedRef.current;
@@ -900,7 +906,7 @@ function App() {
             </button>
             <button className="primary" onClick={convertQueue} disabled={!items.length || isConverting}>
               {isConverting ? <RotateCw className="spin" size={18} /> : <Download size={18} />}
-              Convert queue{isConverting ? ` (${conversionWorkers}x)` : ""}
+              Convert queue{isConverting ? ` (${effectiveConversionWorkers}x)` : ""}
             </button>
             {isConverting && (
               <button className="danger" onClick={stopConversion} disabled={isStopping}>
@@ -961,7 +967,8 @@ function App() {
                 </button>
                 <label className="select-control">
                   Workers
-                  <select value={conversionWorkers} onChange={(event) => setConversionWorkers(Number(event.target.value))} disabled={isConverting}>
+                  <select value={conversionWorkers} onChange={(event) => setConversionWorkers(normalizeAutoNumberSetting(event.target.value, DEFAULT_CONVERSION_WORKERS))} disabled={isConverting}>
+                    <option value={AUTO_SETTING}>{`Auto (${effectiveConversionWorkers})`}</option>
                     {[1, 2, 3, 4, 5, 6].map((value) => <option key={value} value={value}>{value}</option>)}
                   </select>
                 </label>
@@ -1124,13 +1131,14 @@ function App() {
                   </div>
                   <label>
                     Stem jobs
-                    <select value={demucsStemJobs} onChange={(event) => setDemucsStemJobs(Number(event.target.value))} disabled={isConverting || stemServerBusy}>
+                    <select value={demucsStemJobs} onChange={(event) => setDemucsStemJobs(normalizeAutoNumberSetting(event.target.value, DEFAULT_DEMUCS_STEM_JOBS))} disabled={isConverting || stemServerBusy}>
+                      <option value={AUTO_SETTING}>{`Auto (${effectiveDemucsStemJobs})`}</option>
                       {[1, 2, 3, 4].map((value) => <option key={value} value={value}>{value}</option>)}
                     </select>
                   </label>
                   <div className="demucs-device-note">
-                    <strong>{stemServerReadyForSelection ? `Server allows ${stemServerStatus.concurrency || 1} stem job${Number(stemServerStatus.concurrency || 1) === 1 ? "" : "s"}` : `Selected: ${demucsStemJobs} stem job${demucsStemJobs === 1 ? "" : "s"}`}</strong>
-                    <span>{stemJobHelpText(demucsStemJobs, stemServerStatus)}</span>
+                    <strong>{stemServerReadyForSelection ? `Server allows ${stemServerStatus.concurrency || 1} stem job${Number(stemServerStatus.concurrency || 1) === 1 ? "" : "s"}` : stemJobSelectionLabel(demucsStemJobs, effectiveDemucsStemJobs)}</strong>
+                    <span>{stemJobHelpText(effectiveDemucsStemJobs, stemServerStatus, demucsStemJobs === AUTO_SETTING)}</span>
                   </div>
                   <div className="demucs-install-row">
                     <label>
@@ -1245,6 +1253,7 @@ function App() {
             onReprocessFeedpakStems={reprocessFeedpakStems}
             onOrganizeByArtist={organizeLoadedFeedpaksByArtist}
             onChooseOutput={chooseOutput}
+            onRemoveItem={removeItem}
             outputDir={outputDir}
             overwrite={overwrite}
             separateStems={separateStems}
@@ -1769,6 +1778,68 @@ function selectedDemucsDevice(devices, deviceId) {
   return (devices || []).find((device) => device.id === deviceId) || defaultDemucsDevices()[0];
 }
 
+function normalizeAutoNumberSetting(value, fallback = AUTO_SETTING) {
+  if (value === AUTO_SETTING || value === undefined || value === null || value === "") {
+    return fallback;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(1, Math.floor(parsed));
+}
+
+function normalizeInitialStemJobs(settings) {
+  const normalized = normalizeAutoNumberSetting(settings?.demucsStemJobs, DEFAULT_DEMUCS_STEM_JOBS);
+  if ((settings?.performanceSettingsVersion || 0) < 2 && normalized === 1) {
+    return AUTO_SETTING;
+  }
+  return normalized;
+}
+
+function hostCpuCount() {
+  return Math.max(2, Number(window.navigator?.hardwareConcurrency) || 4);
+}
+
+function resolveConversionWorkerCount(setting, options = {}) {
+  const manual = normalizeAutoNumberSetting(setting, AUTO_SETTING);
+  if (manual !== AUTO_SETTING) return Math.max(1, Math.min(Number(manual), 8));
+
+  const cores = hostCpuCount();
+  const base = cores >= 16 ? 6 : cores >= 10 ? 5 : cores >= 6 ? 4 : 2;
+  if (!options.separateStems) return base;
+
+  const stemJobs = Math.max(1, Number(options.stemJobs || 1));
+  return Math.max(2, Math.min(base, stemJobs + 1, 4));
+}
+
+function resolveStemJobCount(setting, deviceId, devices) {
+  const manual = normalizeAutoNumberSetting(setting, AUTO_SETTING);
+  if (manual !== AUTO_SETTING) return Math.max(1, Math.min(Number(manual), 4));
+
+  const device = autoResolvedStemDevice(deviceId, devices);
+  const id = String(device?.id || deviceId || "").toLowerCase();
+  const memoryGb = deviceMemoryGb(device);
+  if (id === "cpu" || device?.kind === "cpu") return 1;
+  if ((device?.kind === "cuda" || id.startsWith("cuda")) && memoryGb >= 16) return 2;
+  return 1;
+}
+
+function autoResolvedStemDevice(deviceId, devices) {
+  const list = Array.isArray(devices) ? devices : [];
+  if (deviceId && deviceId !== AUTO_SETTING) {
+    return selectedDemucsDevice(list, deviceId);
+  }
+  return list.find((device) => device.kind === "cuda" && device.recommended)
+    || list.find((device) => String(device.id || "").startsWith("cuda"))
+    || selectedDemucsDevice(list, AUTO_SETTING);
+}
+
+function deviceMemoryGb(device) {
+  const direct = Number(device?.memory_gb);
+  if (Number.isFinite(direct) && direct > 0) return direct;
+  const detailMatch = String(device?.detail || "").match(/([\d.]+)\s*GB/i);
+  return detailMatch ? Number(detailMatch[1]) || 0 : 0;
+}
+
 function mergeDemucsDevices(current, accelerators) {
   const byId = new Map();
   for (const device of [...defaultDemucsDevices(), ...(current || [])]) {
@@ -1816,6 +1887,14 @@ function stemJobHelpText(value, status) {
     return "Faster on strong GPUs, higher VRAM use.";
   }
   return "High VRAM use. May be slower or fail on smaller GPUs.";
+}
+
+function stemJobSelectionLabel(setting, effectiveJobs) {
+  const jobs = Number(effectiveJobs || 1);
+  if (setting === AUTO_SETTING) {
+    return `Auto selected ${jobs} stem job${jobs === 1 ? "" : "s"}`;
+  }
+  return `Selected: ${jobs} stem job${jobs === 1 ? "" : "s"}`;
 }
 
 function resolvedDeviceLabel(status) {
@@ -1917,6 +1996,7 @@ function FeedPakTools({
   onReprocessFeedpakStems,
   onOrganizeByArtist,
   onChooseOutput,
+  onRemoveItem,
   outputDir,
   overwrite,
   separateStems,
@@ -1961,15 +2041,24 @@ function FeedPakTools({
           <span>Loaded</span>
           <div className="feedpak-strip" aria-label="Imported FeedPaks">
             {feedpakItems.map((entry) => (
-              <button
+              <div
                 key={entry.id}
-                className={selectedId === entry.id ? "active" : ""}
-                onClick={() => onSelect(entry.id)}
+                className={`feedpak-chip ${selectedId === entry.id ? "active" : ""}`}
                 title={entry.path}
               >
-                <strong>{entry.preview?.title || entry.name}</strong>
-                <span>{entry.preview?.artist || "Unknown artist"}</span>
-              </button>
+                <button className="feedpak-chip-main" onClick={() => onSelect(entry.id)}>
+                  <strong>{entry.preview?.title || entry.name}</strong>
+                  <span>{entry.preview?.artist || "Unknown artist"}</span>
+                </button>
+                <button
+                  className="feedpak-chip-remove"
+                  onClick={() => onRemoveItem(entry.id)}
+                  title={`Close ${entry.preview?.title || entry.name}`}
+                  aria-label={`Close ${entry.preview?.title || entry.name}`}
+                >
+                  <XCircle size={15} />
+                </button>
+              </div>
             ))}
           </div>
         </div>

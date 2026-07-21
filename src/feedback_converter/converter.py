@@ -1598,6 +1598,9 @@ def _note_to_feedpak(note: Any) -> dict[str, Any]:
     bend = _bend_value(note)
     if bend:
         out["bn"] = bend
+    bend_curve = _bend_curve(float(note.time), note.bends)
+    if bend_curve:
+        out["bnv"] = bend_curve
     if int(note.leftHand) >= 0:
         out["fg"] = int(note.leftHand)
     _apply_note_mask(out, int(note.mask))
@@ -1619,6 +1622,14 @@ def _chord_notes(song: Any, note: Any, chord_id: int) -> list[dict[str, Any]]:
                 entry["sl"] = int(chord_note.slideTo[string])
             if int(chord_note.slideUnpitchTo[string]) >= 0:
                 entry["slu"] = int(chord_note.slideUnpitchTo[string])
+            bend_source = chord_note.bends[string]
+            bend_values = list(bend_source.bendValues[: int(bend_source.count)])
+            bend = _bend_value_from_points(bend_values)
+            if bend:
+                entry["bn"] = bend
+            bend_curve = _bend_curve(float(note.time), bend_values)
+            if bend_curve:
+                entry["bnv"] = bend_curve
             _apply_note_mask(entry, int(chord_note.mask[string]) | int(note.mask))
             notes.append(entry)
         return notes
@@ -1669,6 +1680,35 @@ def _bend_value(note: Any) -> float | None:
     if float(note.bend_time or 0.0) > 0:
         return _num(note.bend_time)
     return None
+
+
+def _bend_value_from_points(bends: Any) -> float | None:
+    values = [float(b.step) for b in bends if float(b.step) != 0.0]
+    if values:
+        return _num(max(values, key=abs))
+    return None
+
+
+def _bend_curve(note_time: float, bends: Any) -> list[dict[str, float]] | None:
+    points = []
+    last: tuple[float, float] | None = None
+    for bend in bends:
+        step = float(bend.step)
+        time_value = float(bend.time)
+        relative_time = time_value - note_time
+        if relative_time < -0.001:
+            relative_time = time_value
+        relative_time = max(0.0, relative_time)
+        point = (_num(relative_time), _num(step))
+        if last == point:
+            continue
+        points.append({"t": point[0], "v": point[1]})
+        last = point
+    if len(points) < 2:
+        return None
+    if not any(abs(float(point["v"])) > 0 for point in points):
+        return None
+    return points
 
 
 def _template_to_feedpak(template: Any) -> dict[str, Any]:

@@ -7,6 +7,7 @@ const path = require("path");
 
 let mainWindow;
 let inspectCacheRoot;
+let inspectCacheTouched = false;
 let debugLogPath;
 let stemServerProcess = null;
 let stemServerStarting = false;
@@ -118,10 +119,12 @@ app.whenReady().then(() => {
     platform: process.platform,
     arch: process.arch
   });
-  cleanupStalePortableArtifacts();
   inspectCacheRoot = path.join(app.getPath("temp"), "feedforge-inspect-cache");
-  resetDirectory(inspectCacheRoot);
   createWindow();
+  setTimeout(() => {
+    cleanupStalePortableArtifacts();
+    if (!inspectCacheTouched) removeDirectory(inspectCacheRoot);
+  }, 2500);
 });
 app.whenReady().then(() => Menu.setApplicationMenu(null));
 app.on("before-quit", () => {
@@ -1928,6 +1931,7 @@ function parseJson(value) {
 }
 
 function createInspectionFolder(inputPath) {
+  inspectCacheTouched = true;
   if (!inspectCacheRoot) {
     inspectCacheRoot = path.join(app.getPath("temp"), "feedforge-inspect-cache");
   }

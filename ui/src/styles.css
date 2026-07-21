@@ -2187,10 +2187,12 @@ button:disabled {
 }
 
 .feedpak-tools-page {
+  min-width: 0;
   max-width: 1460px;
   margin: 16px auto 0;
   display: grid;
   gap: 12px;
+  overflow-x: hidden;
 }
 
 .tools-head {
@@ -2276,10 +2278,10 @@ button:disabled {
 }
 
 .feedpak-picker {
-  width: min(100%, 640px);
+  width: 100%;
   max-width: 100%;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 12px;
   padding: 8px 10px;
   border: 1px solid rgba(151, 174, 205, 0.12);
@@ -2296,39 +2298,70 @@ button:disabled {
 }
 
 .feedpak-strip {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(176px, 1fr));
   gap: 8px;
   flex: 1 1 auto;
   min-width: 0;
-  overflow-x: auto;
-  padding: 1px 0 4px;
+  max-height: 156px;
+  overflow: auto;
+  padding: 1px 2px 4px;
 }
 
-.feedpak-strip button {
-  min-width: 176px;
+.feedpak-chip {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
+  gap: 6px;
+  padding: 0;
+  border: 1px solid rgba(127, 179, 255, 0.12);
+  border-radius: 12px;
+  background: rgba(21, 35, 55, 0.8);
+}
+
+.feedpak-chip-main {
+  min-width: 0;
   justify-content: flex-start;
   display: grid;
   gap: 4px;
   text-align: left;
   padding: 8px 10px;
   border-radius: 12px;
-  background: rgba(21, 35, 55, 0.8);
+  border: 0;
+  background: transparent;
 }
 
-.feedpak-strip button strong,
-.feedpak-strip button span {
+.feedpak-chip-remove {
+  width: 34px;
+  min-height: 100%;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-left: 1px solid rgba(127, 179, 255, 0.12);
+  border-radius: 0 12px 12px 0;
+  background: rgba(255, 91, 124, 0.08);
+  color: #ff8ca4;
+}
+
+.feedpak-chip-remove:hover {
+  background: rgba(255, 91, 124, 0.16);
+}
+
+.feedpak-chip-main strong,
+.feedpak-chip-main span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.feedpak-strip button span {
+.feedpak-chip-main span {
   color: var(--muted);
   font-size: 12px;
 }
 
-.feedpak-strip button.active {
+.feedpak-chip.active {
   border-color: #2388ba;
   background: rgba(22, 169, 232, 0.16);
 }
@@ -2360,6 +2393,7 @@ button:disabled {
 
 .feedpak-tools-grid .inspector {
   width: 100%;
+  min-width: 0;
   max-width: none;
   display: grid;
   grid-template-columns: minmax(260px, 330px) minmax(0, 1fr);
@@ -2478,11 +2512,14 @@ button:disabled {
   grid-column: 2;
   grid-row: 1;
   align-self: start;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .feedpak-tools-grid .inspector-content > .panel,
 .feedpak-tools-grid .inspector-content > .error-box {
   min-width: 0;
+  max-width: 100%;
 }
 
 .tone-panel {
@@ -2944,8 +2981,16 @@ button:disabled {
 }
 
 .stem-row.editable {
-  grid-template-columns: minmax(220px, 1fr) minmax(130px, 0.42fr) minmax(74px, auto) auto auto;
+  grid-template-columns: minmax(160px, 1fr) minmax(110px, 0.42fr) minmax(64px, auto) auto auto;
+  min-width: 0;
   border-radius: 12px;
+}
+
+.stem-row.editable > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .stem-row.editable > div {
