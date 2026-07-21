@@ -2072,8 +2072,10 @@ def _maybe_separate_stems(
             )
         )
 
+    returned_ids = {stem_id for stem_id, _ in stems}
+    complete_split = _has_complete_stem_mix(returned_ids)
     full_mix = dict(full_entry)
-    full_mix["default"] = False
+    full_mix["default"] = not complete_split
     stem_entries: list[dict[str, Any]] = [full_mix]
     for stem_id, rel_file in stems:
         stem_entries.append(
@@ -2081,7 +2083,7 @@ def _maybe_separate_stems(
                 "id": stem_id,
                 "file": rel_file,
                 "codec": _codec_for_audio_path(rel_file),
-                "default": True,
+                "default": complete_split,
             }
         )
     stem_entries.sort(key=lambda item: _stem_sort_key(str(item["id"])))
@@ -2164,6 +2166,13 @@ def _normalize_demucs_stems(stems: list[str] | None) -> list[str]:
         if value in allowed and value not in requested:
             requested.append(value)
     return requested or ["guitar", "bass", "drums", "vocals", "other"]
+
+
+def _has_complete_stem_mix(stem_ids: set[str]) -> bool:
+    ids = {str(stem_id).strip().lower() for stem_id in stem_ids}
+    if {"guitar", "bass", "drums", "vocals", "other"}.issubset(ids):
+        return True
+    return {"guitar", "bass", "drums", "vocals", "piano", "other"}.issubset(ids)
 
 
 def _normalize_demucs_model(model: str | None) -> str:
