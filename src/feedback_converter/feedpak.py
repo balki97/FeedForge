@@ -709,14 +709,13 @@ def _apply_stem_edits(
             "id": stem_id,
             "file": target.relative_to(package_dir).as_posix(),
             "codec": _codec_for_audio_path(target),
-            "default": bool(update.get("default", stem_id != "full")),
+            "default": bool(update.get("default", False)),
         }
 
     if stem_updates or remove_stems:
         if "full" not in by_id:
             raise ValueError("FeedPak packages must contain stems/full.")
-        if len(by_id) > 1:
-            by_id["full"]["default"] = False
+        by_id["full"]["default"] = False
         manifest["stems"] = [by_id["full"]] + [by_id[key] for key in sorted(by_id) if key != "full"]
 
 
