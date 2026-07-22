@@ -14,6 +14,7 @@ from .converter import (
     ConversionWarning,
     _codec_for_audio_path,
     _maybe_separate_stems,
+    _safe_output_stem,
     _write_manifest,
     _zip_dir,
 )
@@ -25,6 +26,13 @@ class FeedpakEditResult:
     output_path: Path
     warnings: list[ConversionWarning] = field(default_factory=list)
     validation: FeedpakValidationResult | None = None
+
+
+@dataclass
+class FeedpakAudioExportResult:
+    output_path: Path
+    stem_id: str
+    warnings: list[ConversionWarning] = field(default_factory=list)
 
 
 METADATA_FIELDS = ("title", "artist", "album", "year", "duration", "language")
@@ -162,6 +170,35 @@ def update_feedpak(
     return FeedpakEditResult(output_path=target, warnings=warnings, validation=validation)
 
 
+def export_feedpak_audio(
+    input_path: Path,
+    output: Path | None = None,
+    *,
+    overwrite: bool = False,
+    stem_id: str = "full",
+) -> FeedpakAudioExportResult:
+    """Export a listenable audio stem from an existing FeedPak."""
+    input_path = Path(input_path)
+    with _open_feedpak(input_path) as package_dir:
+        manifest = _read_manifest(package_dir)
+        stem = _select_stem_for_export(manifest, stem_id)
+        rel_file = _safe_archive_name(str(stem.get("file") or ""))
+        if not rel_file:
+            raise ValueError("Selected FeedPak stem does not have a file path.")
+        source = package_dir / rel_file
+        if not source.is_file():
+            raise FileNotFoundError(f"Selected FeedPak stem file was not found: {rel_file}")
+        ext = source.suffix.lower()
+        if ext not in AUDIO_SUFFIXES:
+            raise ValueError(f"Selected FeedPak stem is not a supported audio file: {rel_file}")
+        target = _feedpak_audio_output_path(input_path, output, manifest, stem, ext)
+        if target.exists() and not overwrite:
+            raise FileExistsError(f"Output already exists: {target}")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
+        return FeedpakAudioExportResult(target, str(stem.get("id") or Path(rel_file).stem))
+
+
 class _FeedpakContext:
     def __init__(self, input_path: Path) -> None:
         self.input_path = Path(input_path)
@@ -216,6 +253,43 @@ def _write_package(package_dir: Path, target: Path, *, overwrite: bool) -> None:
         _zip_dir(package_dir, target)
     else:
         shutil.copytree(package_dir, target)
+
+
+def _select_stem_for_export(manifest: dict[str, Any], stem_id: str) -> dict[str, Any]:
+    stems = [stem for stem in manifest.get("stems") or [] if isinstance(stem, dict)]
+    if not stems:
+        raise ValueError("FeedPak does not list any audio stems.")
+    wanted = str(stem_id or "full").lower()
+    for stem in stems:
+        if str(stem.get("id") or "").lower() == wanted:
+            return stem
+    if wanted == "full":
+        for stem in stems:
+            if Path(str(stem.get("file") or "")).stem.lower() == "full":
+                return stem
+    return stems[0]
+
+
+def _feedpak_audio_output_path(
+    input_path: Path,
+    output: Path | None,
+    manifest: dict[str, Any],
+    stem: dict[str, Any],
+    extension: str,
+) -> Path:
+    stem_id = str(stem.get("id") or Path(str(stem.get("file") or "audio")).stem or "audio")
+    source_stem = input_path.stem if input_path.suffix else input_path.name
+    title = str(manifest.get("title") or source_stem)
+    artist = str(manifest.get("artist") or "")
+    base_name = _safe_output_stem(" - ".join(part for part in (artist, title) if part) or source_stem)
+    if stem_id.lower() != "full":
+        base_name = f"{base_name} - {_safe_output_stem(stem_id)}"
+    if output is None:
+        return input_path.parent / f"{base_name}{extension}"
+    output = Path(output)
+    if output.suffix:
+        return output
+    return output / f"{base_name}{extension}"
 
 
 def _read_manifest(package_dir: Path) -> dict[str, Any]:
@@ -635,12 +709,14 @@ def _apply_stem_edits(
             "id": stem_id,
             "file": target.relative_to(package_dir).as_posix(),
             "codec": _codec_for_audio_path(target),
-            "default": True if stem_id == "full" else bool(update.get("default")),
+            "default": bool(update.get("default", stem_id != "full")),
         }
 
     if stem_updates or remove_stems:
         if "full" not in by_id:
             raise ValueError("FeedPak packages must contain stems/full.")
+        if len(by_id) > 1:
+            by_id["full"]["default"] = False
         manifest["stems"] = [by_id["full"]] + [by_id[key] for key in sorted(by_id) if key != "full"]
 
 

@@ -13,8 +13,8 @@ if __package__ in (None, ""):
 
 from feedback_converter import __version__
 from feedback_converter.batch import _batch_output_path, convert_many
-from feedback_converter.converter import convert_psarc, convert_psarc_songs
-from feedback_converter.feedpak import inspect_feedpak, update_feedpak
+from feedback_converter.converter import convert_psarc, convert_psarc_songs, export_psarc_audio
+from feedback_converter.feedpak import export_feedpak_audio, inspect_feedpak, update_feedpak
 from feedback_converter.feedpak_validator import validate_feedpak
 from feedback_converter.inspector import inspect_psarc
 
@@ -89,6 +89,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--overwrite",
         action="store_true",
         help="Overwrite an existing output path.",
+    )
+    parser.add_argument(
+        "--export-audio",
+        action="store_true",
+        help="Export listenable audio from PSARC CDLC archives instead of building FeedPaks.",
     )
     parser.add_argument(
         "--output-layout",
@@ -233,6 +238,37 @@ def main(argv: list[str] | None = None) -> int:
     if len(input_paths) > 1 and output_arg is not None and output_arg.suffix:
         parser.error("--output must be a folder when converting multiple inputs")
 
+    if args.export_audio:
+        ok = True
+        for input_path in input_paths:
+            try:
+                if input_path.suffix.lower() == ".feedpak" or input_path.is_dir():
+                    result = export_feedpak_audio(
+                        input_path,
+                        _single_audio_output_path(input_path, output_arg, args.name_template, len(input_paths)),
+                        overwrite=args.overwrite,
+                    )
+                    results = [result]
+                else:
+                    results = export_psarc_audio(
+                        input_path,
+                        _single_audio_output_path(input_path, output_arg, args.name_template, len(input_paths)),
+                        overwrite=args.overwrite,
+                        output_layout=args.output_layout,
+                        source_root=Path(args.source_root) if args.source_root else None,
+                        name_template=args.name_template,
+                        rs1_songs_psarc=Path(args.rs1_songs_psarc) if args.rs1_songs_psarc else None,
+                    )
+            except Exception as exc:  # noqa: BLE001
+                _print(f"error exporting audio {input_path}: {exc}", stream=sys.stderr)
+                ok = False
+                continue
+            for result in results:
+                _print(f"wrote {result.output_path}")
+                for warning in result.warnings:
+                    _print(f"warning: {warning.message}", stream=sys.stderr)
+        return 0 if ok else 1
+
     if len(input_paths) == 1:
         output_path = _single_output_path(input_paths[0], output_arg, args.name_template)
         if input_paths[0].suffix.lower() == ".feedpak" or input_paths[0].is_dir():
@@ -328,6 +364,18 @@ def _single_output_path(input_path: Path, output_arg: Path | None, name_template
         return _batch_output_path(input_path, output_arg, "flat", None, name_template)
     if not output_arg.suffix:
         return _batch_output_path(input_path, output_arg, "flat", None, name_template)
+    return output_arg
+
+
+def _single_audio_output_path(input_path: Path, output_arg: Path | None, name_template: str, input_count: int) -> Path | None:
+    if output_arg is None:
+        return None
+    if input_count > 1:
+        return output_arg
+    if output_arg.exists() and output_arg.is_dir():
+        return output_arg
+    if not output_arg.suffix:
+        return output_arg
     return output_arg
 
 

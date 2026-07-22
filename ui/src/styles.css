@@ -1837,6 +1837,19 @@ button:disabled {
   color: var(--muted);
 }
 
+.panel-title-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.compact-action {
+  min-height: 34px;
+  padding: 7px 12px;
+  border-radius: 10px;
+  font-size: 13px;
+}
+
 .queue {
   max-height: 390px;
   overflow-y: auto;
@@ -1851,7 +1864,7 @@ button:disabled {
   border-radius: 0;
   background: transparent;
   display: grid;
-  grid-template-columns: 26px minmax(0, 1fr) minmax(72px, auto) 34px;
+  grid-template-columns: 26px minmax(0, 1fr) minmax(72px, auto) 32px 32px;
   gap: 12px;
   padding: 14px 16px;
   text-align: left;
@@ -1866,6 +1879,7 @@ button:disabled {
   transform: translateX(3px);
 }
 
+.queue-export,
 .queue-remove {
   width: 28px;
   height: 28px;
@@ -1879,6 +1893,19 @@ button:disabled {
   background: rgba(255, 154, 154, 0.08);
   opacity: 0.82;
   transition: opacity 0.16s ease, background 0.16s ease;
+}
+
+.queue-export {
+  border-color: rgba(83, 199, 255, 0.35);
+  color: #8bdcff;
+  background: rgba(34, 157, 219, 0.1);
+}
+
+.queue-export:hover,
+.queue-export:focus-visible {
+  opacity: 1;
+  background: rgba(34, 157, 219, 0.2);
+  outline: 0;
 }
 
 .queue-remove:hover,

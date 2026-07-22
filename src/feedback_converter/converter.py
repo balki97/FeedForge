@@ -75,6 +75,15 @@ class ConversionResult:
     validation: FeedpakValidationResult | None = None
 
 
+@dataclass
+class AudioExportResult:
+    output_path: Path
+    source_path: str
+    title: str
+    artist: str
+    warnings: list[ConversionWarning] = field(default_factory=list)
+
+
 def convert_psarc_songs(
     input_psarc: Path,
     output: Path | None = None,
@@ -155,6 +164,60 @@ def convert_psarc_songs(
             _cleanup_output(output, archive=archive, keep_workdir=keep_workdir)
             raise
         results.append(result)
+    return results
+
+
+def export_psarc_audio(
+    input_psarc: Path,
+    output: Path | None = None,
+    *,
+    overwrite: bool = False,
+    output_layout: str = "flat",
+    source_root: Path | None = None,
+    name_template: str = "{artist} - {title}",
+    rs1_songs_psarc: Path | None = None,
+) -> list[AudioExportResult]:
+    """Extract listenable full-mix audio from a PSARC CDLC archive."""
+    input_psarc = Path(input_psarc)
+    if not input_psarc.is_file():
+        raise FileNotFoundError(f"PSARC file not found: {input_psarc}")
+    with input_psarc.open("rb") as fh:
+        content = PSARC(crypto=True).parse_stream(fh)
+    rs1_songs_content = _load_rs1_songs_content(input_psarc, content, rs1_songs_psarc)
+
+    groups = _playable_song_groups(_song_groups(content))
+    if len(groups) <= 1:
+        song_entries = [
+            (input_psarc.stem, _content_with_rs1_audio(content, input_psarc.stem, rs1_songs_content))
+        ]
+    else:
+        song_entries = [
+            (key, _content_for_song_group(content, key, paths, rs1_songs_content=rs1_songs_content))
+            for key, paths in sorted(groups.items())
+        ]
+
+    output = Path(output) if output else None
+    output_is_file = bool(output and output.suffix and len(song_entries) == 1)
+    base_dir = input_psarc.parent if output is None else (output.parent if output.suffix else output)
+    reserved_outputs: set[Path] = set()
+    results: list[AudioExportResult] = []
+    for key, song_content in song_entries:
+        metadata = _extract_metadata(song_content)
+        title = str(metadata.get("title") or _metadata_song_title(song_content) or key or input_psarc.stem)
+        artist = str(metadata.get("artist") or "")
+        target = output if output_is_file else _audio_output_path(
+            input_psarc,
+            base_dir,
+            key,
+            metadata,
+            output_layout=output_layout,
+            source_root=source_root,
+            name_template=name_template,
+        )
+        target = _unique_output_path(target, reserved_outputs, overwrite=overwrite)
+        warnings: list[ConversionWarning] = []
+        written = _export_audio_from_content(song_content, target, warnings, overwrite=overwrite)
+        results.append(AudioExportResult(written, key, title, artist, warnings))
     return results
 
 
@@ -613,6 +676,57 @@ def _safe_output_stem(value: str) -> str:
     normalized = unicodedata.normalize("NFKD", str(value or "")).encode("ascii", "ignore").decode("ascii")
     safe = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", normalized).strip(" ._")
     return safe[:120] or "converted"
+
+
+def _audio_output_path(
+    input_psarc: Path,
+    base_dir: Path,
+    key: str,
+    metadata: dict[str, Any],
+    *,
+    output_layout: str,
+    source_root: Path | None,
+    name_template: str,
+) -> Path:
+    folder = Path(base_dir)
+    if output_layout == "artist":
+        folder = folder / _safe_output_stem(str(metadata.get("artist") or "Unknown Artist"))
+    elif output_layout == "preserve" and source_root:
+        try:
+            relative_dir = input_psarc.parent.resolve().relative_to(Path(source_root).resolve())
+        except ValueError:
+            relative_dir = Path()
+        if relative_dir.parts:
+            folder = folder / relative_dir
+    name = _render_output_template(name_template, metadata, input_psarc=input_psarc, fallback=key)
+    return folder / f"{name}.ogg"
+
+
+def _render_output_template(
+    template: str,
+    metadata: dict[str, Any],
+    *,
+    input_psarc: Path,
+    fallback: str,
+) -> str:
+    values = {
+        "artist": str(metadata.get("artist") or "").strip(),
+        "title": str(metadata.get("title") or "").strip(),
+        "album": str(metadata.get("album") or "").strip(),
+        "year": str(metadata.get("year") or "").strip(),
+        "source": input_psarc.stem,
+    }
+    if not template:
+        template = "{artist} - {title}"
+    rendered = re.sub(
+        r"\{(artist|title|album|year|source)\}",
+        lambda match: values.get(match.group(1).lower(), ""),
+        template,
+        flags=re.IGNORECASE,
+    )
+    if not rendered.strip(" -_."):
+        rendered = values["title"] or fallback or values["source"]
+    return _safe_output_stem(rendered)
 
 
 def _is_vocal_sng(path: str, song: Any) -> bool:
@@ -2019,6 +2133,56 @@ def _copy_audio(
     )
 
 
+def _export_audio_from_content(
+    content: dict[str, bytes],
+    output_path: Path,
+    warnings: list[ConversionWarning],
+    *,
+    overwrite: bool,
+) -> Path:
+    audio = [
+        (path, data)
+        for path, data in content.items()
+        if path.lower().endswith((".wem", ".ogg", ".wav", ".mp3", ".flac", ".opus"))
+    ]
+    if not audio:
+        raise ValueError("No audio file found in PSARC.")
+
+    path, data = _select_primary_audio(audio)
+    ext = Path(path).suffix.lower() or ".bin"
+    target = Path(output_path)
+    if ext != ".wem":
+        target = target.with_suffix(ext)
+    if target.exists() and not overwrite:
+        raise FileExistsError(f"Output already exists: {target}")
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    if ext == ".wem":
+        workdir = target.with_suffix(target.suffix + ".work")
+        if workdir.exists():
+            if not overwrite:
+                raise FileExistsError(f"Temporary output already exists: {workdir}")
+            shutil.rmtree(workdir, ignore_errors=True)
+        workdir.mkdir(parents=True, exist_ok=True)
+        temp_ogg = workdir / "audio.ogg"
+        try:
+            if not _convert_wem_bytes_to_ogg(data, temp_ogg):
+                raise ValueError("Could not decode WEM audio to OGG.")
+            if target.exists():
+                target.unlink()
+            temp_ogg.replace(target)
+        finally:
+            shutil.rmtree(workdir, ignore_errors=True)
+        return target
+
+    target.write_bytes(data)
+    if ext != ".ogg":
+        warnings.append(
+            ConversionWarning(f"Exported original {ext.lstrip('.').upper()} audio because this package was not WEM/OGG.")
+        )
+    return target
+
+
 def _maybe_separate_stems(
     package_dir: Path,
     full_entry: dict[str, Any],
@@ -2072,10 +2236,8 @@ def _maybe_separate_stems(
             )
         )
 
-    returned_ids = {stem_id for stem_id, _ in stems}
-    complete_split = _has_complete_stem_mix(returned_ids)
     full_mix = dict(full_entry)
-    full_mix["default"] = not complete_split
+    full_mix["default"] = False
     stem_entries: list[dict[str, Any]] = [full_mix]
     for stem_id, rel_file in stems:
         stem_entries.append(
@@ -2083,7 +2245,7 @@ def _maybe_separate_stems(
                 "id": stem_id,
                 "file": rel_file,
                 "codec": _codec_for_audio_path(rel_file),
-                "default": complete_split,
+                "default": True,
             }
         )
     stem_entries.sort(key=lambda item: _stem_sort_key(str(item["id"])))
@@ -2166,13 +2328,6 @@ def _normalize_demucs_stems(stems: list[str] | None) -> list[str]:
         if value in allowed and value not in requested:
             requested.append(value)
     return requested or ["guitar", "bass", "drums", "vocals", "other"]
-
-
-def _has_complete_stem_mix(stem_ids: set[str]) -> bool:
-    ids = {str(stem_id).strip().lower() for stem_id in stem_ids}
-    if {"guitar", "bass", "drums", "vocals", "other"}.issubset(ids):
-        return True
-    return {"guitar", "bass", "drums", "vocals", "piano", "other"}.issubset(ids)
 
 
 def _normalize_demucs_model(model: str | None) -> str:

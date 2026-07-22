@@ -656,6 +656,145 @@ function App() {
     }
   }
 
+  async function exportAudioQueue() {
+    if (!items.length || isConverting) return;
+    const pending = [];
+    const pendingPaths = new Set();
+    for (const item of itemsRef.current) {
+      if (item.status === "converting") continue;
+      const key = normalizePathKey(item.path);
+      if (pendingPaths.has(key)) continue;
+      pendingPaths.add(key);
+      pending.push(item);
+    }
+    if (!pending.length) return;
+    isConvertingRef.current = true;
+    stopRequestedRef.current = false;
+    setIsStopping(false);
+    setIsConverting(true);
+    setConversionProgress({ total: pending.length, completed: 0, failed: 0, active: [], stopped: false });
+    const batchSourceRoot = commonAncestorDir(pending.map((item) => item.path));
+    const nameTemplate = outputNameTemplateForFormat(outputNameFormat, outputNameTemplate);
+    let index = 0;
+
+    async function exportNext() {
+      if (stopRequestedRef.current) return;
+      const item = pending[index];
+      index += 1;
+      if (!item) return;
+      updateItem(item.id, { status: "converting", error: null, message: null });
+      setConversionProgress((current) => ({
+        ...current,
+        active: [...current.active.filter((entry) => entry.id !== item.id), { id: item.id, name: item.preview?.title || item.name, artist: item.preview?.artist || "" }]
+      }));
+      let failed = false;
+      try {
+        const result = await api.exportAudio({
+          inputPath: item.path,
+          outputPath: outputDir || null,
+          overwrite,
+          outputLayout,
+          sourceRoot: item.sourceRoot || batchSourceRoot,
+          nameTemplate
+        });
+        if (!result.ok) {
+          failed = true;
+          updateItem(item.id, { status: "failed", error: result.error });
+        } else {
+          const warnings = Array.isArray(result.warnings) ? result.warnings.filter(Boolean) : [];
+          const outputPaths = Array.isArray(result.outputPaths) ? result.outputPaths.filter(Boolean) : [];
+          const outputFolder = outputPaths.length ? parentDir(outputPaths[0]) : "";
+          updateItem(item.id, {
+            status: "converted",
+            outputPath: result.outputPath || outputPaths[0] || null,
+            outputPaths,
+            message: outputPaths.length > 1
+              ? `Exported ${outputPaths.length} audio files${outputFolder ? ` in ${outputFolder}` : ""}.`
+              : "Exported audio.",
+            error: warnings.length ? warnings.join("\n") : null
+          });
+        }
+      } catch (error) {
+        failed = true;
+        updateItem(item.id, { status: "failed", error: error?.message || "Audio export failed." });
+      } finally {
+        setConversionProgress((current) => ({
+          ...current,
+          completed: Math.min(current.total, current.completed + 1),
+          failed: current.failed + (failed ? 1 : 0),
+          active: current.active.filter((entry) => entry.id !== item.id)
+        }));
+      }
+      if (stopRequestedRef.current) return;
+      await exportNext();
+    }
+
+    try {
+      const workerCount = Math.min(Math.max(1, effectiveConversionWorkers), pending.length);
+      await Promise.all(Array.from({ length: workerCount }, () => exportNext()));
+    } finally {
+      const stopped = stopRequestedRef.current;
+      isConvertingRef.current = false;
+      stopRequestedRef.current = false;
+      setIsStopping(false);
+      setIsConverting(false);
+      setConversionProgress((current) => ({ ...current, active: [], stopped }));
+      pumpInspectionQueue();
+    }
+  }
+
+  async function exportAudioItem(item) {
+    if (!item || isConverting) return;
+    isConvertingRef.current = true;
+    stopRequestedRef.current = false;
+    setIsStopping(false);
+    setIsConverting(true);
+    setConversionProgress({
+      total: 1,
+      completed: 0,
+      failed: 0,
+      active: [{ id: item.id, name: item.preview?.title || item.name, artist: item.preview?.artist || "" }],
+      stopped: false
+    });
+    updateItem(item.id, { status: "converting", error: null, message: null });
+    let failed = false;
+    try {
+      const nameTemplate = outputNameTemplateForFormat(outputNameFormat, outputNameTemplate);
+      const result = await api.exportAudio({
+        inputPath: item.path,
+        outputPath: outputDir || null,
+        overwrite,
+        outputLayout,
+        sourceRoot: item.sourceRoot || parentDir(item.path),
+        nameTemplate
+      });
+      if (!result.ok) {
+        failed = true;
+        updateItem(item.id, { status: "failed", error: result.error });
+      } else {
+        const warnings = Array.isArray(result.warnings) ? result.warnings.filter(Boolean) : [];
+        const outputPaths = Array.isArray(result.outputPaths) ? result.outputPaths.filter(Boolean) : [];
+        updateItem(item.id, {
+          status: "converted",
+          outputPath: result.outputPath || outputPaths[0] || null,
+          outputPaths,
+          message: outputPaths.length > 1 ? `Exported ${outputPaths.length} audio files.` : "Exported audio.",
+          error: warnings.length ? warnings.join("\n") : null
+        });
+      }
+    } catch (error) {
+      failed = true;
+      updateItem(item.id, { status: "failed", error: error?.message || "Audio export failed." });
+    } finally {
+      isConvertingRef.current = false;
+      stopRequestedRef.current = false;
+      setIsStopping(false);
+      setIsConverting(false);
+      setConversionProgress({ total: 1, completed: 1, failed: failed ? 1 : 0, active: [], stopped: false });
+      pumpInspectionQueue();
+    }
+  }
+
   function stopConversion() {
     stopRequestedRef.current = true;
     setIsStopping(true);
@@ -1294,7 +1433,16 @@ function App() {
             <section className="content-grid">
               <div className="left-column">
                 <DropZone onClick={chooseFiles} />
-                <Queue items={filtered} selectedId={workspaceSelected?.id} onSelect={setSelectedId} onRemove={removeItem} canRemove={!isConverting} />
+                <Queue
+                  items={filtered}
+                  selectedId={workspaceSelected?.id}
+                  onSelect={setSelectedId}
+                  onRemove={removeItem}
+                  onExportAudio={exportAudioQueue}
+                  onExportAudioItem={exportAudioItem}
+                  canRemove={!isConverting}
+                  canExportAudio={items.length > 0 && !isConverting}
+                />
               </div>
               <Inspector
                 item={workspaceSelected}
@@ -1923,14 +2071,20 @@ function DropZone({ onClick }) {
   );
 }
 
-function Queue({ items, selectedId, onSelect, onRemove, canRemove }) {
+function Queue({ items, selectedId, onSelect, onRemove, onExportAudio, onExportAudioItem, canRemove, canExportAudio }) {
   const visibleItems = items.slice(0, QUEUE_RENDER_LIMIT);
   const hiddenCount = Math.max(0, items.length - visibleItems.length);
   return (
     <section className="panel queue-panel">
       <div className="panel-title">
         <h2>Import queue</h2>
-        <span>{items.length} file{items.length === 1 ? "" : "s"}</span>
+        <div className="panel-title-actions">
+          <span>{items.length} file{items.length === 1 ? "" : "s"}</span>
+          <button className="compact-action" onClick={onExportAudio} disabled={!canExportAudio}>
+            <FileMusic size={16} />
+            Export audio
+          </button>
+        </div>
       </div>
       <div className="queue">
         {items.length === 0 && <div className="empty">No song packages imported yet.</div>}
@@ -1954,6 +2108,26 @@ function Queue({ items, selectedId, onSelect, onRemove, canRemove }) {
               <span>{item.preview ? duration(item.preview.duration) : "-"}</span>
               <b>{statusText(item.status)}</b>
             </div>
+            {item.status !== "converting" && (
+              <span
+                className="queue-export"
+                role="button"
+                tabIndex={0}
+                title="Export audio for this file"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onExportAudioItem(item);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter" && event.key !== " ") return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onExportAudioItem(item);
+                }}
+              >
+                <FileMusic size={17} />
+              </span>
+            )}
             {canRemove && item.status !== "converting" && (
               <span
                 className="queue-remove"
@@ -2754,6 +2928,16 @@ function outputFileNameForItem(item, format, customTemplate) {
       .join(" - ");
   }
   return `${safePathSegment(stem, meta.source)}.feedpak`;
+}
+
+function outputNameTemplateForFormat(format, customTemplate) {
+  if (format === "custom") return customTemplate || "{source}";
+  return {
+    source: "{source}",
+    "artist-title": "{artist} - {title}",
+    "title-artist": "{title} - {artist}",
+    "artist-album-title": "{artist} - {album} - {title}"
+  }[format] || "{source}";
 }
 
 function outputNameMetadata(item) {

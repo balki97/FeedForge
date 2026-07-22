@@ -554,6 +554,47 @@ ipcMain.handle("converter:convert", async (_event, payload) => {
   };
 });
 
+ipcMain.handle("converter:exportAudio", async (_event, payload) => {
+  logDebug("converter.exportAudio.start", {
+    inputPath: payload.inputPath,
+    outputPath: payload.outputPath || "",
+    overwrite: Boolean(payload.overwrite),
+    outputLayout: payload.outputLayout || "flat",
+    sourceRoot: payload.sourceRoot || "",
+    nameTemplate: payload.nameTemplate || ""
+  });
+  const args = [payload.inputPath, "--export-audio"];
+  if (payload.outputPath) args.push("-o", payload.outputPath);
+  if (payload.overwrite) args.push("--overwrite");
+  if (payload.outputLayout) args.push("--output-layout", payload.outputLayout);
+  if (payload.sourceRoot) args.push("--source-root", payload.sourceRoot);
+  if (payload.nameTemplate) args.push("--name-template", payload.nameTemplate);
+  const result = await runConverter(args);
+  const outputPaths = [...result.stdout.matchAll(/^wrote\s+(.+)$/gim)].map((match) => match[1].trim()).filter(Boolean);
+  const warnings = [...`${result.stdout}\n${result.stderr}`.matchAll(/^warning:\s+(.+)$/gim)].map((match) => match[1].trim()).filter(Boolean);
+  const outputMatch = outputPaths[0] || null;
+  logDebug(result.code === 0 ? "converter.exportAudio.ok" : "converter.exportAudio.failed", {
+    inputPath: payload.inputPath,
+    outputPath: outputMatch || payload.outputPath || "",
+    outputCount: outputPaths.length,
+    code: result.code,
+    warnings,
+    stdoutTail: tail(result.stdout),
+    stderrTail: tail(result.stderr),
+    diagnostics: result.diagnostics
+  });
+  return {
+    ok: result.code === 0,
+    outputPath: outputMatch,
+    outputPaths,
+    warnings,
+    stdout: result.stdout,
+    stderr: result.stderr,
+    diagnostics: result.diagnostics,
+    error: result.code === 0 ? null : result.stderr || result.stdout || "Audio export failed"
+  };
+});
+
 ipcMain.handle("dialog:pickCoverImage", async (_event, options = {}) => {
   const result = await dialog.showOpenDialog(mainWindow, {
     title: "Choose cover image",
