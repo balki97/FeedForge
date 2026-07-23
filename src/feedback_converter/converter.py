@@ -526,7 +526,7 @@ def _playable_song_groups(groups: dict[str, set[str]]) -> dict[str, set[str]]:
 
 def _song_key_from_manifest(data: bytes) -> str:
     try:
-        obj = json.loads(data.decode("utf-8-sig"))
+        obj = json.loads(_decode_package_text(data))
     except Exception:  # noqa: BLE001
         return ""
     for item in _walk_dicts(obj):
@@ -672,6 +672,18 @@ def _metadata_song_title(content: dict[str, bytes]) -> str:
     return f"{artist} - {title}".strip(" -") if artist or title else ""
 
 
+def _decode_package_text(data: bytes) -> str:
+    encodings = ["utf-8-sig", "cp932", "shift_jis", "cp1252"]
+    if data.startswith((b"\xff\xfe", b"\xfe\xff")):
+        encodings.insert(1, "utf-16")
+    for encoding in encodings:
+        try:
+            return data.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return data.decode("utf-8", errors="replace")
+
+
 def _safe_output_stem(value: str) -> str:
     normalized = unicodedata.normalize("NFKD", str(value or "")).encode("ascii", "ignore").decode("ascii")
     safe = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", normalized).strip(" ._")
@@ -740,13 +752,13 @@ def _extract_metadata(content: dict[str, bytes]) -> dict[str, Any]:
         low = path.lower()
         if low.endswith((".json", ".hsan")):
             try:
-                text = data.decode("utf-8-sig")
+                text = _decode_package_text(data)
                 objects.append(json.loads(text))
             except Exception:  # noqa: BLE001
                 continue
         elif low.endswith((".version", ".txt", ".ini", ".xml")):
             try:
-                text_entries.append((path, data.decode("utf-8-sig")))
+                text_entries.append((path, _decode_package_text(data)))
             except Exception:  # noqa: BLE001
                 continue
 

@@ -137,7 +137,7 @@ class PSARC(Construct):
         listing, *entries = [
             read_entry(stream, i, header.bom, end_offsets[i]) for i in range(header.n_entries)
         ]
-        listing = listing.decode().splitlines()
+        listing = listing.decode("utf-8", errors="replace").splitlines()
         content = dict(zip(listing, entries))
         if self.crypto:
             content = decrypt_psarc(content)
@@ -148,7 +148,7 @@ class PSARC(Construct):
             content = encrypt_psarc(content)
 
         names = list(sorted(content.keys(), reverse=True))
-        data = ["\n".join(names).encode()] + [content[k] for k in names]
+        data = ["\n".join(names).encode("utf-8")] + [content[k] for k in names]
 
         entries = [create_entry(n, e) for n, e in zip([""] + names, data)]
         bom = create_bom(entries)
