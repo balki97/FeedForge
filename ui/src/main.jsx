@@ -944,6 +944,17 @@ function App() {
     return result;
   }
 
+  async function reprocessLoadedFeedpakStems() {
+    if (!feedpakItems.length) return { ok: false, error: "Add FeedPaks first." };
+    if (!separateStems) return { ok: false, error: "Enable Separate stems in Settings first." };
+    let failed = 0;
+    for (const entry of feedpakItems) {
+      const result = await reprocessFeedpakStems(entry, { overwriteOriginal: overwrite });
+      if (!result?.ok) failed += 1;
+    }
+    return { ok: failed === 0, total: feedpakItems.length, failed };
+  }
+
   async function organizeLoadedFeedpaksByArtist() {
     if (!feedpakItems.length) return { ok: false, error: "Add FeedPaks first." };
     let targetDir = outputDir;
@@ -1390,6 +1401,7 @@ function App() {
             onReplaceFeedpakStem={replaceFeedpakStem}
             onRemoveFeedpakStem={removeFeedpakStem}
             onReprocessFeedpakStems={reprocessFeedpakStems}
+            onBatchReprocessFeedpakStems={reprocessLoadedFeedpakStems}
             onOrganizeByArtist={organizeLoadedFeedpaksByArtist}
             onChooseOutput={chooseOutput}
             onRemoveItem={removeItem}
@@ -2168,6 +2180,7 @@ function FeedPakTools({
   onReplaceFeedpakStem,
   onRemoveFeedpakStem,
   onReprocessFeedpakStems,
+  onBatchReprocessFeedpakStems,
   onOrganizeByArtist,
   onChooseOutput,
   onRemoveItem,
@@ -2177,6 +2190,7 @@ function FeedPakTools({
   demucsStems
 }) {
   const [organizeMessage, setOrganizeMessage] = useState("");
+  const [batchStemMessage, setBatchStemMessage] = useState("");
 
   async function organizeByArtist() {
     setOrganizeMessage("Organizing...");
@@ -2188,6 +2202,14 @@ function FeedPakTools({
     setOrganizeMessage(result?.ok
       ? `Copied ${result.copied || 0} FeedPak${result.copied === 1 ? "" : "s"}`
       : result?.error || "Organize failed");
+  }
+
+  async function batchReprocessStems() {
+    setBatchStemMessage("Reprocessing...");
+    const result = await onBatchReprocessFeedpakStems();
+    setBatchStemMessage(result?.ok
+      ? `Reprocessed ${result.total || 0} FeedPak${result.total === 1 ? "" : "s"}`
+      : result?.error || `Reprocessed with ${result?.failed || 0} failure${result?.failed === 1 ? "" : "s"}`);
   }
 
   return (
@@ -2203,10 +2225,13 @@ function FeedPakTools({
           <button onClick={organizeByArtist} disabled={!feedpakItems.length}>
             <FolderOpen size={17} /> Artist folders
           </button>
+          <button onClick={batchReprocessStems} disabled={!feedpakItems.length || !separateStems}>
+            <RotateCw size={17} /> Reprocess all
+          </button>
         </div>
       </div>
       <div className="feedpak-organize-note">
-        <span>{organizeMessage || "Artist folders keep original filenames."}</span>
+        <span>{batchStemMessage || organizeMessage || "Artist folders keep original filenames."}</span>
         <b>{overwrite ? "Overwrite on" : "Overwrite off"}</b>
       </div>
 

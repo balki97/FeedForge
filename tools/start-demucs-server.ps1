@@ -12,6 +12,11 @@ function Invoke-FeedForgeNative {
     }
 }
 
+function Test-FeedForgeStorePythonAlias {
+    param([string] $FilePath)
+    return $FilePath -match "\\Microsoft\\WindowsApps\\python(3)?\.exe$"
+}
+
 $SourceRoot = if (Test-Path (Join-Path $PSScriptRoot "pyproject.toml")) {
     $PSScriptRoot
 } else {
@@ -71,6 +76,10 @@ if ($env:FEEDFORGE_PYTHON_EXE -and (Test-Path $env:FEEDFORGE_PYTHON_EXE)) {
 } else {
     try {
         $SystemPython = (Get-Command python.exe -ErrorAction Stop).Source
+        if (Test-FeedForgeStorePythonAlias $SystemPython) {
+            $SystemPython = $null
+            throw "Ignoring Microsoft Store Python alias"
+        }
     } catch {
         try {
             $SystemPython = (Get-Command py.exe -ErrorAction Stop).Source

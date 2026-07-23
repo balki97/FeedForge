@@ -2131,6 +2131,7 @@ function pythonCandidates(installRoot, pythonPath) {
 function pythonExecutablePath(value) {
   if (typeof value !== "string" || !value.trim()) return "";
   const resolved = path.resolve(value.trim());
+  if (isWindowsStorePythonAlias(resolved)) return "";
   try {
     if (fs.existsSync(resolved) && fs.statSync(resolved).isFile() && path.basename(resolved).toLowerCase() === "python.exe") {
       return resolved;
@@ -2141,6 +2142,10 @@ function pythonExecutablePath(value) {
     return "";
   }
   return "";
+}
+
+function isWindowsStorePythonAlias(value) {
+  return process.platform === "win32" && /\\microsoft\\windowsapps\\python(?:3)?\.exe$/i.test(path.resolve(value));
 }
 
 function registryPythonExecutables() {
