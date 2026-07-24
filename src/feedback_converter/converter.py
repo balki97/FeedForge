@@ -2654,8 +2654,8 @@ def _convert_wem_bytes_to_ogg(data: bytes, output_path: Path) -> bool:
     if _convert_wem_with_vgmstream(data, output_path, tools_dir):
         return True
 
-    ww2ogg = (tools_dir / "ww2ogg.exe").resolve()
-    if not ww2ogg.is_file():
+    ww2ogg = _resolve_tool("ww2ogg")
+    if ww2ogg is None:
         return False
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2700,10 +2700,72 @@ def _convert_wem_bytes_to_ogg(data: bytes, output_path: Path) -> bool:
         temp_ogg.unlink(missing_ok=True)
 
 
+def _encode_wav_to_ogg(input_wav: Path, output_ogg: Path, cwd: Path | None = None) -> bool:
+    """Encode a WAV file to Ogg Vorbis at quality 5.
+
+    Prefers ``oggenc`` (vorbis-tools) for parity with the Windows build, and
+    falls back to ``ffmpeg``'s libvorbis encoder at the equivalent quality on
+    platforms where ``oggenc`` is not bundled. Both use the same underlying
+    libvorbis encoder, so the result is perceptually equivalent.
+    """
+    input_wav = input_wav.resolve()
+    output_ogg = output_ogg.resolve()
+    if not input_wav.is_file():
+        return False
+    output_ogg.parent.mkdir(parents=True, exist_ok=True)
+
+    run_kwargs: dict[str, Any] = {
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.STDOUT,
+        "text": True,
+        "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        "check": False,
+    }
+    if cwd is not None:
+        run_kwargs["cwd"] = str(cwd)
+
+    commands: list[list[str]] = []
+    oggenc = _resolve_tool("oggenc")
+    if oggenc is not None:
+        commands.append([str(oggenc), "-Q", "-q", "5", str(input_wav), "-o", str(output_ogg)])
+    ffmpeg = _resolve_tool("ffmpeg")
+    if ffmpeg is not None:
+        commands.append(
+            [
+                str(ffmpeg),
+                "-y",
+                "-v",
+                "error",
+                "-i",
+                str(input_wav),
+                "-c:a",
+                "libvorbis",
+                "-qscale:a",
+                "5",
+                str(output_ogg),
+            ]
+        )
+
+    for command in commands:
+        output_ogg.unlink(missing_ok=True)
+        try:
+            proc = subprocess.run(command, **run_kwargs)
+        except OSError:
+            continue
+        if (
+            proc.returncode == 0
+            and output_ogg.is_file()
+            and output_ogg.stat().st_size >= 1024
+            and output_ogg.read_bytes().startswith(b"OggS")
+        ):
+            return True
+        output_ogg.unlink(missing_ok=True)
+    return False
+
+
 def _convert_wem_with_vgmstream(data: bytes, output_path: Path, tools_dir: Path) -> bool:
-    vgmstream = (tools_dir / "vgmstream-cli.exe").resolve()
-    oggenc = (tools_dir / "oggenc.exe").resolve()
-    if not vgmstream.is_file() or not oggenc.is_file():
+    vgmstream = _resolve_tool("vgmstream-cli")
+    if vgmstream is None:
         return False
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2725,17 +2787,7 @@ def _convert_wem_with_vgmstream(data: bytes, output_path: Path, tools_dir: Path)
         if decode.returncode != 0 or not temp_wav.is_file() or temp_wav.stat().st_size < 1024:
             return False
 
-        temp_ogg.unlink(missing_ok=True)
-        encode = subprocess.run(
-            [str(oggenc), "-Q", "-q", "5", str(temp_wav), "-o", str(temp_ogg)],
-            cwd=str(tools_dir),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            check=False,
-        )
-        if encode.returncode != 0 or not temp_ogg.is_file() or temp_ogg.stat().st_size < 1024:
+        if not _encode_wav_to_ogg(temp_wav, temp_ogg, cwd=tools_dir):
             return False
 
         if output_path.exists():
@@ -2752,26 +2804,14 @@ def _convert_wem_with_vgmstream(data: bytes, output_path: Path, tools_dir: Path)
 
 
 def _convert_wav_file_to_ogg(input_path: Path, output_path: Path) -> bool:
-    tools_dir = _tools_dir()
-    oggenc = (tools_dir / "oggenc.exe").resolve()
-    if not oggenc.is_file() or not input_path.is_file():
+    if not input_path.is_file():
         return False
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path = output_path.resolve()
     temp_ogg = output_path.with_name(output_path.stem + ".encode.ogg").resolve()
     try:
-        temp_ogg.unlink(missing_ok=True)
-        encode = subprocess.run(
-            [str(oggenc), "-Q", "-q", "5", str(input_path.resolve()), "-o", str(temp_ogg)],
-            cwd=str(tools_dir),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            check=False,
-        )
-        if encode.returncode != 0 or not temp_ogg.is_file() or temp_ogg.stat().st_size < 1024:
+        if not _encode_wav_to_ogg(input_path, temp_ogg, cwd=_tools_dir()):
             return False
         if output_path.exists():
             output_path.unlink()
@@ -2792,6 +2832,39 @@ def _tools_dir() -> Path:
             return bundled
         return Path(bundle_root) / "tools"
     return Path(__file__).resolve().parent / "tools"
+
+
+def _platform_slug() -> str:
+    if sys.platform == "win32":
+        return "win"
+    if sys.platform == "darwin":
+        return "darwin"
+    return "linux"
+
+
+def _tool_search_dirs() -> list[Path]:
+    base = _tools_dir()
+    return [base / _platform_slug(), base]
+
+
+def _resolve_tool(name: str) -> Path | None:
+    """Resolve an external tool by logical name across platforms.
+
+    Searches the bundled tools directory (platform subfolder first, then the
+    base folder) and finally the system ``PATH``. On Windows the ``.exe``
+    suffix is tried; on other platforms the bare name is used.
+    """
+    candidates = [f"{name}.exe", name] if sys.platform == "win32" else [name]
+    for directory in _tool_search_dirs():
+        for candidate in candidates:
+            path = directory / candidate
+            if path.is_file():
+                return path.resolve()
+    for candidate in candidates:
+        found = shutil.which(candidate)
+        if found:
+            return Path(found).resolve()
+    return None
 
 
 def _copy_cover(content: dict[str, bytes], package_dir: Path) -> str | None:
@@ -2816,43 +2889,37 @@ def _copy_cover(content: dict[str, bytes], package_dir: Path) -> str | None:
 
 
 def _convert_dds_bytes_to_png(data: bytes, output_path: Path) -> bool:
-    tools_dir = _tools_dir()
-    topng = (tools_dir / "topng.exe").resolve()
-    if not topng.is_file():
+    """Decode DDS cover art to PNG using Pillow.
+
+    Cross-platform replacement for the former Windows-only ``topng.exe``.
+    Handles the DXT1/DXT3/DXT5 and uncompressed DDS formats used by CDLC
+    cover art. Returns ``False`` if Pillow is unavailable or the image cannot
+    be decoded.
+    """
+    try:
+        from io import BytesIO
+
+        from PIL import Image
+    except ImportError:
         return False
 
     output_path = output_path.resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    temp_dds = output_path.with_name(output_path.stem + ".convert.dds").resolve()
-    temp_dds.write_bytes(data)
     try:
+        with Image.open(BytesIO(data)) as image:
+            image.load()
+            if image.mode not in {"RGB", "RGBA"}:
+                image = image.convert("RGBA")
+            output_path.unlink(missing_ok=True)
+            image.save(output_path, format="PNG")
+    except Exception:
         output_path.unlink(missing_ok=True)
-        proc = subprocess.run(
-            [
-                str(topng),
-                "-quiet",
-                "-overwrite",
-                "-out",
-                "png",
-                "-o",
-                str(output_path),
-                str(temp_dds),
-            ],
-            cwd=str(tools_dir),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            check=False,
-        )
-        return (
-            proc.returncode == 0
-            and output_path.is_file()
-            and output_path.stat().st_size > 8
-            and output_path.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
-        )
-    finally:
-        temp_dds.unlink(missing_ok=True)
+        return False
+    return (
+        output_path.is_file()
+        and output_path.stat().st_size > 8
+        and output_path.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+    )
 
 
 def _arrangement_id(source_path: str, metadata: dict[str, Any]) -> str:

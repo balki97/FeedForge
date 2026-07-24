@@ -1,6 +1,6 @@
 {
   "name": "feedforge",
-  "version": "0.1.25",
+  "version": "0.1.26",
   "private": true,
   "description": "Desktop toolkit for preparing FeedBack-ready song packages.",
   "author": "FeedForge Contributors",
@@ -10,7 +10,9 @@
     "build": "vite build",
     "converter:pack": "python -m PyInstaller --noconfirm --clean psarc2feedpak.spec",
     "electron:pack": "npm run build && electron-builder --win",
+    "electron:pack:linux": "npm run build && electron-builder --linux",
     "release": "npm run converter:pack && npm run electron:pack",
+    "release:linux": "npm run converter:pack && npm run electron:pack:linux",
     "lint:ui": "vite build"
   },
   "dependencies": {
@@ -53,8 +55,16 @@
         "to": "demucs-server/pyproject.toml"
       },
       {
+        "from": "README.md",
+        "to": "demucs-server/README.md"
+      },
+      {
         "from": "tools/start-demucs-server.ps1",
         "to": "demucs-server/start-demucs-server.ps1"
+      },
+      {
+        "from": "tools/start-demucs-server.sh",
+        "to": "demucs-server/start-demucs-server.sh"
       },
       {
         "from": "assets/tone-equipment",
@@ -85,6 +95,15 @@
     },
     "portable": {
       "unpackDirName": "FeedForge"
+    },
+    "linux": {
+      "icon": "assets/feedforge.png",
+      "category": "AudioVideo",
+      "synopsis": "Convert PSARC CDLC packages into FeedPak packages for FeedBack.",
+      "publish": null,
+      "target": [
+        "AppImage"
+      ]
     }
   }
 }
