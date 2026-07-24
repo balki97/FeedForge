@@ -59,6 +59,25 @@ PYPROJECT="${SOURCE_ROOT}/pyproject.toml"
 STAMP_MTIME="$(stat -c %Y "${PYPROJECT}" 2>/dev/null || stat -f %m "${PYPROJECT}" 2>/dev/null || echo 0)"
 SOURCE_STAMP="${SOURCE_ROOT}|${STAMP_MTIME}|torch=${TORCH_INDEX}"
 
+# The bundled application source may live on a read-only mount (for example
+# inside an AppImage). pip/setuptools writes build metadata (*.egg-info) into
+# the project tree during install, so when the bundled source is not writable
+# we install from a writable copy kept under the install folder instead.
+if [ -w "${SOURCE_ROOT}" ]; then
+  INSTALL_SOURCE="${SOURCE_ROOT}"
+else
+  INSTALL_SOURCE="${INSTALL_ROOT}/app-src"
+fi
+
+sync_install_source() {
+  [ "${INSTALL_SOURCE}" = "${SOURCE_ROOT}" ] && return 0
+  log "copying bundled app source to writable folder ${INSTALL_SOURCE}"
+  rm -rf "${INSTALL_SOURCE}"
+  mkdir -p "${INSTALL_SOURCE}"
+  cp -R "${SOURCE_ROOT}/." "${INSTALL_SOURCE}/"
+  chmod -R u+w "${INSTALL_SOURCE}"
+}
+
 log "preparing local stem setup"
 log "install folder ${INSTALL_ROOT}"
 log "runtime folder ${RUNTIME_ROOT}"
@@ -85,8 +104,9 @@ fi
 
 if [ "${CURRENT_STAMP}" != "${SOURCE_STAMP}" ]; then
   log "installing FeedForge stem dependencies"
+  sync_install_source
   "${PYTHON}" -m pip install --upgrade pip
-  "${PYTHON}" -m pip install -e "${SOURCE_ROOT}[stems]"
+  "${PYTHON}" -m pip install -e "${INSTALL_SOURCE}[stems]"
   if [ -n "${TORCH_INDEX}" ]; then
     if "${PYTHON}" -c "import torch, sys; sys.exit(0 if getattr(torch.version, 'cuda', None) else 1)" >/dev/null 2>&1; then
       log "CUDA PyTorch runtime already installed"
@@ -103,7 +123,8 @@ fi
 log "verifying Demucs runtime"
 if ! "${PYTHON}" -c "import demucs, fastapi, soundfile, torch" >/dev/null 2>&1; then
   log "repairing missing stem dependencies"
-  "${PYTHON}" -m pip install -e "${SOURCE_ROOT}[stems]"
+  sync_install_source
+  "${PYTHON}" -m pip install -e "${INSTALL_SOURCE}[stems]"
   "${PYTHON}" -c "import demucs, fastapi, soundfile, torch"
   printf '%s' "${SOURCE_STAMP}" > "${MARKER}"
 fi
