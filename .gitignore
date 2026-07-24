@@ -5,6 +5,14 @@ venv/
 .env
 .env.*
 
+# Local stem server runtime (created when the demucs launcher runs from a
+# source checkout with FEEDFORGE_DEMUCS_HOME unset)
+model-cache/
+pip-cache/
+runtime/
+app-src/
+.feedforge-stems-source
+
 # JavaScript dependencies and build output
 node_modules/
 desktop-dist/
