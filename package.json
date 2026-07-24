@@ -55,6 +55,10 @@
         "to": "demucs-server/pyproject.toml"
       },
       {
+        "from": "README.md",
+        "to": "demucs-server/README.md"
+      },
+      {
         "from": "tools/start-demucs-server.ps1",
         "to": "demucs-server/start-demucs-server.ps1"
       },
