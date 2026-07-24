@@ -2,8 +2,8 @@
 
 ![FeedForge icon](assets/feedforge.png)
 
-FeedForge is a Windows tool for converting `.psarc` CDLC packages into
-`.feedpak` packages for FeedBack.
+FeedForge is a cross-platform tool for converting `.psarc` CDLC packages into
+`.feedpak` packages for FeedBack. It runs on Windows and Linux.
 
 It can convert one file or a full folder of CDLC files in a batch. It also opens
 existing `.feedpak` packages so metadata, cover art, stems, and package details
@@ -11,7 +11,12 @@ can be reviewed or updated without reconverting from source.
 
 ## Download
 
-Download the portable EXE from the latest GitHub release.
+Download the latest build from the GitHub releases page:
+
+- **Windows** — the portable `.exe`.
+- **Linux** — the `.AppImage`. Mark it executable (`chmod +x FeedForge-*.AppImage`)
+  and run it. Stem splitting needs Python 3.11+ and `ffmpeg` available on the
+  system; install them from your package manager if they are not already present.
 
 FeedForge checks GitHub releases for newer versions from inside the app.
 
@@ -54,7 +59,13 @@ For troubleshooting or release checks, the packaged converter can validate an
 existing package directly:
 
 ```powershell
+# Windows
 psarc2feedpak.exe --validate-feedpak "song.feedpak"
+```
+
+```bash
+# Linux
+./psarc2feedpak --validate-feedpak "song.feedpak"
 ```
 
 ## Stem splitting
@@ -77,3 +88,36 @@ the full mix in `stems/full.ogg` for FeedBack compatibility.
 - Very large libraries are supported through folder import and a limited queue view.
 - If a conversion fails, send `%APPDATA%\FeedForge\logs\feedforge-debug.log`
   with the bug report.
+- On Linux the debug log is at `~/.config/FeedForge/logs/feedforge-debug.log`.
+
+## Building from source
+
+FeedForge has two build steps: the Python converter (packaged with PyInstaller)
+and the Electron desktop app (packaged with electron-builder).
+
+### Windows
+
+The native converter tools (`ww2ogg.exe`, `vgmstream-cli.exe`, `oggenc.exe`)
+are supplied at build time in `src/feedback_converter/tools/`. Then:
+
+```powershell
+npm install
+npm run release        # builds the converter and the portable Windows app
+```
+
+### Linux
+
+The native Linux converter tools are built/fetched into
+`src/feedback_converter/tools/linux/` by a helper script (they are git-ignored,
+like the Windows executables). Requirements: `gcc`/`g++`, `make`, `curl`,
+`unzip`, Python 3.11+, and `ffmpeg`.
+
+```bash
+npm install
+bash tools/build-linux-tools.sh    # builds ww2ogg + fetches vgmstream-cli
+npm run release:linux              # builds the converter and the AppImage
+```
+
+DDS cover art is decoded with Pillow (no external tool), so image conversion
+works identically on both platforms. WAV→OGG encoding prefers `oggenc` when
+present and otherwise uses `ffmpeg`'s libvorbis encoder at the same quality.

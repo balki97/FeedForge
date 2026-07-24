@@ -27,7 +27,14 @@ release/
 *.msi
 *.zip
 *.7z
+*.AppImage
+*.deb
 builder-debug.yml
+
+# Native converter tool binaries (supplied at build time, like the Windows *.exe)
+/src/feedback_converter/tools/linux/ww2ogg
+/src/feedback_converter/tools/linux/vgmstream-cli
+/src/feedback_converter/tools/linux/oggenc
 electron-builder.env
 
 # Local conversion inputs and outputs

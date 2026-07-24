@@ -12,6 +12,7 @@ dependencies = [
     "construct>=2.10,<3",
     "cryptography>=42",
     "jsonschema>=4",
+    "Pillow>=10",
     "PyYAML>=6",
 ]
 

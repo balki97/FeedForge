@@ -4,6 +4,7 @@ const fs = require("fs");
 const http = require("http");
 const https = require("https");
 const path = require("path");
+const platform = require("./platform.cjs");
 
 let mainWindow;
 let inspectCacheRoot;
@@ -242,10 +243,12 @@ ipcMain.handle("dialog:pickDemucsInstallDir", async (_event, options = {}) => {
 
 ipcMain.handle("dialog:pickPythonExecutable", async (_event, options = {}) => {
   const result = await dialog.showOpenDialog(mainWindow, {
-    title: "Choose python.exe",
-    defaultPath: validDefaultPath(options.defaultPath) || "C:\\Program Files",
+    title: platform.IS_WINDOWS ? "Choose python.exe" : "Choose Python interpreter",
+    defaultPath: validDefaultPath(options.defaultPath) || (platform.IS_WINDOWS ? "C:\\Program Files" : "/usr/bin"),
     properties: ["openFile"],
-    filters: [{ name: "Python executable", extensions: ["exe"] }]
+    filters: platform.IS_WINDOWS
+      ? [{ name: "Python executable", extensions: ["exe"] }]
+      : [{ name: "All files", extensions: ["*"] }]
   });
   const filePath = result.canceled ? null : result.filePaths[0];
   logDebug("dialog.pickPythonExecutable", { selected: filePath || "" });
@@ -903,13 +906,8 @@ async function startStemServer(options = {}) {
   appendStemServerLog(`FeedForge: runtime folder ${runtimeRoot}`);
   if (pythonExe) appendStemServerLog(`FeedForge: using selected Python ${pythonExe}`);
 
-  stemServerProcess = spawn("powershell.exe", [
-    "-NoProfile",
-    "-ExecutionPolicy",
-    "Bypass",
-    "-File",
-    scriptPath
-  ], {
+  const launcher = platform.stemLauncher();
+  stemServerProcess = spawn(launcher.command, launcher.buildArgs(scriptPath), {
     cwd: path.dirname(scriptPath),
     env: {
       ...process.env,
@@ -1184,10 +1182,11 @@ function stemServerProgress(extra, healthy, running, processRunning) {
 }
 
 function stemServerLauncherPath() {
+  const { scriptName } = platform.stemLauncher();
   if (app.isPackaged) {
-    return path.join(process.resourcesPath, "demucs-server", "start-demucs-server.ps1");
+    return path.join(process.resourcesPath, "demucs-server", scriptName);
   }
-  return path.join(app.getAppPath(), "tools", "start-demucs-server.ps1");
+  return path.join(app.getAppPath(), "tools", scriptName);
 }
 
 function defaultDemucsInstallRoot() {
@@ -1235,7 +1234,7 @@ async function demucsDeviceOptions(installRoot) {
     },
     { id: "cpu", name: "CPU", detail: "Compatible with every PC, but slow for stem splitting.", available: true }
   ];
-  const python = path.join(installRoot, ".demucs-venv", "Scripts", "python.exe");
+  const python = platform.venvPython(path.join(installRoot, ".demucs-venv"));
   if (!fs.existsSync(python)) {
     return mergeDeviceOptions(fallback, await systemGpuDeviceOptions());
   }
@@ -1266,8 +1265,8 @@ async function demucsDeviceOptions(installRoot) {
 }
 
 async function systemGpuDeviceOptions() {
-  if (process.platform !== "win32") return [];
-  const result = await runProcess("nvidia-smi.exe", [
+  if (!platform.IS_WINDOWS && !platform.IS_LINUX) return [];
+  const result = await runProcess(platform.nvidiaSmiName(), [
     "--query-gpu=name,memory.total",
     "--format=csv,noheader,nounits"
   ], { timeoutMs: 5000 });
@@ -1389,7 +1388,7 @@ function modelInstallStates(installRoot) {
 }
 
 async function demucsSetupState(installRoot) {
-  const venvPython = path.join(installRoot, ".demucs-venv", "Scripts", "python.exe");
+  const venvPython = platform.venvPython(path.join(installRoot, ".demucs-venv"));
   const marker = path.join(installRoot, ".feedforge-stems-source");
   const checkpointFiles = checkpointFileNames(installRoot);
   const environmentInstalled = fs.existsSync(venvPython);
@@ -1470,10 +1469,11 @@ function requestJson(url, timeoutMs) {
 }
 
 function converterCommand() {
-  const packaged = path.join(process.resourcesPath || "", "bin", "psarc2feedpak", "psarc2feedpak.exe");
-  const packagedLegacy = path.join(process.resourcesPath || "", "bin", "psarc2feedpak.exe");
-  const localDirExe = path.join(app.getAppPath(), "dist", "psarc2feedpak", "psarc2feedpak.exe");
-  const localExe = path.join(app.getAppPath(), "dist", "psarc2feedpak.exe");
+  const exeName = platform.converterExecutableName();
+  const packaged = path.join(process.resourcesPath || "", "bin", "psarc2feedpak", exeName);
+  const packagedLegacy = path.join(process.resourcesPath || "", "bin", exeName);
+  const localDirExe = path.join(app.getAppPath(), "dist", "psarc2feedpak", exeName);
+  const localExe = path.join(app.getAppPath(), "dist", exeName);
   if (app.isPackaged && fs.existsSync(packaged)) {
     return { command: packaged, prefix: [], cwd: path.dirname(packaged) };
   }
@@ -1487,7 +1487,7 @@ function converterCommand() {
     return { command: localExe, prefix: [], cwd: app.getAppPath() };
   }
   return {
-    command: path.join(app.getAppPath(), ".venv", "Scripts", "python.exe"),
+    command: platform.venvPython(path.join(app.getAppPath(), ".venv")),
     prefix: ["-m", "feedback_converter.cli"],
     cwd: app.getAppPath()
   };
@@ -1995,6 +1995,7 @@ function removeDirectory(targetPath) {
 }
 
 function cleanupStalePortableArtifacts() {
+  if (!platform.IS_WINDOWS) return;
   const tempRoot = app.getPath("temp");
   const staleBefore = Date.now() - 10 * 60 * 1000;
   let entries = [];
@@ -2104,23 +2105,37 @@ function pythonCandidates(installRoot, pythonPath) {
   };
 
   addExe(pythonExecutablePath(pythonPath), "selected Python");
-  addExe(path.join(installRoot, ".demucs-venv", "Scripts", "python.exe"), "FeedForge local stem environment");
-  for (const command of registryPythonExecutables()) {
-    addExe(command, "Windows Python registry");
-  }
-  addExe("python.exe", "PATH");
-  addExe("py.exe", "Python launcher", ["-3", "-c", code]);
+  addExe(platform.venvPython(path.join(installRoot, ".demucs-venv")), "FeedForge local stem environment");
 
-  for (const root of [
-    installRoot,
-    process.env.ProgramFiles,
-    process.env["ProgramFiles(x86)"],
-    process.env.LOCALAPPDATA,
-    "C:\\Program Files",
-    "C:\\Program Files (x86)",
-    path.join(osHome(), "AppData", "Local", "Programs", "Python"),
-  ].filter(Boolean)) {
-    for (const command of findPythonExecutables(root)) {
+  if (platform.IS_WINDOWS) {
+    for (const command of registryPythonExecutables()) {
+      addExe(command, "Windows Python registry");
+    }
+    addExe("python.exe", "PATH");
+    addExe("py.exe", "Python launcher", ["-3", "-c", code]);
+
+    for (const root of [
+      installRoot,
+      process.env.ProgramFiles,
+      process.env["ProgramFiles(x86)"],
+      process.env.LOCALAPPDATA,
+      "C:\\Program Files",
+      "C:\\Program Files (x86)",
+      path.join(osHome(), "AppData", "Local", "Programs", "Python"),
+    ].filter(Boolean)) {
+      for (const command of findPythonExecutables(root)) {
+        addExe(command, "standard install");
+      }
+    }
+  } else {
+    addExe("python3", "PATH");
+    addExe("python", "PATH");
+    for (const command of [
+      "/usr/bin/python3",
+      "/usr/local/bin/python3",
+      "/opt/homebrew/bin/python3",
+      path.join(osHome(), ".local", "bin", "python3"),
+    ]) {
       addExe(command, "standard install");
     }
   }
@@ -2132,12 +2147,18 @@ function pythonExecutablePath(value) {
   if (typeof value !== "string" || !value.trim()) return "";
   const resolved = path.resolve(value.trim());
   if (isWindowsStorePythonAlias(resolved)) return "";
+  const interpreterNames = platform.IS_WINDOWS ? ["python.exe"] : ["python3", "python"];
   try {
-    if (fs.existsSync(resolved) && fs.statSync(resolved).isFile() && path.basename(resolved).toLowerCase() === "python.exe") {
-      return resolved;
+    if (fs.existsSync(resolved) && fs.statSync(resolved).isFile()) {
+      const base = path.basename(resolved).toLowerCase();
+      if (interpreterNames.includes(base)) {
+        return resolved;
+      }
     }
-    const nested = path.join(resolved, "python.exe");
-    if (fs.existsSync(nested)) return nested;
+    for (const name of interpreterNames) {
+      const nested = path.join(resolved, platform.IS_WINDOWS ? "python.exe" : path.join("bin", name));
+      if (fs.existsSync(nested)) return nested;
+    }
   } catch {
     return "";
   }
