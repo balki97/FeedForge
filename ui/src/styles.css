@@ -1154,6 +1154,16 @@ button:disabled {
   box-shadow: 0 0 0 1px rgba(27, 169, 232, 0.16) inset;
 }
 
+.stem-selection-warning,
+.stem-reprocess-card em {
+  margin: 0;
+  color: #f5c76a;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
 .demucs-model-note strong,
 .demucs-device-note strong,
 .stem-summary strong,

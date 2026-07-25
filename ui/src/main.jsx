@@ -1264,6 +1264,9 @@ function App() {
                         </label>
                       ))}
                     </div>
+                    {stemSelectionWarning(demucsStems) && (
+                      <p className="stem-selection-warning">{stemSelectionWarning(demucsStems)}</p>
+                    )}
                   </div>
                   <label>
                     Processing device
@@ -1631,6 +1634,12 @@ function stemSelectionSummary(stems) {
     .map((id) => DEMUCS_STEM_OPTIONS.find((stem) => stem.id === id)?.label || id)
     .join(", ");
   return `${labels} will be requested. Full mix is always included.`;
+}
+
+function stemSelectionWarning(stems) {
+  const selected = normalizeStemSelection(stems);
+  if (selected.length >= DEMUCS_STEM_OPTIONS.length) return "";
+  return "For full mixer control in FeedBack, include every stem you want to hear separately. Full mix is kept for fallback, not as a backing track.";
 }
 
 function StemSetupChecklist({ pythonInfo, setup, selectedModel, status, matchesSelection }) {
@@ -2539,6 +2548,9 @@ function Inspector({
             <div>
               <strong>Reprocess this FeedPak</strong>
               <span>{separateStems ? `${stemSelectionSummary(demucsStems)} Existing stems will be refreshed from full.ogg.` : "Turn on Separate stems in Settings to split or refresh stems from full.ogg."}</span>
+              {separateStems && stemSelectionWarning(demucsStems) && (
+                <em>{stemSelectionWarning(demucsStems)}</em>
+              )}
             </div>
             <button className="primary" onClick={reprocessStems} disabled={!separateStems}>
               <RotateCw size={16} /> Reprocess stems

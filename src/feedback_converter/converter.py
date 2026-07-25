@@ -216,7 +216,7 @@ def export_psarc_audio(
         )
         target = _unique_output_path(target, reserved_outputs, overwrite=overwrite)
         warnings: list[ConversionWarning] = []
-        written = _export_audio_from_content(song_content, target, warnings, overwrite=overwrite)
+        written = _export_audio_from_content(song_content, target, warnings, overwrite=overwrite, metadata=metadata)
         results.append(AudioExportResult(written, key, title, artist, warnings))
     return results
 
@@ -2151,6 +2151,7 @@ def _export_audio_from_content(
     warnings: list[ConversionWarning],
     *,
     overwrite: bool,
+    metadata: dict[str, Any] | None = None,
 ) -> Path:
     audio = [
         (path, data)
@@ -2178,7 +2179,7 @@ def _export_audio_from_content(
         workdir.mkdir(parents=True, exist_ok=True)
         temp_ogg = workdir / "audio.ogg"
         try:
-            if not _convert_wem_bytes_to_ogg(data, temp_ogg):
+            if not _convert_wem_bytes_to_ogg(data, temp_ogg, metadata=metadata):
                 raise ValueError("Could not decode WEM audio to OGG.")
             if target.exists():
                 target.unlink()
@@ -2649,9 +2650,9 @@ def _select_primary_audio(audio: list[tuple[str, bytes]]) -> tuple[str, bytes]:
     return max(full_song or audio, key=lambda item: len(item[1]))
 
 
-def _convert_wem_bytes_to_ogg(data: bytes, output_path: Path) -> bool:
+def _convert_wem_bytes_to_ogg(data: bytes, output_path: Path, *, metadata: dict[str, Any] | None = None) -> bool:
     tools_dir = _tools_dir()
-    if _convert_wem_with_vgmstream(data, output_path, tools_dir):
+    if _convert_wem_with_vgmstream(data, output_path, tools_dir, metadata=metadata):
         return True
 
     ww2ogg = (tools_dir / "ww2ogg.exe").resolve()
@@ -2700,7 +2701,13 @@ def _convert_wem_bytes_to_ogg(data: bytes, output_path: Path) -> bool:
         temp_ogg.unlink(missing_ok=True)
 
 
-def _convert_wem_with_vgmstream(data: bytes, output_path: Path, tools_dir: Path) -> bool:
+def _convert_wem_with_vgmstream(
+    data: bytes,
+    output_path: Path,
+    tools_dir: Path,
+    *,
+    metadata: dict[str, Any] | None = None,
+) -> bool:
     vgmstream = (tools_dir / "vgmstream-cli.exe").resolve()
     oggenc = (tools_dir / "oggenc.exe").resolve()
     if not vgmstream.is_file() or not oggenc.is_file():
@@ -2727,7 +2734,7 @@ def _convert_wem_with_vgmstream(data: bytes, output_path: Path, tools_dir: Path)
 
         temp_ogg.unlink(missing_ok=True)
         encode = subprocess.run(
-            [str(oggenc), "-Q", "-q", "5", str(temp_wav), "-o", str(temp_ogg)],
+            [str(oggenc), "-Q", "-q", "5", *_oggenc_metadata_args(metadata), str(temp_wav), "-o", str(temp_ogg)],
             cwd=str(tools_dir),
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -2782,6 +2789,18 @@ def _convert_wav_file_to_ogg(input_path: Path, output_path: Path) -> bool:
         return False
     finally:
         temp_ogg.unlink(missing_ok=True)
+
+
+def _oggenc_metadata_args(metadata: dict[str, Any] | None) -> list[str]:
+    if not metadata:
+        return []
+    pairs = [
+        ("-t", metadata.get("title")),
+        ("-a", metadata.get("artist")),
+        ("-l", metadata.get("album")),
+        ("-d", metadata.get("year")),
+    ]
+    return [arg for flag, value in pairs if value not in (None, "") for arg in (flag, str(value))]
 
 
 def _tools_dir() -> Path:
