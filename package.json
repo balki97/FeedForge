@@ -2,7 +2,7 @@
   "name": "feedforge",
   "version": "0.1.27",
   "private": true,
-  "description": "Desktop utility for managing FeedBack-ready song packages.",
+  "description": "FeedBack song toolkit.",
   "author": "FeedForge Contributors",
   "main": "electron/main.cjs",
   "scripts": {
