@@ -628,11 +628,12 @@ ipcMain.handle("stemServer:status", async () => {
 
 ipcMain.handle("stemServer:models", async (_event, options = {}) => {
   const installRoot = demucsInstallRoot(options.installDir);
+  const busy = stemServerStarting || Boolean(stemServerProcess && stemServerProcess.exitCode === null);
   return {
     defaultInstallDir: defaultDemucsInstallRoot(),
     installRoot,
     setup: await demucsSetupState(installRoot),
-    devices: await demucsDeviceOptions(installRoot),
+    devices: busy ? mergeDeviceOptions([], await systemGpuDeviceOptions()) : await demucsDeviceOptions(installRoot),
     models: modelInstallStates(installRoot)
   };
 });
