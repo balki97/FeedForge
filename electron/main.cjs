@@ -1267,10 +1267,22 @@ async function demucsDeviceOptions(installRoot) {
 
 async function systemGpuDeviceOptions() {
   if (process.platform !== "win32") return [];
-  const result = await runProcess("nvidia-smi.exe", [
-    "--query-gpu=name,memory.total",
-    "--format=csv,noheader,nounits"
-  ], { timeoutMs: 5000 });
+  const nvidiaDevices = await nvidiaGpuDeviceOptions();
+  const knownNames = new Set(nvidiaDevices.map((device) => String(device.name || "").toLowerCase()));
+  const otherDevices = (await windowsGpuDeviceOptions()).filter((device) => !knownNames.has(String(device.name || "").toLowerCase()));
+  return [...nvidiaDevices, ...otherDevices];
+}
+
+async function nvidiaGpuDeviceOptions() {
+  let result;
+  try {
+    result = await runProcess("nvidia-smi.exe", [
+      "--query-gpu=name,memory.total",
+      "--format=csv,noheader,nounits"
+    ], { timeoutMs: 5000 });
+  } catch {
+    return [];
+  }
   if (result.code !== 0 || !result.stdout.trim()) return [];
   return result.stdout
     .split(/\r?\n/)
@@ -1288,6 +1300,39 @@ async function systemGpuDeviceOptions() {
       };
     })
     .filter(Boolean);
+}
+
+async function windowsGpuDeviceOptions() {
+  const script = "Get-CimInstance Win32_VideoController | Select-Object Name,AdapterRAM | ConvertTo-Json -Compress";
+  const result = await runProcess("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script], { timeoutMs: 5000 });
+  if (result.code !== 0 || !result.stdout.trim()) return [];
+  try {
+    const parsed = JSON.parse(result.stdout);
+    const rows = Array.isArray(parsed) ? parsed : [parsed];
+    let index = 0;
+    return rows
+      .map((row) => {
+        const name = String(row?.Name || "").trim();
+        const lowerName = name.toLowerCase();
+        if (!name || lowerName.includes("nvidia")) return null;
+        const isAmd = lowerName.includes("amd") || lowerName.includes("radeon") || lowerName.includes("advanced micro devices");
+        const isIntel = lowerName.includes("intel");
+        if (!isAmd && !isIntel) return null;
+        const memoryGb = Number(row?.AdapterRAM) ? `${(Number(row.AdapterRAM) / (1024 ** 3)).toFixed(1)} GB VRAM` : "VRAM unknown";
+        const kind = isAmd ? "amd" : "gpu";
+        return {
+          id: `${kind}:${index++}`,
+          name,
+          detail: `${isAmd ? "AMD GPU" : "GPU"} detected by Windows, ${memoryGb}. FeedForge local stem splitting currently supports NVIDIA CUDA GPUs or CPU on Windows; use CPU or a remote stem server for this GPU.`,
+          available: false,
+          kind
+        };
+      })
+      .filter(Boolean);
+  } catch (error) {
+    logDebug("stemServer.windowsGpuDevices.error", errorToLog(error));
+    return [];
+  }
 }
 
 function mergeDeviceOptions(primary, discovered) {

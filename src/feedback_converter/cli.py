@@ -108,7 +108,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--name-template",
         default="{source}",
-        help="Output filename template. Available fields: {artist}, {title}, {album}, {year}, {source}.",
+        help="Output filename template. Available fields: {artist}, {title}, {album}, {year}, {source}, {parts}.",
     )
     parser.add_argument(
         "--keep-workdir",

@@ -18,6 +18,7 @@ import {
   RotateCw,
   Search,
   Server,
+  SlidersHorizontal,
   Square,
   UploadCloud,
   XCircle
@@ -201,7 +202,7 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (activeView !== "settings" || settingsSection !== "stems" || !separateStems) return undefined;
+    if (activeView !== "stems" || !separateStems) return undefined;
     let cancelled = false;
     async function loadStemPrereqs(showSpinner = true) {
       try {
@@ -232,7 +233,7 @@ function App() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [activeView, settingsSection, separateStems, demucsInstallDir, pythonPath, demucsModel, isStartingStemServer, stemServerStatus.processRunning, stemServerStatus.starting, stemServerStatus.phase]);
+  }, [activeView, separateStems, demucsInstallDir, pythonPath, demucsModel, isStartingStemServer, stemServerStatus.processRunning, stemServerStatus.starting, stemServerStatus.phase]);
 
   useEffect(() => {
     let cancelled = false;
@@ -987,8 +988,10 @@ function App() {
     event.preventDefault();
   }
 
-  const viewMeta = activeView === "settings"
-    ? { title: "Settings", description: "Conversion defaults, stem splitting, and diagnostics." }
+  const viewMeta = activeView === "stems"
+    ? { title: "Stem splitting", description: "Local Demucs or remote stem server setup." }
+    : activeView === "settings"
+    ? { title: "Settings", description: "Conversion defaults and diagnostics." }
     : activeView === "feedpak"
       ? { title: "Edit FeedPaks", description: "Inspect packages, update metadata, manage stems, and organize files." }
       : { title: "Convert", description: "Build FeedBack-ready packages from CDLC files." };
@@ -1008,13 +1011,17 @@ function App() {
             <Guitar size={18} />
             <span>Convert</span>
           </button>
-          <button className={activeView === "settings" ? "active" : ""} onClick={() => setActiveView("settings")}>
+          <button className={activeView === "stems" ? "active" : ""} onClick={() => setActiveView("stems")}>
             <Server size={18} />
-            <span>Settings</span>
+            <span>Stem splitting</span>
           </button>
           <button className={activeView === "feedpak" ? "active" : ""} onClick={() => setActiveView("feedpak")}>
             <FileMusic size={18} />
             <span>Edit FeedPaks</span>
+          </button>
+          <button className={activeView === "settings" ? "active" : ""} onClick={() => { setActiveView("settings"); if (settingsSection === "stems") setSettingsSection("conversion"); }}>
+            <SlidersHorizontal size={18} />
+            <span>Settings</span>
           </button>
         </nav>
         <div className="sidebar-links">
@@ -1043,8 +1050,7 @@ function App() {
             <button
               className={`stem-header-status ${headerStemStatusClass(separateStems, stemServerStatus, isStartingStemServer, stemServerMatchesSelectedConfig)}`}
               onClick={() => {
-                setActiveView("settings");
-                setSettingsSection("stems");
+                setActiveView("stems");
               }}
               title="Open stem splitting settings"
             >
@@ -1093,15 +1099,16 @@ function App() {
           <ConversionProgress progress={conversionProgress} isConverting={isConverting} />
         )}
 
-        {activeView === "settings" ? (
-          <section className="settings-page">
-            <div className="settings-nav" aria-label="Settings sections">
-              <button className={settingsSection === "conversion" ? "active" : ""} onClick={() => setSettingsSection("conversion")}>Conversion</button>
-              <button className={settingsSection === "stems" ? "active" : ""} onClick={() => setSettingsSection("stems")}>Stem splitting</button>
-              <button className={settingsSection === "diagnostics" ? "active" : ""} onClick={() => setSettingsSection("diagnostics")}>Diagnostics</button>
-            </div>
+        {activeView === "settings" || activeView === "stems" ? (
+          <section className={`settings-page ${activeView === "stems" ? "settings-page-full" : ""}`}>
+            {activeView === "settings" && (
+              <div className="settings-nav" aria-label="Settings sections">
+                <button className={settingsSection === "conversion" ? "active" : ""} onClick={() => setSettingsSection("conversion")}>Conversion</button>
+                <button className={settingsSection === "diagnostics" ? "active" : ""} onClick={() => setSettingsSection("diagnostics")}>Diagnostics</button>
+              </div>
+            )}
 
-            {settingsSection === "conversion" && (
+            {activeView === "settings" && settingsSection === "conversion" && (
             <div className="settings-card">
               <div className="settings-card-head">
                 <div>
@@ -1137,6 +1144,7 @@ function App() {
                     <option value="artist-title">Artist - Song</option>
                     <option value="title-artist">Song - Artist</option>
                     <option value="artist-album-title">Artist - Album - Song</option>
+                    <option value="artist-title-parts">Artist - Song - Parts</option>
                     <option value="custom">Custom template</option>
                   </select>
                 </label>
@@ -1149,7 +1157,7 @@ function App() {
                       placeholder="{artist} - {title}"
                       disabled={isConverting}
                     />
-                    <span>Available: {"{artist}"}, {"{title}"}, {"{album}"}, {"{year}"}, {"{source}"}</span>
+                    <span>Available: {"{artist}"}, {"{title}"}, {"{album}"}, {"{year}"}, {"{source}"}, {"{parts}"}</span>
                   </label>
                 )}
                 <div className="option-grid">
@@ -1164,7 +1172,7 @@ function App() {
             </div>
             )}
 
-            {settingsSection === "stems" && (
+            {activeView === "stems" && (
               <div className="settings-card">
                 <div className="settings-card-head">
                   <div>
@@ -1177,7 +1185,7 @@ function App() {
                   <div className="settings-empty">
                     <strong>Stem splitting is disabled</strong>
                     <span>Enable stems to configure local or remote splitting.</span>
-                    <button onClick={() => { setSettingsSection("conversion"); setSeparateStems(true); }}>Enable stems</button>
+                    <button onClick={() => setSeparateStems(true)}>Enable stems</button>
                   </div>
                 ) : (
                 <div className="stem-settings">
@@ -1352,7 +1360,7 @@ function App() {
               </div>
             )}
 
-            {settingsSection === "diagnostics" && (
+            {activeView === "settings" && settingsSection === "diagnostics" && (
               <div className="settings-card">
                 <div className="settings-card-head">
                   <div>
@@ -2953,7 +2961,8 @@ function outputFileNameForItem(item, format, customTemplate) {
     source: [meta.source],
     "artist-title": [meta.artist, meta.title],
     "title-artist": [meta.title, meta.artist],
-    "artist-album-title": [meta.artist, meta.album, meta.title]
+    "artist-album-title": [meta.artist, meta.album, meta.title],
+    "artist-title-parts": [meta.artist, meta.title, meta.parts]
   };
   let stem;
   if (format === "custom") {
@@ -2973,7 +2982,8 @@ function outputNameTemplateForFormat(format, customTemplate) {
     source: "{source}",
     "artist-title": "{artist} - {title}",
     "title-artist": "{title} - {artist}",
-    "artist-album-title": "{artist} - {album} - {title}"
+    "artist-album-title": "{artist} - {album} - {title}",
+    "artist-title-parts": "{artist} - {title} - {parts}"
   }[format] || "{source}";
 }
 
@@ -2984,12 +2994,26 @@ function outputNameMetadata(item) {
     artist: item?.preview?.artist || "Unknown Artist",
     title: item?.preview?.title || source,
     album: item?.preview?.album || "",
-    year: item?.preview?.year || ""
+    year: item?.preview?.year || "",
+    parts: arrangementPartsCode(item?.preview?.arrangements)
   };
 }
 
 function renderNameTemplate(template, metadata) {
-  return String(template || "{source}").replace(/\{(artist|title|album|year|source)\}/gi, (_match, key) => metadata[key.toLowerCase()] || "");
+  return String(template || "{source}").replace(/\{(artist|title|album|year|source|parts)\}/gi, (_match, key) => metadata[key.toLowerCase()] || "");
+}
+
+function arrangementPartsCode(arrangements) {
+  const labels = (arrangements || []).map((arrangement) => (
+    `${arrangement?.type || ""} ${arrangement?.id || ""} ${arrangement?.name || ""}`.toLowerCase()
+  ));
+  return [
+    ["bass", "B"],
+    ["lead", "L"],
+    ["rhythm", "R"],
+    ["vocal", "V"],
+    ["combo", "C"]
+  ].filter(([needle]) => labels.some((label) => label.includes(needle))).map(([, code]) => code).join("");
 }
 
 function relativeParentDir(filePath, rootPath) {

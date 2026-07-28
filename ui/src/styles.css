@@ -839,6 +839,10 @@ button:disabled {
   align-items: start;
 }
 
+.settings-page-full {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .settings-nav {
   display: grid;
   gap: 8px;

@@ -107,6 +107,7 @@ def _batch_output_path(
         or "{title}" in lowered_template
         or "{album}" in lowered_template
         or "{year}" in lowered_template
+        or "{parts}" in lowered_template
         or str(output_layout or "").strip().lower() == "artist"
     )
     metadata = _output_name_metadata(input_path, needs_metadata=needs_metadata)
@@ -140,6 +141,7 @@ def _output_name_metadata(input_path: Path, *, needs_metadata: bool) -> dict[str
         "title": source,
         "album": "",
         "year": "",
+        "parts": "",
     }
     if not needs_metadata:
         return metadata
@@ -151,17 +153,34 @@ def _output_name_metadata(input_path: Path, *, needs_metadata: bool) -> dict[str
     metadata["title"] = str(getattr(preview, "title", None) or metadata["title"])
     metadata["album"] = str(getattr(preview, "album", None) or "")
     metadata["year"] = str(getattr(preview, "year", None) or "")
+    metadata["parts"] = _arrangement_parts_code(getattr(preview, "arrangements", None))
     return metadata
 
 
 def _render_name_template(template: str, metadata: dict[str, str]) -> str:
-    allowed = {"artist", "title", "album", "year", "source"}
+    allowed = {"artist", "title", "album", "year", "source", "parts"}
 
     def replace(match: re.Match[str]) -> str:
         key = match.group(1).lower()
         return metadata.get(key, "") if key in allowed else match.group(0)
 
-    return re.sub(r"\{(artist|title|album|year|source)\}", replace, str(template or "{source}"), flags=re.IGNORECASE)
+    return re.sub(r"\{(artist|title|album|year|source|parts)\}", replace, str(template or "{source}"), flags=re.IGNORECASE)
+
+
+def _arrangement_parts_code(arrangements: object) -> str:
+    labels: list[str] = []
+    for arrangement in arrangements or []:
+        if isinstance(arrangement, dict):
+            labels.append(f"{arrangement.get('type', '')} {arrangement.get('id', '')} {arrangement.get('name', '')}".lower())
+        else:
+            labels.append(
+                f"{getattr(arrangement, 'type', '')} {getattr(arrangement, 'id', '')} {getattr(arrangement, 'name', '')}".lower()
+            )
+    return "".join(
+        code
+        for needle, code in (("bass", "B"), ("lead", "L"), ("rhythm", "R"), ("vocal", "V"), ("combo", "C"))
+        if any(needle in label for label in labels)
+    )
 
 
 def _safe_path_segment(value: str, fallback: str = "Unknown Artist") -> str:

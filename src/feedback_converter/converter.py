@@ -727,11 +727,12 @@ def _render_output_template(
         "album": str(metadata.get("album") or "").strip(),
         "year": str(metadata.get("year") or "").strip(),
         "source": input_psarc.stem,
+        "parts": _arrangement_parts_code(metadata),
     }
     if not template:
         template = "{artist} - {title}"
     rendered = re.sub(
-        r"\{(artist|title|album|year|source)\}",
+        r"\{(artist|title|album|year|source|parts)\}",
         lambda match: values.get(match.group(1).lower(), ""),
         template,
         flags=re.IGNORECASE,
@@ -739,6 +740,18 @@ def _render_output_template(
     if not rendered.strip(" -_."):
         rendered = values["title"] or fallback or values["source"]
     return _safe_output_stem(rendered)
+
+
+def _arrangement_parts_code(metadata: dict[str, Any]) -> str:
+    names = metadata.get("arrangement_names")
+    if not isinstance(names, dict):
+        return ""
+    labels = [f"{key} {value}".lower() for key, value in names.items()]
+    return "".join(
+        code
+        for needle, code in (("bass", "B"), ("lead", "L"), ("rhythm", "R"), ("vocal", "V"), ("combo", "C"))
+        if any(needle in label for label in labels)
+    )
 
 
 def _is_vocal_sng(path: str, song: Any) -> bool:
