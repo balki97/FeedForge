@@ -27,6 +27,7 @@ release/
 *.msi
 *.zip
 *.7z
+psarc2feedpak.spec
 builder-debug.yml
 electron-builder.env
 
@@ -38,6 +39,7 @@ tmp-*
 outputs/
 
 # Local tooling and logs
+.codegraph/
 .agents/
 .codex/
 references/
