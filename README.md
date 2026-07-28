@@ -2,12 +2,12 @@
 
 ![FeedForge icon](assets/feedforge.png)
 
-FeedForge is a Windows tool for converting `.psarc` CDLC packages into
-`.feedpak` packages for FeedBack.
+FeedForge is a Windows utility for managing FeedBack-ready `.feedpak` packages
+and preparing them from CDLC source files.
 
-It can convert one file or a full folder of CDLC files in a batch. It also opens
+It can process one file or a full folder of CDLC files in a batch. It also opens
 existing `.feedpak` packages so metadata, cover art, stems, and package details
-can be reviewed or updated without reconverting from source.
+can be reviewed or updated without going back to the source file.
 
 ## Download
 
@@ -29,13 +29,13 @@ https://discord.gg/9cUe6cacQN
 3. Choose an output folder.
 4. Choose an output layout: one folder, preserve source folders, or artist folders.
 5. Choose output file names: source filename, artist-song, song-artist, or a custom template.
-6. Select the number of conversion workers.
+6. Select the number of queue workers.
 7. Optional: enable stem separation or B-standard remapping.
-8. Click `Convert queue`.
+8. Start the queue.
 
 The app writes `.feedpak` files that can be added to FeedBack.
 
-Every converted or edited package is checked against the bundled official
+Every generated or edited package is checked against the bundled official
 FeedPak schemas before FeedForge reports success. Invalid packages are rejected
 with validation details instead of being written as completed output. The
 validator is included in the portable app and works offline; users do not need
@@ -47,11 +47,11 @@ FeedForge can open existing `.feedpak` files to inspect package contents, song
 metadata, cover art, arrangements, stems, and tones. Metadata and cover art can
 be edited and saved back into the package.
 
-Existing FeedPaks can also be sent through stem separation without converting a
-`.psarc` again.
+Existing FeedPaks can also be sent through stem separation without using a
+source package again.
 
-For troubleshooting or release checks, the packaged converter can validate an
-existing package directly:
+For troubleshooting or release checks, the packaged CLI can validate an existing
+package directly:
 
 ```powershell
 psarc2feedpak.exe --validate-feedpak "song.feedpak"
@@ -70,10 +70,10 @@ the full mix in `stems/full.ogg` for FeedBack compatibility.
 ## Notes
 
 - Use fewer workers if the PC becomes slow during a large batch.
-- `Stop after current` pauses the queue after active conversions finish.
+- `Stop after current` pauses the queue after active files finish.
 - Existing output files are skipped unless `Overwrite` is enabled.
 - The local stem server install folder stores its Python environment, cache, and
   downloaded Demucs models. Choose a folder on a drive with enough free space.
 - Very large libraries are supported through folder import and a limited queue view.
-- If a conversion fails, send `%APPDATA%\FeedForge\logs\feedforge-debug.log`
+- If processing fails, send `%APPDATA%\FeedForge\logs\feedforge-debug.log`
   with the bug report.
