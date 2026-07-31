@@ -178,7 +178,10 @@ def run_demucs(
     wav = torch.from_numpy(data.T)
     wav = convert_audio(wav, samplerate, demucs_model.samplerate, demucs_model.audio_channels)
 
-    with torch.no_grad():
+    if str(resolved_device).startswith("cuda"):
+        torch.backends.cudnn.benchmark = True
+
+    with torch.inference_mode():
         separated = apply_model(
             demucs_model,
             wav[None],

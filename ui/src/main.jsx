@@ -1609,8 +1609,14 @@ function stemServerPortOwners(status) {
 function stemServerMatchesSelection(status, model, device, jobs) {
   if (!status?.healthy) return false;
   const modelMatches = !status.model || status.model === model;
-  const requestedDevice = status.requestedDevice || status.device || "";
-  const deviceMatches = !requestedDevice || requestedDevice === device || (device === "auto" && requestedDevice === "auto");
+  const requestedDevice = String(status.requestedDevice || status.device || "").toLowerCase();
+  const selectedDevice = String(device || "auto").toLowerCase();
+  const runningDevice = String(status.device || "").toLowerCase();
+  const deviceMatches =
+    !requestedDevice ||
+    requestedDevice === selectedDevice ||
+    (selectedDevice === "auto" && (requestedDevice === "auto" || runningDevice.startsWith("cuda"))) ||
+    (selectedDevice === "cuda" && runningDevice.startsWith("cuda"));
   const jobMatches = !status.concurrency || Number(status.concurrency) === Number(jobs || 1);
   return modelMatches && deviceMatches && jobMatches;
 }

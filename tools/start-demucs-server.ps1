@@ -89,7 +89,9 @@ if ($env:FEEDFORGE_PYTHON_EXE -and (Test-Path $env:FEEDFORGE_PYTHON_EXE)) {
     }
 }
 $Marker = Join-Path $InstallRoot ".feedforge-stems-source"
-$SourceStamp = "$SourceRoot|$((Get-Item (Join-Path $SourceRoot "pyproject.toml")).LastWriteTimeUtc.Ticks)|torch=$TorchIndex"
+$PyprojectPath = Join-Path $SourceRoot "pyproject.toml"
+$PyprojectHash = (Get-FileHash -Algorithm SHA256 $PyprojectPath).Hash
+$SourceStamp = "$SourceRoot|pyproject=$PyprojectHash|torch=$TorchIndex"
 
 Write-Host "FeedForge: preparing local stem setup"
 Write-Host "FeedForge: install folder $InstallRoot"
