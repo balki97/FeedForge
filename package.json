@@ -2,8 +2,9 @@
   "name": "feedforge",
   "version": "0.1.32",
   "private": true,
-  "description": "FeedBack song toolkit.",
+  "description": "Desktop toolkit for FeedPak files for the FeedBack game.",
   "author": "FeedForge Contributors",
+  "license": "MIT",
   "main": "electron/main.cjs",
   "desktopName": "FeedForge.desktop",
   "scripts": {
