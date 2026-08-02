@@ -30,8 +30,10 @@ Download the latest Windows x64 portable app, macOS Apple Silicon DMG/ZIP, or
 Linux x64 AppImage from the [latest release](https://github.com/balki97/FeedForge/releases/latest).
 
 - **Windows:** Run the portable EXE.
-- **macOS:** Open the DMG or ZIP. If macOS blocks the first launch, right-click
-  FeedForge, choose **Open**, and confirm.
+- **macOS:** Open the DMG or ZIP. If macOS blocks the first launch, try opening
+  FeedForge once, then use **System Settings → Privacy & Security → Open Anyway**.
+  For an official FeedForge download that still reports damage, run
+  `xattr -dr com.apple.quarantine "/Applications/FeedForge.app"`.
 - **Linux:** Make the AppImage executable with `chmod +x FeedForge-*.AppImage`,
   then run it.
 
