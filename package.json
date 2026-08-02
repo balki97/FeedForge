@@ -5,13 +5,14 @@
   "description": "FeedBack song toolkit.",
   "author": "FeedForge Contributors",
   "main": "electron/main.cjs",
+  "desktopName": "FeedForge.desktop",
   "scripts": {
     "dev": "concurrently -k \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && electron .\"",
     "build": "vite build",
     "converter:pack": "python -m PyInstaller --noconfirm --clean psarc2feedpak.spec",
-    "electron:pack": "npm run build && electron-builder --win",
-    "electron:pack:mac": "npm run build && electron-builder --mac dmg zip",
-    "electron:pack:linux": "npm run build && electron-builder --linux AppImage",
+    "electron:pack": "npm run build && electron-builder --win --publish never",
+    "electron:pack:mac": "npm run build && electron-builder --mac dmg zip --publish never",
+    "electron:pack:linux": "npm run build && electron-builder --linux AppImage --publish never",
     "release": "npm run converter:pack && npm run electron:pack",
     "release:win": "npm run converter:pack && npm run electron:pack",
     "release:mac": "npm run converter:pack && npm run electron:pack:mac",
@@ -103,6 +104,7 @@
     "linux": {
       "icon": "assets/feedforge-discord.png",
       "category": "Utility",
+      "syncDesktopName": true,
       "target": [
         "AppImage"
       ]
