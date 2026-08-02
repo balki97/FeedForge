@@ -195,6 +195,18 @@ def test_export_psarc_audio_falls_back_to_wav(monkeypatch, tmp_path):
     assert result.warnings[0].message == "Exported WAV because no OGG encoder was available."
 
 
+def test_missing_vgmstream_warning_explains_cli_setup(monkeypatch, tmp_path):
+    (tmp_path / "stems").mkdir()
+    monkeypatch.setattr(converter, "_convert_wem_bytes_to_ogg", lambda *_args: False)
+    monkeypatch.setattr(converter, "_convert_wem_bytes_to_wav", lambda *_args: False)
+    monkeypatch.setattr(converter, "_find_tool", lambda *_args: None)
+    warnings = []
+
+    converter._copy_audio({"audio/test.wem": b"wem-data"}, tmp_path, warnings)
+
+    assert "Install vgmstream" in warnings[0].message
+
+
 def test_oggenc_metadata_args_writes_vorbis_comments():
     assert converter._oggenc_metadata_args(
         {"title": "Song", "artist": "Artist", "album": "Album", "year": 2020}

@@ -2144,11 +2144,20 @@ def _copy_audio(
                 demucs_model=demucs_model,
                 demucs_stems=demucs_stems,
             )
-        warnings.append(
-            ConversionWarning(
-                "Could not convert WEM audio to OGG; preserved WEM, which FeedBack may not play."
+        if not _find_tool(_tools_dir(), "vgmstream-cli"):
+            warnings.append(
+                ConversionWarning(
+                    "Could not decode WEM audio because vgmstream-cli was not found. "
+                    "Install vgmstream and ensure vgmstream-cli is on PATH; preserved WEM, "
+                    "which FeedBack may not play."
+                )
             )
-        )
+        else:
+            warnings.append(
+                ConversionWarning(
+                    "Could not convert WEM audio to OGG; preserved WEM, which FeedBack may not play."
+                )
+            )
 
     target_name = f"full{ext}"
     (package_dir / "stems" / target_name).write_bytes(data)

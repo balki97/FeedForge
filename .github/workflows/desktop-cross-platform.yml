@@ -108,6 +108,11 @@ jobs:
           expected="$(node -p "require('./package.json').version")"
           test "$("$converter" --version)" = "psarc2feedpak $expected"
 
+      - name: Verify macOS application signature
+        if: runner.os == 'macOS'
+        shell: bash
+        run: codesign --verify --deep --strict --verbose=2 release/mac-arm64/FeedForge.app
+
       - name: Smoke-test bundled converter
         if: runner.os == 'Windows'
         shell: pwsh
