@@ -1,6 +1,6 @@
 {
   "name": "feedforge",
-  "version": "0.1.29",
+  "version": "0.1.30",
   "private": true,
   "description": "FeedBack song toolkit.",
   "author": "FeedForge Contributors",
@@ -10,7 +10,12 @@
     "build": "vite build",
     "converter:pack": "python -m PyInstaller --noconfirm --clean psarc2feedpak.spec",
     "electron:pack": "npm run build && electron-builder --win",
+    "electron:pack:mac": "npm run build && electron-builder --mac dmg zip",
+    "electron:pack:linux": "npm run build && electron-builder --linux AppImage",
     "release": "npm run converter:pack && npm run electron:pack",
+    "release:win": "npm run converter:pack && npm run electron:pack",
+    "release:mac": "npm run converter:pack && npm run electron:pack:mac",
+    "release:linux": "npm run converter:pack && npm run electron:pack:linux",
     "lint:ui": "vite build"
   },
   "dependencies": {
@@ -57,6 +62,10 @@
         "to": "demucs-server/start-demucs-server.ps1"
       },
       {
+        "from": "tools/start-demucs-server.py",
+        "to": "demucs-server/start-demucs-server.py"
+      },
+      {
         "from": "assets/tone-equipment",
         "to": "tone-equipment"
       },
@@ -82,6 +91,24 @@
         "portable"
       ],
       "signExecutable": false
+    },
+    "mac": {
+      "icon": "assets/feedforge-discord.png",
+      "category": "public.app-category.utilities",
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    },
+    "linux": {
+      "icon": "assets/feedforge-discord.png",
+      "category": "Utility",
+      "target": [
+        "AppImage"
+      ]
+    },
+    "toolsets": {
+      "appimage": "1.0.3"
     },
     "portable": {
       "unpackDirName": "FeedForge"

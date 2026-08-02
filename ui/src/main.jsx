@@ -491,7 +491,7 @@ function App() {
   }
 
   async function choosePythonExecutable() {
-    const selected = await api.pickPythonExecutable({ defaultPath: pythonPath || "C:\\Program Files\\Python313\\python.exe" });
+    const selected = await api.pickPythonExecutable({ defaultPath: pythonPath || "" });
     if (selected) {
       setPythonPath(selected);
       setIsCheckingPython(true);
@@ -1209,7 +1209,7 @@ function App() {
                   <label>
                     Python
                     <div className="path-row">
-                      <input value={pythonPath} onChange={(event) => setPythonPath(event.target.value)} placeholder="Auto-detect or choose python.exe" disabled={isConverting || stemServerStatus.processRunning || stemServerBusy} />
+                      <input value={pythonPath} onChange={(event) => setPythonPath(event.target.value)} placeholder="Auto-detect or choose Python" disabled={isConverting || stemServerStatus.processRunning || stemServerBusy} />
                       <button onClick={choosePythonExecutable} disabled={isConverting || stemServerStatus.processRunning || stemServerBusy}>
                         <FolderOpen size={18} />
                         Browse

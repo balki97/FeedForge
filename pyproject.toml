@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "feedforge"
-version = "0.1.28"
+version = "0.1.30"
 description = "FeedBack song toolkit."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -12,7 +12,9 @@ dependencies = [
     "construct>=2.10,<3",
     "cryptography>=42",
     "jsonschema>=4",
+    "Pillow>=10",
     "PyYAML>=6",
+    "soundfile>=0.12",
 ]
 
 [project.optional-dependencies]
@@ -25,7 +27,6 @@ stems = [
     "uvicorn>=0.30",
     "python-multipart>=0.0.9",
     "demucs>=4.0",
-    "soundfile>=0.12",
 ]
 
 [project.scripts]

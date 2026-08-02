@@ -27,7 +27,6 @@ release/
 *.msi
 *.zip
 *.7z
-psarc2feedpak.spec
 builder-debug.yml
 electron-builder.env
 
@@ -47,8 +46,7 @@ coverage/
 *.log
 Tmp/
 
-# Internal maintenance and validation files
-tests/
+# Internal maintenance files
 tools/backfill_feedpak_authors.py
 tools/reconvert_dlc_parallel.py
 tools/__pycache__/

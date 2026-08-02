@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 import mimetypes
 import os
@@ -19,6 +20,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from PIL import Image
+import soundfile as sf
 import yaml
 
 from .feedpak_validator import FeedpakValidationResult, require_valid_feedpak
@@ -2129,6 +2132,18 @@ def _copy_audio(
                 demucs_model=demucs_model,
                 demucs_stems=demucs_stems,
             )
+        if _convert_wem_bytes_to_wav(data, package_dir / "stems" / "full.wav"):
+            warnings.append(ConversionWarning("Converted WEM audio to WAV because no OGG encoder was available."))
+            return _maybe_separate_stems(
+                package_dir,
+                {"id": "full", "file": "stems/full.wav", "codec": "wav", "default": True},
+                warnings,
+                separate_stems=separate_stems,
+                demucs_url=demucs_url,
+                demucs_api_key=demucs_api_key,
+                demucs_model=demucs_model,
+                demucs_stems=demucs_stems,
+            )
         warnings.append(
             ConversionWarning(
                 "Could not convert WEM audio to OGG; preserved WEM, which FeedBack may not play."
@@ -2193,7 +2208,14 @@ def _export_audio_from_content(
         temp_ogg = workdir / "audio.ogg"
         try:
             if not _convert_wem_bytes_to_ogg(data, temp_ogg, metadata=metadata):
-                raise ValueError("Could not decode WEM audio to OGG.")
+                temp_wav = workdir / "audio.wav"
+                if not _convert_wem_bytes_to_wav(data, temp_wav):
+                    raise ValueError("Could not decode WEM audio.")
+                target = target.with_suffix(".wav")
+                if target.exists() and not overwrite:
+                    raise FileExistsError(f"Output already exists: {target}")
+                temp_ogg = temp_wav
+                warnings.append(ConversionWarning("Exported WAV because no OGG encoder was available."))
             if target.exists():
                 target.unlink()
             temp_ogg.replace(target)
@@ -2714,6 +2736,10 @@ def _convert_wem_bytes_to_ogg(data: bytes, output_path: Path, *, metadata: dict[
         temp_ogg.unlink(missing_ok=True)
 
 
+def _convert_wem_bytes_to_wav(data: bytes, output_path: Path) -> bool:
+    return _decode_wem_with_vgmstream(data, output_path, _tools_dir())
+
+
 def _convert_wem_with_vgmstream(
     data: bytes,
     output_path: Path,
@@ -2721,41 +2747,15 @@ def _convert_wem_with_vgmstream(
     *,
     metadata: dict[str, Any] | None = None,
 ) -> bool:
-    vgmstream = (tools_dir / "vgmstream-cli.exe").resolve()
-    oggenc = (tools_dir / "oggenc.exe").resolve()
-    if not vgmstream.is_file() or not oggenc.is_file():
-        return False
-
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path = output_path.resolve()
-    temp_wem = output_path.with_name(output_path.stem + ".vgm.wem").resolve()
     temp_wav = output_path.with_name(output_path.stem + ".vgm.wav").resolve()
     temp_ogg = output_path.with_name(output_path.stem + ".vgm.ogg").resolve()
-    temp_wem.write_bytes(data)
     try:
-        decode = subprocess.run(
-            [str(vgmstream), "-o", str(temp_wav), str(temp_wem)],
-            cwd=str(tools_dir),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            check=False,
-        )
-        if decode.returncode != 0 or not temp_wav.is_file() or temp_wav.stat().st_size < 1024:
+        if not _decode_wem_with_vgmstream(data, temp_wav, tools_dir):
             return False
 
-        temp_ogg.unlink(missing_ok=True)
-        encode = subprocess.run(
-            [str(oggenc), "-Q", "-q", "5", *_oggenc_metadata_args(metadata), str(temp_wav), "-o", str(temp_ogg)],
-            cwd=str(tools_dir),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            check=False,
-        )
-        if encode.returncode != 0 or not temp_ogg.is_file() or temp_ogg.stat().st_size < 1024:
+        if not _encode_wav_to_ogg(temp_wav, temp_ogg, tools_dir, metadata=metadata):
             return False
 
         if output_path.exists():
@@ -2766,15 +2766,13 @@ def _convert_wem_with_vgmstream(
         output_path.unlink(missing_ok=True)
         return False
     finally:
-        temp_wem.unlink(missing_ok=True)
         temp_wav.unlink(missing_ok=True)
         temp_ogg.unlink(missing_ok=True)
 
 
 def _convert_wav_file_to_ogg(input_path: Path, output_path: Path) -> bool:
     tools_dir = _tools_dir()
-    oggenc = (tools_dir / "oggenc.exe").resolve()
-    if not oggenc.is_file() or not input_path.is_file():
+    if not input_path.is_file():
         return False
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2782,16 +2780,7 @@ def _convert_wav_file_to_ogg(input_path: Path, output_path: Path) -> bool:
     temp_ogg = output_path.with_name(output_path.stem + ".encode.ogg").resolve()
     try:
         temp_ogg.unlink(missing_ok=True)
-        encode = subprocess.run(
-            [str(oggenc), "-Q", "-q", "5", str(input_path.resolve()), "-o", str(temp_ogg)],
-            cwd=str(tools_dir),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            check=False,
-        )
-        if encode.returncode != 0 or not temp_ogg.is_file() or temp_ogg.stat().st_size < 1024:
+        if not _encode_wav_to_ogg(input_path.resolve(), temp_ogg, tools_dir):
             return False
         if output_path.exists():
             output_path.unlink()
@@ -2802,6 +2791,81 @@ def _convert_wav_file_to_ogg(input_path: Path, output_path: Path) -> bool:
         return False
     finally:
         temp_ogg.unlink(missing_ok=True)
+
+
+def _find_tool(tools_dir: Path, name: str) -> Path | None:
+    for filename in (f"{name}.exe", name):
+        bundled = (tools_dir / filename).resolve()
+        if bundled.is_file():
+            return bundled
+    found = shutil.which(name)
+    return Path(found).resolve() if found else None
+
+
+def _decode_wem_with_vgmstream(data: bytes, output_path: Path, tools_dir: Path) -> bool:
+    vgmstream = _find_tool(tools_dir, "vgmstream-cli")
+    if not vgmstream:
+        return False
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path = output_path.resolve()
+    temp_wem = output_path.with_name(output_path.stem + ".decode.wem")
+    temp_wem.write_bytes(data)
+    try:
+        output_path.unlink(missing_ok=True)
+        proc = subprocess.run(
+            [str(vgmstream), "-o", str(output_path), str(temp_wem)],
+            cwd=str(tools_dir),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            check=False,
+        )
+        return proc.returncode == 0 and output_path.is_file() and output_path.stat().st_size >= 1024
+    finally:
+        temp_wem.unlink(missing_ok=True)
+
+
+def _encode_wav_to_ogg(
+    input_path: Path,
+    output_path: Path,
+    tools_dir: Path,
+    *,
+    metadata: dict[str, Any] | None = None,
+) -> bool:
+    output_path.unlink(missing_ok=True)
+    encoder = _find_tool(tools_dir, "oggenc")
+    if encoder:
+        command = [
+            str(encoder), "-Q", "-q", "5", *_oggenc_metadata_args(metadata),
+            str(input_path), "-o", str(output_path),
+        ]
+    else:
+        encoder = _find_tool(tools_dir, "ffmpeg")
+        command = [
+            str(encoder), "-y", "-loglevel", "error", "-i", str(input_path),
+            "-c:a", "libvorbis", "-q:a", "5", *_ffmpeg_metadata_args(metadata), str(output_path),
+        ] if encoder else None
+    if command:
+        proc = subprocess.run(
+            command,
+            cwd=str(tools_dir),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            check=False,
+        )
+        if proc.returncode == 0 and output_path.is_file() and output_path.stat().st_size >= 1024:
+            return True
+        output_path.unlink(missing_ok=True)
+    try:
+        audio, sample_rate = sf.read(input_path, dtype="float32")
+        sf.write(output_path, audio, sample_rate, format="OGG", subtype="VORBIS")
+        return output_path.stat().st_size >= 1024 and output_path.read_bytes().startswith(b"OggS")
+    except Exception:  # noqa: BLE001
+        output_path.unlink(missing_ok=True)
+        return False
 
 
 def _oggenc_metadata_args(metadata: dict[str, Any] | None) -> list[str]:
@@ -2814,6 +2878,17 @@ def _oggenc_metadata_args(metadata: dict[str, Any] | None) -> list[str]:
         ("-d", metadata.get("year")),
     ]
     return [arg for flag, value in pairs if value not in (None, "") for arg in (flag, str(value))]
+
+
+def _ffmpeg_metadata_args(metadata: dict[str, Any] | None) -> list[str]:
+    if not metadata:
+        return []
+    return [
+        arg
+        for key in ("title", "artist", "album", "year")
+        if metadata.get(key) not in (None, "")
+        for arg in ("-metadata", f"{key}={metadata[key]}")
+    ]
 
 
 def _tools_dir() -> Path:
@@ -2848,13 +2923,22 @@ def _copy_cover(content: dict[str, bytes], package_dir: Path) -> str | None:
 
 
 def _convert_dds_bytes_to_png(data: bytes, output_path: Path) -> bool:
+    output_path = output_path.resolve()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.unlink(missing_ok=True)
+    try:
+        with Image.open(io.BytesIO(data)) as image:
+            image.save(output_path, "PNG")
+        if output_path.stat().st_size > 8 and output_path.read_bytes().startswith(b"\x89PNG\r\n\x1a\n"):
+            return True
+    except Exception:  # noqa: BLE001
+        output_path.unlink(missing_ok=True)
+
     tools_dir = _tools_dir()
     topng = (tools_dir / "topng.exe").resolve()
     if not topng.is_file():
         return False
 
-    output_path = output_path.resolve()
-    output_path.parent.mkdir(parents=True, exist_ok=True)
     temp_dds = output_path.with_name(output_path.stem + ".convert.dds").resolve()
     temp_dds.write_bytes(data)
     try:
