@@ -101,6 +101,7 @@
     "mac": {
       "icon": "assets/feedforge-discord.png",
       "identity": "-",
+      "hardenedRuntime": false,
       "category": "public.app-category.utilities",
       "target": [
         "dmg",
