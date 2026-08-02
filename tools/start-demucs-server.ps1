@@ -17,6 +17,16 @@ function Test-FeedForgeStorePythonAlias {
     return $FilePath -match "\\Microsoft\\WindowsApps\\python(3)?\.exe$"
 }
 
+function Test-FeedForgeCuda {
+    param([string] $PythonPath)
+    try {
+        Invoke-FeedForgeNative $PythonPath @("-c", "import os, torch; d=os.environ.get('FEEDFORGE_DEMUCS_DEVICE', 'cuda'); d='cuda' if d == 'auto' else d; x=torch.ones(1, device=d); (x + x).cpu(); print(f'FeedForge: CUDA ready - {torch.cuda.get_device_name(torch.device(d))} / torch {torch.__version__} / CUDA {torch.version.cuda}')")
+        return $true
+    } catch {
+        return $false
+    }
+}
+
 $SourceRoot = if (Test-Path (Join-Path $PSScriptRoot "pyproject.toml")) {
     $PSScriptRoot
 } else {
@@ -91,7 +101,7 @@ if ($env:FEEDFORGE_PYTHON_EXE -and (Test-Path $env:FEEDFORGE_PYTHON_EXE)) {
 $Marker = Join-Path $InstallRoot ".feedforge-stems-source"
 $PyprojectPath = Join-Path $SourceRoot "pyproject.toml"
 $PyprojectHash = (Get-FileHash -Algorithm SHA256 $PyprojectPath).Hash
-$SourceStamp = "$SourceRoot|pyproject=$PyprojectHash|torch=$TorchIndex"
+$SourceStamp = "$SourceRoot|pyproject=$PyprojectHash|torch=$TorchIndex|cuda-probe=1"
 
 Write-Host "FeedForge: preparing local stem setup"
 Write-Host "FeedForge: install folder $InstallRoot"
@@ -116,18 +126,13 @@ if (-not (Test-Path $Python)) {
     Write-Host "FeedForge: reusing local Python environment"
 }
 
-if (-not (Test-Path $Marker) -or (Get-Content $Marker -Raw -ErrorAction SilentlyContinue) -ne $SourceStamp) {
+$InstalledStamp = if (Test-Path $Marker) { (Get-Content $Marker -Raw -ErrorAction SilentlyContinue).Trim() } else { "" }
+if ($InstalledStamp -ne $SourceStamp) {
     Write-Host "FeedForge: installing FeedForge stem dependencies"
     Invoke-FeedForgeNative $Python @("-m", "pip", "install", "--upgrade", "pip")
     Invoke-FeedForgeNative $Python @("-m", "pip", "install", "-e", "$SourceRoot[stems]")
     if ($TorchIndex) {
-        $TorchReady = $false
-        try {
-            Invoke-FeedForgeNative $Python @("-c", "import torch, sys; sys.exit(0 if getattr(torch.version, 'cuda', None) else 1)")
-            $TorchReady = $true
-        } catch {
-            $TorchReady = $false
-        }
+        $TorchReady = Test-FeedForgeCuda $Python
         if ($TorchReady) {
             Write-Host "FeedForge: CUDA PyTorch runtime already installed"
         } else {
@@ -138,6 +143,10 @@ if (-not (Test-Path $Marker) -or (Get-Content $Marker -Raw -ErrorAction Silently
     Set-Content -Encoding UTF8 -Path $Marker -Value $SourceStamp
 } else {
     Write-Host "FeedForge: dependencies already installed"
+}
+if ($TorchIndex -and -not (Test-FeedForgeCuda $Python)) {
+    Write-Error "The installed CUDA runtime cannot execute on the selected GPU. Update the NVIDIA driver or select CPU in FeedForge Settings, then start the stem server again. Open Diagnostics -> Open log for GPU and PyTorch details."
+    exit 3
 }
 Write-Host "FeedForge: verifying Demucs runtime"
 try {

@@ -2458,6 +2458,7 @@ function Inspector({
               <h2>Package Overview</h2>
               <span>{item ? statusText(item.status) : "Waiting"}</span>
             </div>
+            {item?.error && <div className="error-box"><AlertTriangle size={17} /> {item.error}</div>}
             <div className="overview-metrics">
               <FeedPakMetric label={preview?.is_multi_song ? "Songs" : "Arrangements"} value={preview?.is_multi_song ? preview.song_count : arrangements.length} />
               <FeedPakMetric label={preview?.is_multi_song ? "Arrangements" : "Stems"} value={preview?.is_multi_song ? arrangements.length : stems.length} />
@@ -2478,7 +2479,6 @@ function Inspector({
             {outputCount > 1 && (
               <div className="info-box success"><Check size={17} /> Created {outputCount} separate FeedPaks{item.outputPaths?.[0] ? ` in ${parentDir(item.outputPaths[0])}` : ""}.</div>
             )}
-            {item?.error && <div className="error-box"><AlertTriangle size={17} /> {item.error}</div>}
             {isFeedpak && validation && !validation.ok && (
               <div className="error-box">
                 <AlertTriangle size={17} />

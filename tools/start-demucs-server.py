@@ -13,6 +13,16 @@ def run(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     return subprocess.run(args, check=check, text=True)
 
 
+def cuda_ready(python: Path) -> bool:
+    probe = (
+        "import os,torch;d=os.environ.get('FEEDFORGE_DEMUCS_DEVICE','cuda');"
+        "d='cuda' if d=='auto' else d;x=torch.ones(1,device=d);(x+x).cpu();"
+        "print(f'FeedForge: CUDA ready - {torch.cuda.get_device_name(torch.device(d))} / "
+        "torch {torch.__version__} / CUDA {torch.version.cuda}')"
+    )
+    return run(str(python), "-c", probe, check=False).returncode == 0
+
+
 def main() -> int:
     script_dir = Path(__file__).resolve().parent
     source_root = script_dir if (script_dir / "pyproject.toml").is_file() else script_dir.parent
@@ -43,7 +53,7 @@ def main() -> int:
     python = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
     marker = install_root / ".feedforge-stems-source"
     pyproject = source_root / "pyproject.toml"
-    stamp = f"{source_root}|pyproject={hashlib.sha256(pyproject.read_bytes()).hexdigest()}|torch={torch_index}"
+    stamp = f"{source_root}|pyproject={hashlib.sha256(pyproject.read_bytes()).hexdigest()}|torch={torch_index}|cuda-probe=1"
 
     print("FeedForge: preparing local stem setup", flush=True)
     print(f"FeedForge: install folder {install_root}", flush=True)
@@ -61,11 +71,7 @@ def main() -> int:
         run(str(python), "-m", "pip", "install", "--upgrade", "pip")
         run(str(python), "-m", "pip", "install", "-e", f"{source_root}[stems]")
         if torch_index:
-            ready = run(
-                str(python), "-c",
-                "import torch,sys;sys.exit(0 if getattr(torch.version,'cuda',None) else 1)",
-                check=False,
-            ).returncode == 0
+            ready = cuda_ready(python)
             if not ready:
                 print("FeedForge: installing CUDA PyTorch runtime", flush=True)
                 run(
@@ -75,6 +81,16 @@ def main() -> int:
         marker.write_text(stamp, encoding="utf-8")
     else:
         print("FeedForge: dependencies already installed", flush=True)
+
+    if torch_index and not cuda_ready(python):
+        print(
+            "FeedForge: the installed CUDA runtime cannot execute on the selected GPU. "
+            "Update the NVIDIA driver or select CPU in FeedForge Settings, then start the stem server again. "
+            "Open Diagnostics -> Open log for GPU and PyTorch details.",
+            file=sys.stderr,
+            flush=True,
+        )
+        return 3
 
     verify = [str(python), "-c", "import demucs, fastapi, soundfile, torch"]
     if run(*verify, check=False).returncode:
