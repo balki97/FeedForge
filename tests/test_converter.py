@@ -6,6 +6,7 @@ import wave
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import yaml
 import pytest
@@ -226,6 +227,26 @@ def test_native_audio_tools_use_path_and_ffmpeg_fallback(monkeypatch, tmp_path):
         "-y", "-loglevel", "error", "-i", str(input_path),
         "-c:a", "libvorbis", "-q:a", "5", str(output_path),
     ]]
+
+
+def test_soundfile_ogg_fallback_streams_in_blocks(monkeypatch, tmp_path):
+    input_path = tmp_path / "input.wav"
+    output_path = tmp_path / "output.ogg"
+    input_path.write_bytes(b"RIFF")
+    source = MagicMock(samplerate=48000, channels=2)
+    source.__enter__.return_value = source
+    source.read.side_effect = [[1], []]
+    target = MagicMock()
+    target.__enter__.return_value = target
+    target.write.side_effect = lambda _block: output_path.write_bytes(b"OggS" + bytes(1020))
+
+    monkeypatch.setattr(converter, "_find_tool", lambda *_args: None)
+    monkeypatch.setattr(converter.sf, "SoundFile", MagicMock(side_effect=[source, target]))
+    monkeypatch.setattr(converter.sf, "read", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("whole-file read")))
+
+    assert converter._encode_wav_to_ogg(input_path, output_path, tmp_path)
+    source.read.assert_any_call(65536, dtype="float32", always_2d=True)
+    target.write.assert_called_once_with([1])
 
 
 def fake_song():

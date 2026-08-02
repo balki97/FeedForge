@@ -2860,8 +2860,16 @@ def _encode_wav_to_ogg(
             return True
         output_path.unlink(missing_ok=True)
     try:
-        audio, sample_rate = sf.read(input_path, dtype="float32")
-        sf.write(output_path, audio, sample_rate, format="OGG", subtype="VORBIS")
+        with sf.SoundFile(input_path) as source, sf.SoundFile(
+            output_path,
+            mode="w",
+            samplerate=source.samplerate,
+            channels=source.channels,
+            format="OGG",
+            subtype="VORBIS",
+        ) as target:
+            while len(block := source.read(65536, dtype="float32", always_2d=True)):
+                target.write(block)
         return output_path.stat().st_size >= 1024 and output_path.read_bytes().startswith(b"OggS")
     except Exception:  # noqa: BLE001
         output_path.unlink(missing_ok=True)
