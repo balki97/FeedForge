@@ -56,6 +56,10 @@ jobs:
           npm ci
           python -m pip install ".[dev]"
 
+      - name: Install macOS decoder libraries
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg libogg libvorbis mpg123
+
       - name: Bundle native WEM decoder
         shell: bash
         env:
@@ -111,7 +115,11 @@ jobs:
       - name: Verify macOS application signature
         if: runner.os == 'macOS'
         shell: bash
-        run: codesign --verify --deep --strict --verbose=2 release/mac-arm64/FeedForge.app
+        run: |
+          codesign --verify --deep --strict --verbose=2 release/mac-arm64/FeedForge.app
+          decoder="$(find release/mac-arm64/FeedForge.app -type f -path '*/feedback_converter/tools/vgmstream-cli' -print -quit)"
+          test -n "$decoder"
+          "$decoder" -h >/dev/null
 
       - name: Smoke-test bundled converter
         if: runner.os == 'Windows'

@@ -2470,11 +2470,6 @@ def _maybe_write_vocal_pitch(
     if not resolved_url:
         return None
     if not _demucs_supports_pitch(resolved_url, demucs_api_key):
-        warnings.append(
-            ConversionWarning(
-                "Karaoke pitch generation skipped: the configured Demucs server does not expose pitch generation."
-            )
-        )
         return None
     try:
         notes = _run_pitch_server(

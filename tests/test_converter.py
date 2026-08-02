@@ -207,6 +207,27 @@ def test_missing_vgmstream_warning_explains_cli_setup(monkeypatch, tmp_path):
     assert "Install vgmstream" in warnings[0].message
 
 
+def test_unsupported_pitch_capability_is_silently_optional(monkeypatch, tmp_path):
+    vocals = tmp_path / "stems" / "vocals.ogg"
+    vocals.parent.mkdir()
+    vocals.write_bytes(b"OggS vocals")
+    monkeypatch.setattr(converter, "_resolve_demucs_url", lambda _url: "http://localhost")
+    monkeypatch.setattr(converter, "_demucs_supports_pitch", lambda *_args: False)
+    warnings = []
+
+    result = converter._maybe_write_vocal_pitch(
+        tmp_path,
+        [{"t": 0, "d": 1, "w": "hello"}],
+        [{"id": "vocals", "file": "stems/vocals.ogg"}],
+        demucs_url="http://localhost",
+        demucs_api_key=None,
+        warnings=warnings,
+    )
+
+    assert result is None
+    assert warnings == []
+
+
 def test_oggenc_metadata_args_writes_vorbis_comments():
     assert converter._oggenc_metadata_args(
         {"title": "Song", "artist": "Artist", "album": "Album", "year": 2020}
