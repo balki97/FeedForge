@@ -119,7 +119,10 @@ jobs:
           codesign --verify --deep --strict --verbose=2 release/mac-arm64/FeedForge.app
           decoder="$(find release/mac-arm64/FeedForge.app -type f -path '*/feedback_converter/tools/vgmstream-cli' -print -quit)"
           test -n "$decoder"
-          "$decoder" -h >/dev/null
+          status=0
+          output="$("$decoder" -h 2>&1)" || status=$?
+          test "$status" -lt 126
+          grep -qi vgmstream <<<"$output"
 
       - name: Smoke-test bundled converter
         if: runner.os == 'Windows'
