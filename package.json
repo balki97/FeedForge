@@ -67,6 +67,10 @@
         "to": "demucs-server/start-demucs-server.py"
       },
       {
+        "from": "README.md",
+        "to": "demucs-server/README.md"
+      },
+      {
         "from": "assets/tone-equipment",
         "to": "tone-equipment"
       },

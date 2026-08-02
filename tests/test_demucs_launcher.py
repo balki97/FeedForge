@@ -17,3 +17,21 @@ def test_cuda_probe_uses_a_real_tensor_operation() -> None:
     assert cuda_ready(Path("python"))
     assert not cuda_ready(Path("python"))
     assert "torch.ones(1,device=d)" in commands[0][2]
+
+
+def test_packaged_stem_source_is_copied_to_writable_install_folder(tmp_path) -> None:
+    launcher = run_path(str(Path(__file__).parents[1] / "tools" / "start-demucs-server.py"))
+    source = tmp_path / "read-only-app"
+    install = tmp_path / "install"
+    source.mkdir()
+    (source / "pyproject.toml").write_text("[project]\nname='feedforge'\n", encoding="utf-8")
+    stale = install / "app-src" / "stale.txt"
+    stale.parent.mkdir(parents=True)
+    stale.write_text("old", encoding="utf-8")
+
+    copied = launcher["sync_install_source"](source, install)
+
+    assert copied == install / "app-src"
+    assert (copied / "pyproject.toml").is_file()
+    assert not stale.exists()
+    assert launcher["sync_install_source"](source, source) == source

@@ -2,6 +2,11 @@
 .venv/
 venv/
 .demucs-venv/
+.feedforge-stems-source
+app-src/
+model-cache/
+pip-cache/
+runtime/
 .env
 .env.*
 

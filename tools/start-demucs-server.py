@@ -23,6 +23,16 @@ def cuda_ready(python: Path) -> bool:
     return run(str(python), "-c", probe, check=False).returncode == 0
 
 
+def sync_install_source(source_root: Path, install_root: Path) -> Path:
+    if source_root == install_root:
+        return source_root
+    target = install_root / "app-src"
+    print(f"FeedForge: copying bundled app source to writable folder {target}", flush=True)
+    shutil.rmtree(target, ignore_errors=True)
+    shutil.copytree(source_root, target)
+    return target
+
+
 def main() -> int:
     script_dir = Path(__file__).resolve().parent
     source_root = script_dir if (script_dir / "pyproject.toml").is_file() else script_dir.parent
@@ -68,8 +78,9 @@ def main() -> int:
 
     if not marker.is_file() or marker.read_text(encoding="utf-8").strip() != stamp:
         print("FeedForge: installing FeedForge stem dependencies", flush=True)
+        install_source = sync_install_source(source_root, install_root)
         run(str(python), "-m", "pip", "install", "--upgrade", "pip")
-        run(str(python), "-m", "pip", "install", "-e", f"{source_root}[stems]")
+        run(str(python), "-m", "pip", "install", "-e", f"{install_source}[stems]")
         if torch_index:
             ready = cuda_ready(python)
             if not ready:
@@ -95,7 +106,8 @@ def main() -> int:
     verify = [str(python), "-c", "import demucs, fastapi, soundfile, torch"]
     if run(*verify, check=False).returncode:
         print("FeedForge: repairing missing stem dependencies", flush=True)
-        run(str(python), "-m", "pip", "install", "-e", f"{source_root}[stems]")
+        install_source = sync_install_source(source_root, install_root)
+        run(str(python), "-m", "pip", "install", "-e", f"{install_source}[stems]")
         run(*verify)
         marker.write_text(stamp, encoding="utf-8")
 
