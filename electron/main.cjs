@@ -2165,9 +2165,9 @@ function pythonCandidates(installRoot, pythonPath) {
   if (process.platform !== "win32") {
     addExe("python3", "PATH");
     addExe("python", "PATH");
-    addExe("/opt/homebrew/bin/python3", "Homebrew");
-    addExe("/usr/local/bin/python3", "local install");
-    addExe("/usr/bin/python3", "system Python");
+    for (const command of macPythonExecutables()) {
+      addExe(command.command, command.source);
+    }
     return candidates;
   }
   for (const command of registryPythonExecutables()) {
@@ -2191,6 +2191,30 @@ function pythonCandidates(installRoot, pythonPath) {
   }
 
   return candidates;
+}
+
+function macPythonExecutables() {
+  if (process.platform !== "darwin") {
+    return [
+      { command: "/usr/local/bin/python3", source: "local install" },
+      { command: "/usr/bin/python3", source: "system Python" },
+    ];
+  }
+  const home = osHome();
+  return [
+    { command: "/opt/homebrew/bin/python3", source: "Homebrew" },
+    { command: "/usr/local/bin/python3", source: "Homebrew" },
+    { command: "/opt/local/bin/python3", source: "MacPorts" },
+    { command: "/Library/Frameworks/Python.framework/Versions/Current/bin/python3", source: "python.org" },
+    { command: path.join(home, "miniconda3", "bin", "python3"), source: "Miniconda" },
+    { command: path.join(home, "anaconda3", "bin", "python3"), source: "Anaconda" },
+    { command: path.join(home, "miniforge3", "bin", "python3"), source: "Miniforge" },
+    { command: path.join(home, "mambaforge", "bin", "python3"), source: "Mambaforge" },
+    { command: "/opt/homebrew/Caskroom/miniconda/base/bin/python3", source: "Homebrew Miniconda" },
+    { command: "/usr/local/Caskroom/miniconda/base/bin/python3", source: "Homebrew Miniconda" },
+    { command: "/usr/local/Caskroom/miniforge/base/bin/python3", source: "Homebrew Miniforge" },
+    { command: "/opt/homebrew/Caskroom/miniforge/base/bin/python3", source: "Homebrew Miniforge" },
+  ];
 }
 
 function pythonExecutablePath(value) {

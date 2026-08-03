@@ -8,6 +8,55 @@ import sys
 from pathlib import Path
 
 
+def python_candidates() -> list[Path]:
+    candidates: list[Path] = []
+    env_python = os.environ.get("FEEDFORGE_PYTHON_EXE")
+    if env_python:
+        candidates.append(Path(env_python))
+    for name in ("python3", "python"):
+        found = shutil.which(name)
+        if found:
+            candidates.append(Path(found))
+    if sys.platform == "darwin":
+        home = Path.home()
+        candidates.extend([
+            Path("/opt/homebrew/bin/python3"),
+            Path("/usr/local/bin/python3"),
+            Path("/opt/local/bin/python3"),
+            Path("/Library/Frameworks/Python.framework/Versions/Current/bin/python3"),
+            home / "miniconda3/bin/python3",
+            home / "anaconda3/bin/python3",
+            home / "miniforge3/bin/python3",
+            home / "mambaforge/bin/python3",
+            Path("/opt/homebrew/Caskroom/miniconda/base/bin/python3"),
+            Path("/usr/local/Caskroom/miniconda/base/bin/python3"),
+            Path("/opt/homebrew/Caskroom/miniforge/base/bin/python3"),
+            Path("/usr/local/Caskroom/miniforge/base/bin/python3"),
+        ])
+    candidates.append(Path(sys.executable))
+
+    unique: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = str(candidate)
+        if key in seen or not candidate.is_file():
+            continue
+        seen.add(key)
+        unique.append(candidate)
+    return unique
+
+
+def system_python() -> Path:
+    for candidate in python_candidates():
+        result = subprocess.run(
+            [str(candidate), "-c", "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)"],
+            check=False,
+        )
+        if result.returncode == 0:
+            return candidate
+    return Path(sys.executable)
+
+
 def run(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     print(f"FeedForge: running {' '.join(args)}", flush=True)
     return subprocess.run(args, check=check, text=True)
@@ -93,8 +142,9 @@ def main() -> int:
     print(f"FeedForge: selected device {device}", flush=True)
 
     if not python.is_file():
-        print(f"FeedForge: creating local Python environment from {sys.executable}", flush=True)
-        run(sys.executable, "-m", "venv", str(venv))
+        bootstrap_python = system_python()
+        print(f"FeedForge: creating local Python environment from {bootstrap_python}", flush=True)
+        run(str(bootstrap_python), "-m", "venv", str(venv))
     else:
         print("FeedForge: reusing local Python environment", flush=True)
 
