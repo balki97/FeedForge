@@ -27,6 +27,33 @@ function Test-FeedForgeCuda {
     }
 }
 
+function Get-FeedForgeTorchIndex {
+    param([string] $Value)
+    if ($Value -ne "auto") {
+        return $Value
+    }
+    try {
+        $nvidiaSmi = (Get-Command nvidia-smi.exe -ErrorAction Stop).Source
+        $caps = & $nvidiaSmi --query-gpu=compute_cap --format=csv,noheader,nounits 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            return "https://download.pytorch.org/whl/cu128"
+        }
+        foreach ($cap in $caps) {
+            $parsed = 0.0
+            if (-not [double]::TryParse(($cap -replace ",", ".").Trim(), [System.Globalization.NumberStyles]::Float, [System.Globalization.CultureInfo]::InvariantCulture, [ref] $parsed)) {
+                return "https://download.pytorch.org/whl/cu128"
+            }
+            if ($parsed -ge 7.5) {
+                return "https://download.pytorch.org/whl/cu128"
+            }
+        }
+        Write-Host "FeedForge: NVIDIA GPU is older than the supported CUDA PyTorch build; using CPU runtime."
+        return ""
+    } catch {
+        return ""
+    }
+}
+
 $SourceRoot = if (Test-Path (Join-Path $PSScriptRoot "pyproject.toml")) {
     $PSScriptRoot
 } else {
@@ -68,16 +95,7 @@ $TorchIndex = if ($env:FEEDFORGE_TORCH_INDEX) {
 } else {
     ""
 }
-if ($TorchIndex -eq "auto") {
-    $HasNvidiaSmi = $false
-    try {
-        $null = Get-Command nvidia-smi.exe -ErrorAction Stop
-        $HasNvidiaSmi = $true
-    } catch {
-        $HasNvidiaSmi = $false
-    }
-    $TorchIndex = if ($HasNvidiaSmi) { "https://download.pytorch.org/whl/cu128" } else { "" }
-}
+$TorchIndex = Get-FeedForgeTorchIndex $TorchIndex
 $Venv = Join-Path $InstallRoot ".demucs-venv"
 $Python = Join-Path $Venv "Scripts\python.exe"
 $SystemPython = $null
@@ -145,8 +163,14 @@ if ($InstalledStamp -ne $SourceStamp) {
     Write-Host "FeedForge: dependencies already installed"
 }
 if ($TorchIndex -and -not (Test-FeedForgeCuda $Python)) {
-    Write-Error "The installed CUDA runtime cannot execute on the selected GPU. Update the NVIDIA driver or select CPU in FeedForge Settings, then start the stem server again. Open Diagnostics -> Open log for GPU and PyTorch details."
-    exit 3
+    if ($Device -eq "auto") {
+        Write-Host "FeedForge: CUDA runtime cannot execute on this GPU; falling back to CPU."
+        $Device = "cpu"
+        $env:FEEDFORGE_DEMUCS_DEVICE = "cpu"
+    } else {
+        Write-Error "The installed CUDA runtime cannot execute on the selected GPU. Update the NVIDIA driver or select CPU in FeedForge Settings, then start the stem server again. Open Diagnostics -> Open log for GPU and PyTorch details."
+        exit 3
+    }
 }
 Write-Host "FeedForge: verifying Demucs runtime"
 try {

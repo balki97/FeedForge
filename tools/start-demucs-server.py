@@ -23,6 +23,30 @@ def cuda_ready(python: Path) -> bool:
     return run(str(python), "-c", probe, check=False).returncode == 0
 
 
+def cuda_torch_index(value: str) -> str:
+    if value != "auto":
+        return value
+    nvidia_smi = shutil.which("nvidia-smi")
+    if not nvidia_smi:
+        return ""
+    result = subprocess.run(
+        [nvidia_smi, "--query-gpu=compute_cap", "--format=csv,noheader,nounits"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return "https://download.pytorch.org/whl/cu128"
+    for line in result.stdout.splitlines():
+        try:
+            if float(line.strip()) >= 7.5:
+                return "https://download.pytorch.org/whl/cu128"
+        except ValueError:
+            return "https://download.pytorch.org/whl/cu128"
+    print("FeedForge: NVIDIA GPU is older than the supported CUDA PyTorch build; using CPU runtime.", flush=True)
+    return ""
+
+
 def sync_install_source(source_root: Path, install_root: Path) -> Path:
     if source_root == install_root:
         return source_root
@@ -40,9 +64,7 @@ def main() -> int:
     model = os.environ.get("FEEDFORGE_DEMUCS_MODEL") or "htdemucs_6s"
     device = os.environ.get("FEEDFORGE_DEMUCS_DEVICE") or "auto"
     concurrency = os.environ.get("FEEDFORGE_DEMUCS_CONCURRENCY") or "1"
-    torch_index = os.environ.get("FEEDFORGE_TORCH_INDEX") or ""
-    if torch_index == "auto":
-        torch_index = "https://download.pytorch.org/whl/cu128" if shutil.which("nvidia-smi") else ""
+    torch_index = cuda_torch_index(os.environ.get("FEEDFORGE_TORCH_INDEX") or "")
 
     cache_root = install_root / "model-cache"
     runtime_root = install_root / "runtime"
@@ -94,14 +116,19 @@ def main() -> int:
         print("FeedForge: dependencies already installed", flush=True)
 
     if torch_index and not cuda_ready(python):
-        print(
-            "FeedForge: the installed CUDA runtime cannot execute on the selected GPU. "
-            "Update the NVIDIA driver or select CPU in FeedForge Settings, then start the stem server again. "
-            "Open Diagnostics -> Open log for GPU and PyTorch details.",
-            file=sys.stderr,
-            flush=True,
-        )
-        return 3
+        if device == "auto":
+            print("FeedForge: CUDA runtime cannot execute on this GPU; falling back to CPU.", flush=True)
+            device = "cpu"
+            os.environ["FEEDFORGE_DEMUCS_DEVICE"] = "cpu"
+        else:
+            print(
+                "FeedForge: the installed CUDA runtime cannot execute on the selected GPU. "
+                "Update the NVIDIA driver or select CPU in FeedForge Settings, then start the stem server again. "
+                "Open Diagnostics -> Open log for GPU and PyTorch details.",
+                file=sys.stderr,
+                flush=True,
+            )
+            return 3
 
     verify = [str(python), "-c", "import demucs, fastapi, soundfile, torch"]
     if run(*verify, check=False).returncode:

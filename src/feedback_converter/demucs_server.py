@@ -237,16 +237,16 @@ def resolve_device(requested: str | None = DEFAULT_DEVICE) -> str:
         return "cpu"
 
     if key in {"", "auto"}:
-        if torch.cuda.is_available() and torch.cuda.device_count() > 0:
+        if torch.cuda.is_available() and torch.cuda.device_count() > 0 and _cuda_ready(torch, "cuda:0"):
             resolved = "cuda:0"
         elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
             resolved = "mps"
         else:
             resolved = "cpu"
     elif key == "cuda":
-        resolved = "cuda:0" if torch.cuda.is_available() else "cpu"
+        resolved = "cuda:0" if torch.cuda.is_available() and _cuda_ready(torch, "cuda:0") else "cpu"
     elif key.startswith("cuda"):
-        resolved = key if torch.cuda.is_available() else "cpu"
+        resolved = key if torch.cuda.is_available() and _cuda_ready(torch, key) else "cpu"
     elif key == "mps":
         resolved = "mps" if hasattr(torch.backends, "mps") and torch.backends.mps.is_available() else "cpu"
     else:
@@ -254,6 +254,15 @@ def resolve_device(requested: str | None = DEFAULT_DEVICE) -> str:
 
     _DEVICE_CACHE[key] = resolved
     return resolved
+
+
+def _cuda_ready(torch: Any, device: str) -> bool:
+    try:
+        sample = torch.ones(1, device=device)
+        (sample + sample).cpu()
+        return True
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def detect_accelerators() -> list[dict[str, Any]]:
