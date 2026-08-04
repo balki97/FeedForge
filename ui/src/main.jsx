@@ -570,19 +570,29 @@ function App() {
       pending.push(item);
     }
     if (!pending.length) return;
+    const rs1SongsItem = pending.find((item) => isRs1SongsArchive(item.path)) || null;
+    const rs1SongsPsarc = rs1SongsItem?.path || null;
+    const hasRs1Compatibility = itemsRef.current.some((item) => isRs1CompatibilityArchive(item.path));
+    const conversionPending = hasRs1Compatibility && rs1SongsPsarc
+      ? pending.filter((item) => !isRs1SongsArchive(item.path))
+      : pending;
+    if (hasRs1Compatibility && rs1SongsItem) {
+      updateItem(rs1SongsItem.id, { status: "converted", message: "Used as RS1 audio source.", error: null });
+    }
+    if (!conversionPending.length) return;
     isConvertingRef.current = true;
     stopRequestedRef.current = false;
     setIsStopping(false);
     setIsConverting(true);
-    setConversionProgress({ total: pending.length, completed: 0, failed: 0, active: [], stopped: false });
+    setConversionProgress({ total: conversionPending.length, completed: 0, failed: 0, active: [], stopped: false });
     const stopManagedStemServerAfterQueue = separateStems && stemServerStatus.processRunning;
-    const batchSourceRoot = commonAncestorDir(pending.map((item) => item.path));
-    const reservedOutputPaths = reserveBatchOutputPaths(pending, outputDir, outputLayout, batchSourceRoot, outputNameFormat, outputNameTemplate);
+    const batchSourceRoot = commonAncestorDir(conversionPending.map((item) => item.path));
+    const reservedOutputPaths = reserveBatchOutputPaths(conversionPending, outputDir, outputLayout, batchSourceRoot, outputNameFormat, outputNameTemplate);
     let index = 0;
 
     async function convertNext() {
       if (stopRequestedRef.current) return;
-      const item = pending[index];
+      const item = conversionPending[index];
       index += 1;
       if (!item) return;
       updateItem(item.id, { status: "converting", error: null, message: null });
@@ -601,6 +611,9 @@ function App() {
         demucsModel,
         demucsStems
       };
+      if (rs1SongsPsarc && isRs1CompatibilityArchive(item.path)) {
+        payload.rs1SongsPsarc = rs1SongsPsarc;
+      }
       let failed = false;
       try {
         const result = item.sourceType === "feedpak"
@@ -641,7 +654,7 @@ function App() {
     }
 
     try {
-      const workerCount = Math.min(Math.max(1, effectiveConversionWorkers), pending.length);
+      const workerCount = Math.min(Math.max(1, effectiveConversionWorkers), conversionPending.length);
       await Promise.all(Array.from({ length: workerCount }, () => convertNext()));
     } finally {
       const stopped = stopRequestedRef.current;
@@ -2839,6 +2852,15 @@ function isSongPackage(filePath) {
 
 function fileType(filePath) {
   return String(filePath || "").toLowerCase().endsWith(".feedpak") ? "feedpak" : "psarc";
+}
+
+function isRs1SongsArchive(filePath) {
+  return basename(String(filePath || "")).toLowerCase() === "songs.psarc";
+}
+
+function isRs1CompatibilityArchive(filePath) {
+  const name = basename(String(filePath || "")).toLowerCase();
+  return name.endsWith(".psarc") && name.includes("rs1compatibility");
 }
 
 function countToneDefinitions(tones) {

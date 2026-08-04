@@ -7,7 +7,7 @@ import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .converter import ConversionResult, convert_psarc
+from .converter import ConversionResult, convert_psarc_songs
 from .inspector import inspect_psarc
 
 
@@ -15,11 +15,12 @@ from .inspector import inspect_psarc
 class BatchItem:
     input_path: Path
     result: ConversionResult | None = None
+    results: list[ConversionResult] = field(default_factory=list)
     error: str | None = None
 
     @property
     def succeeded(self) -> bool:
-        return self.result is not None and self.error is None
+        return (self.result is not None or bool(self.results)) and self.error is None
 
 
 @dataclass(frozen=True)
@@ -56,12 +57,17 @@ def convert_many(
     demucs_api_key: str | None = None,
     demucs_model: str | None = None,
     demucs_stems: list[str] | None = None,
+    rs1_songs_psarc: Path | None = None,
 ) -> BatchResult:
     """Convert multiple PSARC files, returning per-file success/error state."""
     items: list[BatchItem] = []
     normalized_inputs = [Path(path) for path in input_paths]
+    support_songs_psarc = Path(rs1_songs_psarc) if rs1_songs_psarc is not None else _selected_rs1_songs_psarc(normalized_inputs)
+    has_rs1_compatibility = any(_is_rs1_compatibility_archive(path) for path in normalized_inputs)
     resolved_source_root = Path(source_root) if source_root is not None else _common_parent(normalized_inputs)
     for input_path in normalized_inputs:
+        if has_rs1_compatibility and support_songs_psarc is not None and _same_path(input_path, support_songs_psarc):
+            continue
         output = _batch_output_path(
             input_path,
             Path(output_dir) if output_dir is not None else None,
@@ -70,7 +76,7 @@ def convert_many(
             name_template,
         )
         try:
-            result = convert_psarc(
+            results = convert_psarc_songs(
                 input_path,
                 output,
                 archive=archive,
@@ -83,13 +89,36 @@ def convert_many(
                 demucs_api_key=demucs_api_key,
                 demucs_model=demucs_model,
                 demucs_stems=demucs_stems,
+                rs1_songs_psarc=support_songs_psarc if _is_rs1_compatibility_archive(input_path) else None,
             )
         except Exception as exc:  # noqa: BLE001
             _cleanup_failed_workdir(input_path, output, archive=archive, keep_workdir=keep_workdir)
             items.append(BatchItem(input_path=input_path, error=str(exc)))
         else:
-            items.append(BatchItem(input_path=input_path, result=result))
+            items.append(BatchItem(input_path=input_path, result=results[0] if results else None, results=results))
     return BatchResult(items=items)
+
+
+def _is_rs1_compatibility_archive(path: Path) -> bool:
+    return "rs1compatibility" in path.name.lower() and path.suffix.lower() == ".psarc"
+
+
+def _is_rs1_songs_archive(path: Path) -> bool:
+    return path.name.lower() == "songs.psarc"
+
+
+def _selected_rs1_songs_psarc(paths: list[Path]) -> Path | None:
+    for path in paths:
+        if _is_rs1_songs_archive(path):
+            return path
+    return None
+
+
+def _same_path(left: Path, right: Path) -> bool:
+    try:
+        return left.resolve() == right.resolve()
+    except Exception:  # noqa: BLE001
+        return os.path.normcase(os.path.abspath(left)) == os.path.normcase(os.path.abspath(right))
 
 
 def _batch_output_path(

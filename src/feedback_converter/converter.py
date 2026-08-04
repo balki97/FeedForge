@@ -114,7 +114,11 @@ def convert_psarc_songs(
     groups = _song_groups(content)
     playable_groups = _playable_song_groups(groups)
     if len(playable_groups) <= 1:
-        merged_content = _content_with_rs1_audio(content, input_psarc.stem, rs1_songs_content)
+        if playable_groups:
+            key, paths = next(iter(playable_groups.items()))
+            merged_content = _content_for_song_group(content, key, paths, rs1_songs_content=rs1_songs_content)
+        else:
+            merged_content = _content_with_rs1_audio(content, input_psarc.stem, rs1_songs_content)
         return [
             convert_psarc(
                 input_psarc,

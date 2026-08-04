@@ -344,14 +344,16 @@ def main(argv: list[str] | None = None) -> int:
         demucs_api_key=args.demucs_api_key,
         demucs_model=args.demucs_model,
         demucs_stems=_split_csv(args.demucs_stems),
+        rs1_songs_psarc=Path(args.rs1_songs_psarc) if args.rs1_songs_psarc else None,
     )
     for item in batch.items:
-        if item.succeeded and item.result is not None:
-            _print(f"wrote {item.result.output_path}")
-            if item.result.validation and item.result.validation.ok:
-                _print(f"validated {item.result.output_path}")
-            for warning in item.result.warnings:
-                _print(f"warning: {warning.message}", stream=sys.stderr)
+        if item.succeeded:
+            for result in item.results or ([item.result] if item.result is not None else []):
+                _print(f"wrote {result.output_path}")
+                if result.validation and result.validation.ok:
+                    _print(f"validated {result.output_path}")
+                for warning in result.warnings:
+                    _print(f"warning: {warning.message}", stream=sys.stderr)
         else:
             _print(f"error converting {item.input_path}: {item.error}", stream=sys.stderr)
     return 0 if batch.ok else 1

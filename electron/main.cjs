@@ -514,7 +514,8 @@ ipcMain.handle("converter:convert", async (_event, payload) => {
     separateStems: Boolean(payload.separateStems),
     hasDemucsUrl: Boolean(payload.demucsUrl),
     demucsModel: payload.demucsModel || "",
-    demucsStems: Array.isArray(payload.demucsStems) ? payload.demucsStems : []
+    demucsStems: Array.isArray(payload.demucsStems) ? payload.demucsStems : [],
+    hasRs1SongsPsarc: Boolean(payload.rs1SongsPsarc)
   });
   const args = [payload.inputPath];
   if (payload.outputPath) args.push("-o", payload.outputPath);
@@ -524,6 +525,7 @@ ipcMain.handle("converter:convert", async (_event, payload) => {
   if (payload.demucsUrl) args.push("--demucs-url", payload.demucsUrl);
   if (payload.demucsApiKey) args.push("--demucs-api-key", payload.demucsApiKey);
   if (payload.demucsModel) args.push("--demucs-model", payload.demucsModel);
+  if (payload.rs1SongsPsarc) args.push("--rs1-songs-psarc", payload.rs1SongsPsarc);
   if (Array.isArray(payload.demucsStems) && payload.demucsStems.length) {
     args.push("--demucs-stems", payload.demucsStems.join(","));
   }
