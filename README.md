@@ -24,6 +24,13 @@ FeedForge helps you inspect, validate, edit, organize, and maintain FeedPak
 song libraries. It includes package details, metadata and stem tools, library
 auditing, duplicate checks, and optional local stem separation.
 
+### Reliable song previews
+
+Converted songs keep Rocksmith's authored preview audio for FeedBack's song
+browser. When a source has no usable preview, FeedForge creates a short preview
+from the full mix instead. Preview creation is optional, so it cannot prevent an
+otherwise playable song from converting.
+
 ## Windows, macOS, and Linux
 
 Download the latest Windows x64 portable app, macOS Apple Silicon DMG/ZIP, or
