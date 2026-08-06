@@ -409,6 +409,7 @@ def convert_psarc(
         demucs_model=demucs_model,
         demucs_stems=demucs_stems,
     )
+    preview_path = _copy_preview_audio(content, package_dir, warnings)
     cover_path = _copy_cover(content, package_dir)
 
     title = metadata.get("title") or input_psarc.stem
@@ -465,6 +466,8 @@ def convert_psarc(
         manifest["song_timeline"] = timeline_path
     if cover_path:
         manifest["cover"] = cover_path
+    if preview_path:
+        manifest["preview"] = preview_path
     if rig_entries:
         rigs_path = "rigs.json"
         manifest["rigs"] = rigs_path
@@ -578,16 +581,22 @@ def _content_for_song_group(
         if path.replace("\\", "/").lower().endswith(".bnk")
         and Path(path.replace("\\", "/")).stem.lower() in {f"song_{key}", f"{key}"}
     ]
+    preview_bnk_paths = _preview_bank_paths_for_song_key(content, key)
     wem_paths = _wem_paths_for_banks(content, bnk_paths)
-    for path in wem_paths:
+    preview_wem_paths = _wem_paths_for_banks(content, preview_bnk_paths)
+    for path in [*bnk_paths, *preview_bnk_paths]:
+        selected[path] = content[path]
+    for path in wem_paths | preview_wem_paths:
         selected[path] = content[path]
     external_wem_paths: set[str] = set()
     if rs1_songs_content:
         external_bnk_paths = _bank_paths_for_song_key(rs1_songs_content, key)
+        external_preview_bnk_paths = _preview_bank_paths_for_song_key(rs1_songs_content, key)
         external_wem_paths = _wem_paths_for_banks(rs1_songs_content, external_bnk_paths)
-        for path in external_bnk_paths:
+        external_preview_wem_paths = _wem_paths_for_banks(rs1_songs_content, external_preview_bnk_paths)
+        for path in [*external_bnk_paths, *external_preview_bnk_paths]:
             selected[path] = rs1_songs_content[path]
-        for path in external_wem_paths:
+        for path in external_wem_paths | external_preview_wem_paths:
             selected[path] = rs1_songs_content[path]
     if (bnk_paths or rs1_songs_content) and not wem_paths and not external_wem_paths:
         # A grouped multi-song PSARC with an unresolvable bank is safer to fail
@@ -643,6 +652,17 @@ def _bank_paths_for_song_key(content: dict[str, bytes], key: str) -> list[str]:
         if path.replace("\\", "/").lower().endswith(".bnk")
         and Path(path.replace("\\", "/")).stem.lower() in wanted
         and not Path(path.replace("\\", "/")).stem.lower().endswith("_preview")
+    ]
+
+
+def _preview_bank_paths_for_song_key(content: dict[str, bytes], key: str) -> list[str]:
+    wanted = {f"song_{key}", key}
+    return [
+        path
+        for path in content
+        if path.replace("\\", "/").lower().endswith(".bnk")
+        and Path(path.replace("\\", "/")).stem.lower().endswith("_preview")
+        and Path(path.replace("\\", "/")).stem.lower().removesuffix("_preview") in wanted
     ]
 
 
@@ -2103,10 +2123,12 @@ def _copy_audio(
     demucs_model: str | None = None,
     demucs_stems: list[str] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, str] | None]:
+    preview_paths = {path for path, _data in _preview_audio_candidates(content)}
     audio = [
         (path, data)
         for path, data in content.items()
         if path.lower().endswith((".wem", ".ogg", ".wav", ".mp3", ".flac", ".opus"))
+        and path not in preview_paths
     ]
     if not audio:
         raise ValueError(
@@ -2186,6 +2208,41 @@ def _copy_audio(
     )
 
 
+def _copy_preview_audio(content: dict[str, bytes], package_dir: Path, warnings: list[ConversionWarning]) -> str | None:
+    preview_audio = _preview_audio_candidates(content)
+    if not preview_audio:
+        return None
+    path, data = max(preview_audio, key=lambda item: len(item[1]))
+    ext = Path(path).suffix.lower() or ".bin"
+    if ext == ".wem":
+        if _convert_wem_bytes_to_ogg(data, package_dir / "preview.ogg"):
+            return "preview.ogg"
+        if _convert_wem_bytes_to_wav(data, package_dir / "preview.wav"):
+            warnings.append(ConversionWarning("Converted preview WEM audio to WAV because no OGG encoder was available."))
+            return "preview.wav"
+        warnings.append(ConversionWarning("Could not convert preview WEM audio; preview sound was skipped."))
+        return None
+    target = f"preview{ext}"
+    (package_dir / target).write_bytes(data)
+    return target
+
+
+def _preview_audio_candidates(content: dict[str, bytes]) -> list[tuple[str, bytes]]:
+    preview_banks = [
+        path
+        for path in content
+        if path.replace("\\", "/").lower().endswith(".bnk")
+        and Path(path.replace("\\", "/")).stem.lower().endswith("_preview")
+    ]
+    wem_paths = _wem_paths_for_banks(content, preview_banks)
+    return [
+        (path, data)
+        for path, data in content.items()
+        if path in wem_paths
+        or (path.lower().endswith((".wem", ".ogg", ".wav", ".mp3", ".flac", ".opus")) and "preview" in Path(path).stem.lower())
+    ]
+
+
 def _export_audio_from_content(
     content: dict[str, bytes],
     output_path: Path,
@@ -2194,10 +2251,12 @@ def _export_audio_from_content(
     overwrite: bool,
     metadata: dict[str, Any] | None = None,
 ) -> Path:
+    preview_paths = {path for path, _data in _preview_audio_candidates(content)}
     audio = [
         (path, data)
         for path, data in content.items()
         if path.lower().endswith((".wem", ".ogg", ".wav", ".mp3", ".flac", ".opus"))
+        and path not in preview_paths
     ]
     if not audio:
         raise ValueError("No audio file found in PSARC.")
