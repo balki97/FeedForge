@@ -31,6 +31,7 @@ from .psarc_format.sng import Song
 FEEDPAK_VERSION = "1.14.0"
 PREVIEW_DURATION_SECONDS = 30.0
 PREVIEW_FADE_SECONDS = 1.0
+AUDIO_SUFFIXES = (".wem", ".ogg", ".wav", ".mp3", ".flac", ".opus")
 UINT32_NONE = 0xFFFFFFFF
 NOTE_MASK_FRETHANDMUTE = 0x08
 NOTE_MASK_TREMOLO = 0x10
@@ -118,9 +119,25 @@ def convert_psarc_songs(
     if len(playable_groups) <= 1:
         if playable_groups:
             key, paths = next(iter(playable_groups.items()))
-            merged_content = _content_for_song_group(content, key, paths, rs1_songs_content=rs1_songs_content)
+            song_entries = [
+                (key, _content_for_song_group(content, key, paths, rs1_songs_content=rs1_songs_content))
+            ]
         else:
-            merged_content = _content_with_rs1_audio(content, input_psarc.stem, rs1_songs_content)
+            song_entries = [
+                (input_psarc.stem, _content_with_rs1_audio(content, input_psarc.stem, rs1_songs_content))
+            ]
+    else:
+        song_entries = [
+            (key, _content_for_song_group(content, key, paths, rs1_songs_content=rs1_songs_content))
+            for key, paths in sorted(playable_groups.items())
+        ]
+
+    # Validate the complete archive before the first FeedPak is written. This
+    # prevents a mismatched RS1 audio source from leaving a partial collection.
+    _validate_song_audio_entries(song_entries, input_psarc, rs1_songs_psarc=rs1_songs_psarc)
+
+    if len(song_entries) == 1:
+        _key, song_content = song_entries[0]
         return [
             convert_psarc(
                 input_psarc,
@@ -135,7 +152,7 @@ def convert_psarc_songs(
                 demucs_api_key=demucs_api_key,
                 demucs_model=demucs_model,
                 demucs_stems=demucs_stems,
-                _content=merged_content,
+                _content=song_content,
             )
         ]
 
@@ -146,9 +163,8 @@ def convert_psarc_songs(
         base_dir = output.parent if output.suffix else output
     results: list[ConversionResult] = []
     reserved_outputs: set[Path] = set()
-    for key, paths in sorted(playable_groups.items()):
-        song_content = _content_for_song_group(content, key, paths, rs1_songs_content=rs1_songs_content)
-        output = _unique_output_path(
+    for key, song_content in song_entries:
+        target = _unique_output_path(
             base_dir / f"{_safe_output_stem(_metadata_song_title(song_content) or key)}.feedpak",
             reserved_outputs,
             overwrite=overwrite,
@@ -156,7 +172,7 @@ def convert_psarc_songs(
         try:
             result = convert_psarc(
                 input_psarc,
-                output,
+                target,
                 archive=archive,
                 overwrite=overwrite,
                 keep_workdir=keep_workdir,
@@ -170,7 +186,7 @@ def convert_psarc_songs(
                 _content=song_content,
             )
         except Exception:
-            _cleanup_output(output, archive=archive, keep_workdir=keep_workdir)
+            _cleanup_output(target, archive=archive, keep_workdir=keep_workdir)
             raise
         results.append(result)
     return results
@@ -204,6 +220,9 @@ def export_psarc_audio(
             (key, _content_for_song_group(content, key, paths, rs1_songs_content=rs1_songs_content))
             for key, paths in sorted(groups.items())
         ]
+
+    # Audio export must follow the same all-or-nothing preflight as conversion.
+    _validate_song_audio_entries(song_entries, input_psarc, rs1_songs_psarc=rs1_songs_psarc)
 
     output = Path(output) if output else None
     output_is_file = bool(output and output.suffix and len(song_entries) == 1)
@@ -578,32 +597,52 @@ def _content_for_song_group(
         elif f"album_{key}_" in low or f"album_{key}." in low:
             selected[path] = data
 
-    bnk_paths = [
-        path for path in content
-        if path.replace("\\", "/").lower().endswith(".bnk")
-        and Path(path.replace("\\", "/")).stem.lower() in {f"song_{key}", f"{key}"}
-    ]
+    bnk_paths = _bank_paths_for_song_key(content, key)
     preview_bnk_paths = _preview_bank_paths_for_song_key(content, key)
-    wem_paths = _wem_paths_for_banks(content, bnk_paths)
-    preview_wem_paths = _wem_paths_for_banks(content, preview_bnk_paths)
+    wem_paths = {
+        path for path in _wem_paths_for_banks(content, bnk_paths)
+        if content.get(path)
+    }
+    preview_wem_paths = {
+        path for path in _wem_paths_for_banks(content, preview_bnk_paths)
+        if content.get(path)
+    }
     for path in [*bnk_paths, *preview_bnk_paths]:
         selected[path] = content[path]
     for path in wem_paths | preview_wem_paths:
         selected[path] = content[path]
     external_wem_paths: set[str] = set()
     if rs1_songs_content:
-        external_bnk_paths = _bank_paths_for_song_key(rs1_songs_content, key)
-        external_preview_bnk_paths = _preview_bank_paths_for_song_key(rs1_songs_content, key)
-        external_wem_paths = _wem_paths_for_banks(rs1_songs_content, external_bnk_paths)
-        external_preview_wem_paths = _wem_paths_for_banks(rs1_songs_content, external_preview_bnk_paths)
-        for path in [*external_bnk_paths, *external_preview_bnk_paths]:
-            selected[path] = rs1_songs_content[path]
-        for path in external_wem_paths | external_preview_wem_paths:
-            selected[path] = rs1_songs_content[path]
+        # The compatibility-disc archive is self-contained. If local audio is
+        # available, never let the shared archive replace it merely because its
+        # WEM happens to be larger. Fill only genuinely missing audio instead.
+        if not wem_paths:
+            external_bnk_paths = _bank_paths_for_song_key(rs1_songs_content, key)
+            external_wem_paths = {
+                path for path in _wem_paths_for_banks(rs1_songs_content, external_bnk_paths)
+                if rs1_songs_content.get(path)
+            }
+            for path in external_bnk_paths:
+                selected[path] = rs1_songs_content[path]
+            for path in external_wem_paths:
+                selected[path] = rs1_songs_content[path]
+
+        # Preview availability is independent from the full mix: a package may
+        # keep its local main audio while borrowing only an authored preview.
+        if not preview_wem_paths:
+            external_preview_bnk_paths = _preview_bank_paths_for_song_key(rs1_songs_content, key)
+            external_preview_wem_paths = {
+                path for path in _wem_paths_for_banks(rs1_songs_content, external_preview_bnk_paths)
+                if rs1_songs_content.get(path)
+            }
+            for path in external_preview_bnk_paths:
+                selected[path] = rs1_songs_content[path]
+            for path in external_preview_wem_paths:
+                selected[path] = rs1_songs_content[path]
     if (bnk_paths or rs1_songs_content) and not wem_paths and not external_wem_paths:
         # A grouped multi-song PSARC with an unresolvable bank is safer to fail
         # later with "No audio file found" than to borrow another song's WEM.
-        selected = {path: data for path, data in selected.items() if not path.lower().endswith((".wem", ".ogg", ".wav", ".mp3", ".flac", ".opus"))}
+        selected = {path: data for path, data in selected.items() if not path.lower().endswith(AUDIO_SUFFIXES)}
     return selected
 
 
@@ -612,7 +651,11 @@ def _load_rs1_songs_content(
     content: dict[str, bytes],
     rs1_songs_psarc: Path | None,
 ) -> dict[str, bytes] | None:
-    source = Path(rs1_songs_psarc) if rs1_songs_psarc else _default_rs1_songs_psarc(input_psarc, content)
+    # The selected songs.psarc is normally passed to every compatibility file
+    # in a batch. Avoid parsing that large archive for a self-contained disc.
+    if _has_complete_local_audio_coverage(content):
+        return None
+    source = Path(rs1_songs_psarc) if rs1_songs_psarc else _default_rs1_songs_psarc(input_psarc)
     if source is None:
         return None
     if not source.is_file():
@@ -621,13 +664,26 @@ def _load_rs1_songs_content(
         return PSARC(crypto=True).parse_stream(fh)
 
 
-def _default_rs1_songs_psarc(input_psarc: Path, content: dict[str, bytes]) -> Path | None:
+def _default_rs1_songs_psarc(input_psarc: Path) -> Path | None:
     if "rs1compatibility" not in input_psarc.name.lower():
         return None
-    if any(path.lower().endswith(".wem") for path in content):
-        return None
-    candidate = input_psarc.parent.parent / "songs.psarc"
-    return candidate if candidate.is_file() else None
+    for candidate in (input_psarc.parent / "songs.psarc", input_psarc.parent.parent / "songs.psarc"):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _has_complete_local_audio_coverage(content: dict[str, bytes]) -> bool:
+    groups = _playable_song_groups(_song_groups(content))
+    if not groups:
+        return _content_has_full_mix_audio(content)
+    return all(
+        any(
+            content.get(path)
+            for path in _wem_paths_for_banks(content, _bank_paths_for_song_key(content, key))
+        )
+        for key in groups
+    )
 
 
 def _content_with_rs1_audio(
@@ -638,12 +694,65 @@ def _content_with_rs1_audio(
     if not rs1_songs_content:
         return content
     selected = dict(content)
-    bnk_paths = _bank_paths_for_song_key(rs1_songs_content, _slug(key))
-    for bnk_path in bnk_paths:
-        selected[bnk_path] = rs1_songs_content[bnk_path]
-    for wem_path in _wem_paths_for_banks(rs1_songs_content, bnk_paths):
-        selected[wem_path] = rs1_songs_content[wem_path]
+    normalized_key = _slug(key)
+    if not _content_has_full_mix_audio(content):
+        bnk_paths = _bank_paths_for_song_key(rs1_songs_content, normalized_key)
+        for bnk_path in bnk_paths:
+            selected[bnk_path] = rs1_songs_content[bnk_path]
+        for wem_path in _wem_paths_for_banks(rs1_songs_content, bnk_paths):
+            selected[wem_path] = rs1_songs_content[wem_path]
+    if not any(data for _path, data in _preview_audio_candidates(content)):
+        preview_bnk_paths = _preview_bank_paths_for_song_key(rs1_songs_content, normalized_key)
+        for bnk_path in preview_bnk_paths:
+            selected[bnk_path] = rs1_songs_content[bnk_path]
+        for wem_path in _wem_paths_for_banks(rs1_songs_content, preview_bnk_paths):
+            selected[wem_path] = rs1_songs_content[wem_path]
     return selected
+
+
+def _content_has_full_mix_audio(content: dict[str, bytes]) -> bool:
+    preview_paths = {path for path, _data in _preview_audio_candidates(content)}
+    return any(
+        path.lower().endswith(AUDIO_SUFFIXES) and path not in preview_paths and bool(data)
+        for path, data in content.items()
+    )
+
+
+def _validate_song_audio_entries(
+    entries: list[tuple[str, dict[str, bytes]]],
+    input_psarc: Path,
+    *,
+    rs1_songs_psarc: Path | None,
+) -> None:
+    missing = [key for key, song_content in entries if not _content_has_full_mix_audio(song_content)]
+    if not missing:
+        return
+
+    sample = ", ".join(missing[:5])
+    if len(missing) > 5:
+        sample = f"{sample}, and {len(missing) - 5} more"
+
+    if "rs1compatibility" in input_psarc.name.lower():
+        source = Path(rs1_songs_psarc) if rs1_songs_psarc else _default_rs1_songs_psarc(input_psarc)
+        if source:
+            guidance = (
+                f"The RS1 audio source ({source}) does not contain matching full-mix audio. "
+                "Verify that the compatibility archive and songs.psarc come from the same Rocksmith installation."
+            )
+        else:
+            guidance = (
+                "Add the matching songs.psarc beside the compatibility archive, in its parent folder, "
+                "or to the same conversion batch."
+            )
+        raise ValueError(
+            f"RS1 compatibility conversion is missing full-mix audio for {len(missing)} song(s) "
+            f"({sample}). {guidance} No partial FeedPaks were created."
+        )
+
+    raise ValueError(
+        f"No full-mix audio was found for {len(missing)} song(s) in {input_psarc.name} "
+        f"({sample}). No partial output was created."
+    )
 
 
 def _bank_paths_for_song_key(content: dict[str, bytes], key: str) -> list[str]:
