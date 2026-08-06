@@ -38,6 +38,12 @@ in queue order. Results are cached by canonical path, file size, and modificatio
 time, so unchanged libraries plan even faster on later runs. Planning progress
 is shown in the desktop app and can be cancelled immediately.
 
+Background inspection is selective too. For a multi-song PSARC, the queue
+counts every playable song from the archive index but expands only the first
+song's arrangements, tones, and cover for the on-screen preview. Conversion
+still processes every song. This avoids parsing hundreds of unrelated charts
+before a large archive can be identified or converted.
+
 ## Windows, macOS, and Linux
 
 Download the latest Windows x64 portable app, macOS Apple Silicon DMG/ZIP, or

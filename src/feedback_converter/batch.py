@@ -2,11 +2,8 @@ from __future__ import annotations
 
 import json
 import os
-import re
-import shutil
 import sqlite3
 import time
-import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -22,7 +19,11 @@ from .converter import (
     psarc_planning_data_from_cache,
 )
 from .inspector import inspect_psarc
-from .output_naming import validate_name_template
+from .output_naming import (
+    output_path as build_output_path,
+    validate_name_template,
+    validate_template_metadata,
+)
 
 
 @dataclass(frozen=True)
@@ -412,6 +413,8 @@ def _batch_output_path(
 ) -> Path | None:
     if output_dir is None:
         return None
+    template = validate_name_template(name_template)
+    layout = str(output_layout or "flat").strip().lower()
     lowered_template = str(name_template or "").lower()
     needs_metadata = (
         "{artist}" in lowered_template
@@ -419,20 +422,22 @@ def _batch_output_path(
         or "{album}" in lowered_template
         or "{year}" in lowered_template
         or "{parts}" in lowered_template
-        or str(output_layout or "").strip().lower() == "artist"
+        or layout == "artist"
     )
     metadata = _output_name_metadata(input_path, needs_metadata=needs_metadata)
-    file_name = f"{_safe_path_segment(_render_name_template(name_template, metadata), metadata['source'])}.feedpak"
-    layout = str(output_layout or "flat").strip().lower()
-    if layout == "preserve":
-        try:
-            relative_parent = input_path.parent.resolve().relative_to(Path(source_root).resolve()) if source_root else Path()
-        except ValueError:
-            relative_parent = Path()
-        return output_dir / relative_parent / file_name
-    if layout == "artist":
-        return output_dir / _safe_path_segment(metadata["artist"]) / file_name
-    return output_dir / file_name
+    validate_template_metadata(template, metadata)
+    if layout == "artist" and not str(metadata.get("artist") or "").strip():
+        raise ValueError("Cannot use Artist folders because the package metadata does not contain an artist.")
+    return build_output_path(
+        input_path,
+        output_dir,
+        metadata,
+        output_layout=layout,
+        source_root=source_root,
+        name_template=template,
+        fallback_title=input_path.stem,
+        suffix=".feedpak",
+    )
 
 
 def _common_parent(paths: list[Path]) -> Path | None:
@@ -444,74 +449,43 @@ def _common_parent(paths: list[Path]) -> Path | None:
         return None
 
 
-def _output_name_metadata(input_path: Path, *, needs_metadata: bool) -> dict[str, str]:
-    source = input_path.stem
-    metadata = {
-        "source": source,
-        "artist": "Unknown Artist",
-        "title": source,
+def _output_name_metadata(input_path: Path, *, needs_metadata: bool) -> dict[str, object]:
+    metadata: dict[str, object] = {
+        "artist": "",
+        "title": "",
         "album": "",
         "year": "",
-        "parts": "",
+        "arrangement_names": {},
     }
     if not needs_metadata:
         return metadata
-    try:
+    if input_path.suffix.lower() == ".feedpak" or input_path.is_dir():
+        # Imported lazily to avoid a batch -> feedpak -> converter import cycle.
+        from .feedpak import inspect_feedpak
+
+        preview = inspect_feedpak(input_path)
+        artist = preview.get("artist")
+        title = preview.get("title")
+        album = preview.get("album")
+        year = preview.get("year")
+        arrangements = preview.get("arrangements") or []
+    else:
         preview = inspect_psarc(input_path)
-    except Exception:  # noqa: BLE001
-        return metadata
-    metadata["artist"] = str(getattr(preview, "artist", None) or metadata["artist"])
-    metadata["title"] = str(getattr(preview, "title", None) or metadata["title"])
-    metadata["album"] = str(getattr(preview, "album", None) or "")
-    metadata["year"] = str(getattr(preview, "year", None) or "")
-    metadata["parts"] = _arrangement_parts_code(getattr(preview, "arrangements", None))
+        artist = getattr(preview, "artist", None)
+        title = getattr(preview, "title", None)
+        album = getattr(preview, "album", None)
+        year = getattr(preview, "year", None)
+        arrangements = getattr(preview, "arrangements", None) or []
+    metadata["artist"] = str(artist or "")
+    metadata["title"] = str(title or "")
+    metadata["album"] = str(album or "")
+    metadata["year"] = str(year or "")
+    metadata["arrangement_names"] = {
+        str(arrangement.get("id") or index) if isinstance(arrangement, dict) else str(getattr(arrangement, "id", index)): (
+            str(arrangement.get("name") or arrangement.get("type") or "")
+            if isinstance(arrangement, dict)
+            else str(getattr(arrangement, "name", None) or getattr(arrangement, "type", None) or "")
+        )
+        for index, arrangement in enumerate(arrangements)
+    }
     return metadata
-
-
-def _render_name_template(template: str, metadata: dict[str, str]) -> str:
-    allowed = {"artist", "title", "album", "year", "source", "parts"}
-
-    def replace(match: re.Match[str]) -> str:
-        key = match.group(1).lower()
-        return metadata.get(key, "") if key in allowed else match.group(0)
-
-    return re.sub(r"\{(artist|title|album|year|source|parts)\}", replace, str(template or "{source}"), flags=re.IGNORECASE)
-
-
-def _arrangement_parts_code(arrangements: object) -> str:
-    labels: list[str] = []
-    for arrangement in arrangements or []:
-        if isinstance(arrangement, dict):
-            labels.append(f"{arrangement.get('type', '')} {arrangement.get('id', '')} {arrangement.get('name', '')}".lower())
-        else:
-            labels.append(
-                f"{getattr(arrangement, 'type', '')} {getattr(arrangement, 'id', '')} {getattr(arrangement, 'name', '')}".lower()
-            )
-    return "".join(
-        code
-        for needle, code in (("bass", "B"), ("lead", "L"), ("rhythm", "R"), ("vocal", "V"), ("combo", "C"))
-        if any(needle in label for label in labels)
-    )
-
-
-def _safe_path_segment(value: str, fallback: str = "Unknown Artist") -> str:
-    normalized = unicodedata.normalize("NFKD", str(value or ""))
-    ascii_value = normalized.encode("ascii", "ignore").decode("ascii")
-    cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1F]', "_", ascii_value or str(value or ""))
-    cleaned = re.sub(r"\s+", " ", cleaned).strip().rstrip(". ")
-    return cleaned or fallback
-
-
-def _cleanup_failed_workdir(
-    input_path: Path,
-    output: Path | None,
-    *,
-    archive: bool,
-    keep_workdir: bool,
-) -> None:
-    if not archive or keep_workdir:
-        return
-    target = output or input_path.with_suffix(".feedpak")
-    workdir = target.with_suffix(target.suffix + ".work")
-    if workdir.is_dir():
-        shutil.rmtree(workdir, ignore_errors=True)

@@ -10,12 +10,15 @@ from .converter import (
     _display_name,
     _duration_from_song,
     _authors_from_metadata,
+    _content_for_song_group,
     _extract_metadata,
     _find_sng_entries,
+    _is_vocal_sidecar_for_key,
     _playable_song_groups,
     _arrangement_event_count,
     _arrangement_note_count,
     _song_groups,
+    _song_group_key_from_path,
     _song_chart_data,
     _song_tones_to_feedpak,
     _template_to_feedpak,
@@ -87,6 +90,7 @@ class PsarcPreview:
     lyrics: int = 0
     song_count: int = 1
     is_multi_song: bool = False
+    preview_scope: str = "package"
     warnings: list[str] = field(default_factory=list)
 
 
@@ -97,11 +101,9 @@ def inspect_psarc(input_psarc: Path, *, cover_dir: Path | None = None) -> PsarcP
     if not input_psarc.is_file():
         raise FileNotFoundError(f"PSARC file not found: {input_psarc}")
 
-    with input_psarc.open("rb") as fh:
-        content = PSARC(crypto=True).parse_preview_stream(fh)
+    content, song_count = _read_preview_content(input_psarc)
 
     metadata = _extract_metadata(content)
-    song_count = max(1, len(_playable_song_groups(_song_groups(content))))
     arrangements: list[ArrangementPreview] = []
     tones: list[ArrangementTonePreview] = []
     lyric_count = 0
@@ -109,6 +111,11 @@ def inspect_psarc(input_psarc: Path, *, cover_dir: Path | None = None) -> PsarcP
     used_ids: set[str] = set()
 
     for source_path, data in _find_sng_entries(content):
+        if not data:
+            warnings.append(
+                f"Skipped empty SNG entry {source_path}; the source archive contains no chart data for this arrangement."
+            )
+            continue
         try:
             song = Song.parse(data)
         except Exception as exc:  # noqa: BLE001
@@ -171,8 +178,46 @@ def inspect_psarc(input_psarc: Path, *, cover_dir: Path | None = None) -> PsarcP
         lyrics=lyric_count,
         song_count=song_count,
         is_multi_song=song_count > 1,
+        preview_scope="first_song" if song_count > 1 else "package",
         warnings=warnings,
     )
+
+
+def _read_preview_content(input_psarc: Path) -> tuple[dict[str, bytes], int]:
+    """Read one representative song from a multi-song archive for fast UI inspection."""
+    with input_psarc.open("rb") as fh:
+        metadata_content = PSARC(crypto=True).parse_metadata_stream(fh)
+
+    playable_groups = _playable_song_groups(_song_groups(metadata_content))
+    song_count = max(1, len(playable_groups))
+    if not playable_groups:
+        with input_psarc.open("rb") as fh:
+            return PSARC(crypto=True).parse_preview_stream(fh), song_count
+
+    key, paths = next(iter(playable_groups.items()))
+    content = _content_for_song_group(metadata_content, key, paths)
+    with input_psarc.open("rb") as fh:
+        details = PSARC(crypto=True).parse_selected_stream(
+            fh,
+            lambda path: _is_preview_detail_for_song(path, key),
+        )
+    # Updating placeholder SNG entries preserves their original archive order.
+    content.update(details)
+    return content, song_count
+
+
+def _is_preview_detail_for_song(path: str, key: str) -> bool:
+    normalized = path.replace("\\", "/").lower()
+    suffix = Path(normalized).suffix
+    stem_key = _song_group_key_from_path(path)
+    belongs_to_song = stem_key == key or _is_vocal_sidecar_for_key(stem_key, key)
+    if suffix in {".sng", ".xml"}:
+        return belongs_to_song
+    if suffix in {".version", ".txt", ".ini"}:
+        return True
+    if suffix in {".png", ".jpg", ".jpeg", ".dds"}:
+        return f"album_{key}_" in normalized or f"album_{key}." in normalized
+    return False
 
 
 def _preview_chord_note_count(song: Any, chord_id: int) -> int:
