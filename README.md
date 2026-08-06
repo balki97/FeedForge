@@ -24,6 +24,16 @@ FeedForge helps you inspect, validate, edit, organize, and maintain FeedPak
 song libraries. It includes package details, metadata and stem tools, library
 auditing, duplicate checks, and optional local stem separation.
 
+### Rocksmith 1 compatibility archives
+
+For the standard RS1 archive set, `rs1compatibilitydisc_p.psarc` contains its
+own audio, while `rs1compatibilitydlc_p.psarc` needs the matching `songs.psarc`.
+FeedForge finds `songs.psarc` beside a compatibility archive or in its parent
+folder, and it can also be supplied explicitly. Local mapped audio always takes
+priority; the shared archive fills only missing full-mix or authored-preview
+audio. FeedForge validates every song before writing output, so a missing or
+mismatched audio archive cannot leave a partially converted collection.
+
 ## Windows, macOS, and Linux
 
 Download the latest Windows x64 portable app, macOS Apple Silicon DMG/ZIP, or
