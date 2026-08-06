@@ -572,20 +572,12 @@ function App() {
     if (!pending.length) return;
     const rs1SongsItem = pending.find((item) => isRs1SongsArchive(item.path)) || null;
     const rs1SongsPsarc = rs1SongsItem?.path || null;
-    const hasRs1Compatibility = itemsRef.current.some((item) => isRs1CompatibilityArchive(item.path));
-    const conversionPending = hasRs1Compatibility && rs1SongsPsarc
-      ? pending.filter((item) => !isRs1SongsArchive(item.path))
-      : pending;
-    if (hasRs1Compatibility && rs1SongsItem) {
-      updateItem(rs1SongsItem.id, { status: "converted", message: "Used as RS1 audio source.", error: null });
-    }
-    if (!conversionPending.length) return;
     isConvertingRef.current = true;
     stopRequestedRef.current = false;
     setIsStopping(false);
     setIsConverting(true);
+    const conversionPending = pending;
     setConversionProgress({ total: conversionPending.length, completed: 0, failed: 0, active: [], stopped: false });
-    const stopManagedStemServerAfterQueue = separateStems && stemServerStatus.processRunning;
     const batchSourceRoot = commonAncestorDir(conversionPending.map((item) => item.path));
     const reservedOutputPaths = reserveBatchOutputPaths(conversionPending, outputDir, outputLayout, batchSourceRoot, outputNameFormat, outputNameTemplate);
     let index = 0;
@@ -663,9 +655,6 @@ function App() {
       setIsStopping(false);
       setIsConverting(false);
       setConversionProgress((current) => ({ ...current, active: [], stopped }));
-      if (stopManagedStemServerAfterQueue) {
-        stopLocalStemServer();
-      }
       pumpInspectionQueue();
     }
   }
