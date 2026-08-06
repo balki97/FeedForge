@@ -29,6 +29,8 @@ from .psarc_format.psarc import PSARC
 from .psarc_format.sng import Song
 
 FEEDPAK_VERSION = "1.14.0"
+PREVIEW_DURATION_SECONDS = 30.0
+PREVIEW_FADE_SECONDS = 1.0
 UINT32_NONE = 0xFFFFFFFF
 NOTE_MASK_FRETHANDMUTE = 0x08
 NOTE_MASK_TREMOLO = 0x10
@@ -409,7 +411,7 @@ def convert_psarc(
         demucs_model=demucs_model,
         demucs_stems=demucs_stems,
     )
-    preview_path = _copy_preview_audio(content, package_dir, warnings)
+    preview_path = _copy_preview_audio(content, package_dir, stem_entries, warnings)
     cover_path = _copy_cover(content, package_dir)
 
     title = metadata.get("title") or input_psarc.stem
@@ -2208,23 +2210,93 @@ def _copy_audio(
     )
 
 
-def _copy_preview_audio(content: dict[str, bytes], package_dir: Path, warnings: list[ConversionWarning]) -> str | None:
+def _copy_preview_audio(
+    content: dict[str, bytes],
+    package_dir: Path,
+    stem_entries: list[dict[str, Any]],
+    warnings: list[ConversionWarning],
+) -> str | None:
+    """Preserve an authored preview or create one from the converted full mix."""
     preview_audio = _preview_audio_candidates(content)
-    if not preview_audio:
-        return None
-    path, data = max(preview_audio, key=lambda item: len(item[1]))
-    ext = Path(path).suffix.lower() or ".bin"
-    if ext == ".wem":
-        if _convert_wem_bytes_to_ogg(data, package_dir / "preview.ogg"):
-            return "preview.ogg"
-        if _convert_wem_bytes_to_wav(data, package_dir / "preview.wav"):
-            warnings.append(ConversionWarning("Converted preview WEM audio to WAV because no OGG encoder was available."))
-            return "preview.wav"
-        warnings.append(ConversionWarning("Could not convert preview WEM audio; preview sound was skipped."))
-        return None
-    target = f"preview{ext}"
-    (package_dir / target).write_bytes(data)
-    return target
+    if preview_audio:
+        path, data = max(preview_audio, key=lambda item: len(item[1]))
+        ext = Path(path).suffix.lower() or ".bin"
+        if ext == ".wem":
+            ogg_target = package_dir / "preview.ogg"
+            try:
+                if _convert_wem_bytes_to_ogg(data, ogg_target):
+                    return "preview.ogg"
+            except Exception:  # noqa: BLE001
+                ogg_target.unlink(missing_ok=True)
+
+            wav_target = package_dir / "preview.wav"
+            try:
+                if _convert_wem_bytes_to_wav(data, wav_target):
+                    warnings.append(
+                        ConversionWarning(
+                            "Converted preview WEM audio to WAV because no OGG encoder was available."
+                        )
+                    )
+                    return "preview.wav"
+            except Exception:  # noqa: BLE001
+                pass
+            wav_target.unlink(missing_ok=True)
+        else:
+            target = package_dir / f"preview{ext}"
+            try:
+                target.write_bytes(data)
+                return target.name
+            except OSError:
+                target.unlink(missing_ok=True)
+
+    full_entry = next((entry for entry in stem_entries if str(entry.get("id") or "") == "full"), None)
+    full_path = str(full_entry.get("file") or "") if full_entry else ""
+    fallback_target = package_dir / "preview.ogg"
+    if full_path and _write_preview_from_full_mix(package_dir / full_path, fallback_target):
+        return "preview.ogg"
+
+    fallback_target.unlink(missing_ok=True)
+    warnings.append(
+        ConversionWarning(
+            "Could not create browser preview audio; the song remains playable, "
+            "but FeedBack's song preview will be unavailable."
+        )
+    )
+    return None
+
+
+def _write_preview_from_full_mix(source: Path, target: Path) -> bool:
+    """Create a deterministic 30-second OGG clip at 25% of the full mix."""
+    target.unlink(missing_ok=True)
+    try:
+        with sf.SoundFile(source) as audio:
+            if audio.samplerate <= 0 or audio.frames <= 0:
+                return False
+            preview_frames = min(audio.frames, max(1, round(audio.samplerate * PREVIEW_DURATION_SECONDS)))
+            latest_start = max(0, audio.frames - preview_frames)
+            start_frame = min(latest_start, max(0, round(audio.frames * 0.25)))
+            audio.seek(start_frame)
+            samples = audio.read(preview_frames, dtype="float32", always_2d=True)
+            if len(samples) == 0:
+                return False
+            fade_frames = min(round(audio.samplerate * PREVIEW_FADE_SECONDS), len(samples) // 2)
+            for index in range(fade_frames):
+                gain = index / max(1, fade_frames)
+                samples[index] *= gain
+                samples[-1 - index] *= gain
+            with sf.SoundFile(
+                target,
+                mode="w",
+                samplerate=audio.samplerate,
+                channels=audio.channels,
+                format="OGG",
+                subtype="VORBIS",
+            ) as preview:
+                preview.write(samples)
+        return target.stat().st_size >= 1024 and target.read_bytes().startswith(b"OggS")
+    except Exception:  # noqa: BLE001
+        target.unlink(missing_ok=True)
+        return False
 
 
 def _preview_audio_candidates(content: dict[str, bytes]) -> list[tuple[str, bytes]]:
