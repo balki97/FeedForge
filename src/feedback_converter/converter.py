@@ -143,11 +143,15 @@ class PsarcPlanningData:
 
     def to_cache_payload(self) -> dict[str, Any]:
         return {
+            "version": PSARC_PLANNING_CACHE_VERSION,
             "songs": [
                 {"key": key, "metadata": metadata}
                 for key, metadata in self.songs
             ]
         }
+
+
+PSARC_PLANNING_CACHE_VERSION = 2
 
 
 def psarc_planning_data_from_cache(
@@ -156,6 +160,8 @@ def psarc_planning_data_from_cache(
     source_mtime_ns: int,
     payload: dict[str, Any],
 ) -> PsarcPlanningData:
+    if not isinstance(payload, dict) or payload.get("version") != PSARC_PLANNING_CACHE_VERSION:
+        raise ValueError("Cached PSARC metadata was produced by an older planner version.")
     raw_songs = payload.get("songs") if isinstance(payload, dict) else None
     if not isinstance(raw_songs, list) or not raw_songs:
         raise ValueError("Cached PSARC metadata does not contain any songs.")
@@ -342,16 +348,20 @@ def _read_psarc_song_entries(
     rs1_songs_content = _load_rs1_songs_content(input_psarc, content, rs1_songs_psarc) if include_rs1_audio else None
     playable_groups = _playable_song_groups(_song_groups(content))
     if metadata_only:
-        if len(playable_groups) <= 1:
-            key = next(iter(playable_groups), input_psarc.stem)
-            return [(key, {path: data for path, data in content.items() if path.lower().endswith((".json", ".hsan"))})]
+        if not playable_groups:
+            return [
+                (
+                    input_psarc.stem,
+                    {path: data for path, data in content.items() if path.lower().endswith((".json", ".hsan"))},
+                )
+            ]
         return [
             (
                 key,
                 {
-                    path: content[path]
-                    for path in paths
-                    if path in content and path.lower().endswith((".json", ".hsan"))
+                    path: data
+                    for path, data in _content_for_song_group(content, key, paths).items()
+                    if path.lower().endswith((".json", ".hsan"))
                 },
             )
             for key, paths in sorted(playable_groups.items())
@@ -515,8 +525,20 @@ def _validated_planned_targets(
             "year": str(metadata.get("year") or ""),
             "parts": naming_arrangement_parts_code(metadata),
         }
-        if any(str(planned.get(field) or "") != value for field, value in expected.items()):
-            raise ValueError(f"Song metadata changed after output names were planned: {input_psarc}. Restart the conversion.")
+        mismatches = [
+            (field, str(planned.get(field) or ""), value)
+            for field, value in expected.items()
+            if str(planned.get(field) or "") != value
+        ]
+        if mismatches:
+            details = ", ".join(
+                f"{field}: planned {planned_value!r}, found {actual_value!r}"
+                for field, planned_value, actual_value in mismatches
+            )
+            raise ValueError(
+                f"Song metadata changed after output names were planned: {input_psarc}. "
+                f"Differences: {details}. Restart the conversion."
+            )
         target = str(planned.get("path") or "").strip()
         if not target:
             raise ValueError(f"Output plan contains an empty path for song {expected['artist']} - {expected['title']}.")
@@ -902,7 +924,11 @@ def _content_for_song_group(
     rs1_songs_content: dict[str, bytes] | None = None,
 ) -> dict[str, bytes]:
     key = key.lower()
-    selected = {path: content[path] for path in paths if path in content}
+    # ``paths`` is a set. Iterating it made the order of manifests depend on
+    # Python's per-process hash seed, which could make planning and conversion
+    # choose different values when arrangements contain conflicting metadata.
+    # Preserve the PSARC/archive order from ``content`` instead.
+    selected = {path: data for path, data in content.items() if path in paths}
 
     for path, data in content.items():
         low = path.replace("\\", "/").lower()
