@@ -24,6 +24,19 @@ FeedForge helps you inspect, validate, edit, organize, and maintain FeedPak
 song libraries. It includes package details, metadata and stem tools, library
 auditing, duplicate checks, and optional local stem separation.
 
+### Reliable batch output naming
+
+Before converting a queue, FeedForge reads the actual metadata for every song
+and creates one collision-safe output plan. The selected filename template and
+folder layout are applied consistently to individual files, multi-select jobs,
+recursive folder imports, and multi-song PSARCs. Existing output files receive
+a numbered name unless **Overwrite existing output** is enabled. A source that
+changes after planning is rejected instead of being written under a stale or
+incorrect name. If a selected template requires metadata that the PSARC does
+not contain, that item stops with an actionable error instead of silently using
+an `Unknown Artist` filename; **Source filename** remains available as a safe
+fallback convention.
+
 ## Windows, macOS, and Linux
 
 Download the latest Windows x64 portable app, macOS Apple Silicon DMG/ZIP, or

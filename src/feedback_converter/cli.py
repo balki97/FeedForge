@@ -12,7 +12,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from feedback_converter import __version__
-from feedback_converter.batch import _batch_output_path, convert_many
+from feedback_converter.batch import _batch_output_path, convert_many, plan_conversion_request
 from feedback_converter.converter import convert_psarc, convert_psarc_songs, export_psarc_audio
 from feedback_converter.feedpak import export_feedpak_audio, inspect_feedpak, update_feedpak
 from feedback_converter.feedpak_validator import validate_feedpak
@@ -164,6 +164,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="Folder for cover art written during --inspect-json.",
     )
     parser.add_argument(
+        "--plan-conversion-file",
+        help="Read a desktop batch-planning request from JSON and write the authoritative output plan to stdout.",
+    )
+    parser.add_argument(
+        "--output-plan-json",
+        help="Internal output plan produced by --plan-conversion-file for one PSARC conversion.",
+    )
+    parser.add_argument(
+        "--output-plan-file",
+        help="Read an internal one-PSARC output plan from JSON without command-line length limits.",
+    )
+    parser.add_argument(
         "--validate-feedpak",
         action="store_true",
         help="Validate one or more FeedPak packages against the bundled FeedPak spec schemas.",
@@ -199,6 +211,16 @@ def main(argv: list[str] | None = None) -> int:
     _configure_stdio()
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    if args.plan_conversion_file:
+        try:
+            request = json.loads(Path(args.plan_conversion_file).read_text(encoding="utf-8"))
+            result = plan_conversion_request(request)
+        except Exception as exc:  # noqa: BLE001
+            _print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False), stream=sys.stdout)
+            return 1
+        _print(json.dumps(_jsonable(result), ensure_ascii=False), stream=sys.stdout)
+        return 0
 
     if args.validate_feedpak:
         if not args.input:
@@ -270,8 +292,10 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if ok else 1
 
     if len(input_paths) == 1:
-        output_path = _single_output_path(input_paths[0], output_arg, args.name_template)
         if input_paths[0].suffix.lower() == ".feedpak" or input_paths[0].is_dir():
+            if args.output_plan_json or args.output_plan_file:
+                parser.error("output plans are only valid for PSARC conversion")
+            output_path = _single_output_path(input_paths[0], output_arg, args.name_template)
             try:
                 result = update_feedpak(
                     input_paths[0],
@@ -299,10 +323,22 @@ def main(argv: list[str] | None = None) -> int:
                 _print(f"warning: {warning.message}", stream=sys.stderr)
             return 0
 
+        if args.output_plan_json and args.output_plan_file:
+            parser.error("use only one of --output-plan-json or --output-plan-file")
+        try:
+            output_plan = (
+                json.loads(Path(args.output_plan_file).read_text(encoding="utf-8"))
+                if args.output_plan_file
+                else _json_arg(args.output_plan_json, "output plan")
+            )
+        except Exception as exc:  # noqa: BLE001
+            parser.error(f"could not read output plan: {exc}")
+        if output_plan is not None and not isinstance(output_plan, dict):
+            parser.error("output plan must be a JSON object")
         try:
             results = convert_psarc_songs(
                 input_paths[0],
-                output_path,
+                output_arg,
                 archive=not args.directory,
                 overwrite=args.overwrite,
                 keep_workdir=args.keep_workdir,
@@ -314,9 +350,12 @@ def main(argv: list[str] | None = None) -> int:
                 demucs_model=args.demucs_model,
                 demucs_stems=_split_csv(args.demucs_stems),
                 rs1_songs_psarc=Path(args.rs1_songs_psarc) if args.rs1_songs_psarc else None,
+                output_layout=args.output_layout,
+                source_root=Path(args.source_root) if args.source_root else None,
+                name_template=args.name_template,
+                output_plan=output_plan,
             )
         except Exception as exc:  # noqa: BLE001
-            _cleanup_failed_workdir(input_paths[0], output_path, archive=not args.directory)
             _print(f"error: {exc}", stream=sys.stderr)
             return 1
 

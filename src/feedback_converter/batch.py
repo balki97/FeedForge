@@ -7,8 +7,9 @@ import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .converter import ConversionResult, convert_psarc_songs
+from .converter import ConversionResult, convert_psarc_songs, plan_psarc_songs
 from .inspector import inspect_psarc
+from .output_naming import validate_name_template
 
 
 @dataclass(frozen=True)
@@ -64,18 +65,21 @@ def convert_many(
     normalized_inputs = [Path(path) for path in input_paths]
     support_songs_psarc = Path(rs1_songs_psarc) if rs1_songs_psarc is not None else _selected_rs1_songs_psarc(normalized_inputs)
     resolved_source_root = Path(source_root) if source_root is not None else _common_parent(normalized_inputs)
+    reserved_outputs: set[Path] = set()
     for input_path in normalized_inputs:
-        output = _batch_output_path(
-            input_path,
-            Path(output_dir) if output_dir is not None else None,
-            output_layout,
-            resolved_source_root,
-            name_template,
-        )
         try:
+            plan = plan_psarc_songs(
+                input_path,
+                Path(output_dir) if output_dir is not None else None,
+                output_layout=output_layout,
+                source_root=resolved_source_root,
+                name_template=name_template,
+                overwrite=overwrite,
+                reserved_outputs=reserved_outputs,
+                rs1_songs_psarc=support_songs_psarc if _is_rs1_compatibility_archive(input_path) else None,
+            )
             results = convert_psarc_songs(
                 input_path,
-                output,
                 archive=archive,
                 overwrite=overwrite,
                 keep_workdir=keep_workdir,
@@ -87,13 +91,67 @@ def convert_many(
                 demucs_model=demucs_model,
                 demucs_stems=demucs_stems,
                 rs1_songs_psarc=support_songs_psarc if _is_rs1_compatibility_archive(input_path) else None,
+                output_layout=output_layout,
+                source_root=resolved_source_root,
+                name_template=name_template,
+                output_plan=plan.to_dict(),
             )
         except Exception as exc:  # noqa: BLE001
-            _cleanup_failed_workdir(input_path, output, archive=archive, keep_workdir=keep_workdir)
             items.append(BatchItem(input_path=input_path, error=str(exc)))
         else:
             items.append(BatchItem(input_path=input_path, result=results[0] if results else None, results=results))
     return BatchResult(items=items)
+
+
+def plan_conversion_request(request: dict[str, object]) -> dict[str, object]:
+    """Build one collision-safe output plan for a desktop conversion queue."""
+    if not isinstance(request, dict):
+        raise ValueError("Conversion planning request must be a JSON object.")
+    raw_items = request.get("items")
+    if not isinstance(raw_items, list) or not raw_items:
+        raise ValueError("Conversion planning request does not contain any PSARC files.")
+
+    output_dir_value = str(request.get("outputDir") or "").strip()
+    output_dir = Path(output_dir_value) if output_dir_value else None
+    output_layout = str(request.get("outputLayout") or "flat")
+    name_template = validate_name_template(str(request.get("nameTemplate") or "{source}"))
+    overwrite = request.get("overwrite") is True
+    rs1_value = str(request.get("rs1SongsPsarc") or "").strip()
+    rs1_songs_psarc = Path(rs1_value) if rs1_value else None
+    reserved_outputs: set[Path] = set()
+    results: list[dict[str, object]] = []
+
+    for raw_item in raw_items:
+        if not isinstance(raw_item, dict):
+            results.append({"ok": False, "inputPath": "", "error": "Invalid conversion planning item."})
+            continue
+        input_value = str(raw_item.get("inputPath") or "").strip()
+        source_root_value = str(raw_item.get("sourceRoot") or "").strip()
+        input_path = Path(input_value)
+        try:
+            plan = plan_psarc_songs(
+                input_path,
+                output_dir,
+                output_layout=output_layout,
+                source_root=Path(source_root_value) if source_root_value else None,
+                name_template=name_template,
+                overwrite=overwrite,
+                reserved_outputs=reserved_outputs,
+                rs1_songs_psarc=rs1_songs_psarc if _is_rs1_compatibility_archive(input_path) else None,
+            )
+        except Exception as exc:  # noqa: BLE001
+            results.append({"ok": False, "inputPath": input_value, "error": str(exc)})
+        else:
+            results.append({"ok": True, **plan.to_dict()})
+
+    failed = sum(1 for item in results if not item.get("ok"))
+    return {
+        "ok": True,
+        "total": len(results),
+        "planned": len(results) - failed,
+        "failed": failed,
+        "items": results,
+    }
 
 
 def _is_rs1_compatibility_archive(path: Path) -> bool:

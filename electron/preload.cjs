@@ -53,6 +53,7 @@ contextBridge.exposeInMainWorld("feedbackConverter", {
     return () => window.removeEventListener("feedforge:dropped-paths", listener);
   },
   inspect: (inputPath, options) => ipcRenderer.invoke("converter:inspect", inputPath, options),
+  planConversions: (payload) => ipcRenderer.invoke("converter:planConversions", payload),
   convert: (payload) => ipcRenderer.invoke("converter:convert", payload),
   exportAudio: (payload) => ipcRenderer.invoke("converter:exportAudio", payload),
   updateFeedpak: (payload) => ipcRenderer.invoke("feedpak:update", payload),
