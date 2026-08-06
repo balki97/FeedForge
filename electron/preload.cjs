@@ -54,6 +54,12 @@ contextBridge.exposeInMainWorld("feedbackConverter", {
   },
   inspect: (inputPath, options) => ipcRenderer.invoke("converter:inspect", inputPath, options),
   planConversions: (payload) => ipcRenderer.invoke("converter:planConversions", payload),
+  cancelPlanning: () => ipcRenderer.invoke("converter:cancelPlanning"),
+  onPlanningProgress: (callback) => {
+    const listener = (_event, progress) => callback(progress);
+    ipcRenderer.on("converter:planProgress", listener);
+    return () => ipcRenderer.removeListener("converter:planProgress", listener);
+  },
   convert: (payload) => ipcRenderer.invoke("converter:convert", payload),
   exportAudio: (payload) => ipcRenderer.invoke("converter:exportAudio", payload),
   updateFeedpak: (payload) => ipcRenderer.invoke("feedpak:update", payload),

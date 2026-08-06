@@ -13,7 +13,9 @@ let stemServerProcess = null;
 let stemServerStarting = false;
 let stemServerLog = [];
 let toneAssetCatalog = null;
+let activePlanningJob = null;
 const DEBUG_LOG_MAX_BYTES = 2 * 1024 * 1024;
+const PLAN_PROGRESS_PREFIX = "FEEDFORGE_PROGRESS ";
 const LOCAL_STEM_SERVER_URL = "http://127.0.0.1:7865";
 const GITHUB_REPO = "balki97/FeedForge";
 const GITHUB_RELEASES_URL = `https://github.com/${GITHUB_REPO}/releases/latest`;
@@ -129,6 +131,7 @@ app.whenReady().then(() => {
 app.whenReady().then(() => Menu.setApplicationMenu(null));
 app.on("before-quit", () => {
   logDebug("app.beforeQuit");
+  cancelActivePlanning();
   stopStemServer();
   if (inspectCacheRoot) removeDirectory(inspectCacheRoot);
 });
@@ -505,7 +508,7 @@ ipcMain.handle("files:delete", async (_event, filePaths = []) => {
   };
 });
 
-ipcMain.handle("converter:planConversions", async (_event, payload = {}) => {
+ipcMain.handle("converter:planConversions", async (event, payload = {}) => {
   const items = (Array.isArray(payload.items) ? payload.items : [])
     .map((item) => ({
       inputPath: String(item?.inputPath || ""),
@@ -513,6 +516,7 @@ ipcMain.handle("converter:planConversions", async (_event, payload = {}) => {
     }))
     .filter((item) => item.inputPath);
   if (!items.length) return { ok: false, error: "No PSARC files were provided for output planning." };
+  if (activePlanningJob) return { ok: false, error: "Another output planning job is already running." };
 
   const request = {
     items,
@@ -520,22 +524,43 @@ ipcMain.handle("converter:planConversions", async (_event, payload = {}) => {
     outputLayout: String(payload.outputLayout || "flat"),
     nameTemplate: String(payload.nameTemplate || "{source}"),
     overwrite: payload.overwrite === true,
-    rs1SongsPsarc: String(payload.rs1SongsPsarc || "")
+    rs1SongsPsarc: String(payload.rs1SongsPsarc || ""),
+    workers: Math.max(1, Math.min(8, Number(payload.workers) || 4)),
+    cachePath: path.join(app.getPath("userData"), "cache", "psarc-output-metadata-v1.sqlite3")
   };
   logDebug("converter.planConversions.start", {
     total: items.length,
     outputDir: request.outputDir,
     outputLayout: request.outputLayout,
     nameTemplate: request.nameTemplate,
-    overwrite: request.overwrite
+    overwrite: request.overwrite,
+    workers: request.workers
   });
 
   const temporary = createTemporaryJsonFile("feedforge-output-plan-", "request.json", request);
+  const planningJob = { child: null, cancelled: false };
+  activePlanningJob = planningJob;
   let result;
   try {
-    result = await runConverter(["--plan-conversion-file", temporary.filePath]);
+    result = await runConverter(["--plan-conversion-file", temporary.filePath], {
+      onSpawn: (child) => {
+        planningJob.child = child;
+        if (planningJob.cancelled) terminateChildProcessTree(child);
+      },
+      onStderrLine: (line) => {
+        if (!line.startsWith(PLAN_PROGRESS_PREFIX)) return;
+        const progress = parseJson(line.slice(PLAN_PROGRESS_PREFIX.length));
+        if (!progress || event.sender.isDestroyed()) return;
+        event.sender.send("converter:planProgress", progress);
+      }
+    });
   } finally {
+    if (activePlanningJob === planningJob) activePlanningJob = null;
     removeTemporaryDirectory(temporary.directory);
+  }
+  if (planningJob.cancelled) {
+    logDebug("converter.planConversions.cancelled", { total: items.length });
+    return { ok: false, cancelled: true, error: "Output planning was cancelled." };
   }
   const parsed = parseJson(result.stdout);
   if (!parsed?.ok) {
@@ -546,10 +571,15 @@ ipcMain.handle("converter:planConversions", async (_event, payload = {}) => {
   logDebug("converter.planConversions.ok", {
     total: parsed.total || items.length,
     planned: parsed.planned || 0,
-    failed: parsed.failed || 0
+    failed: parsed.failed || 0,
+    cached: parsed.cached || 0,
+    workers: parsed.workers || request.workers,
+    durationMs: parsed.durationMs || 0
   });
   return { ...parsed, diagnostics: result.diagnostics };
 });
+
+ipcMain.handle("converter:cancelPlanning", async () => cancelActivePlanning());
 
 ipcMain.handle("converter:convert", async (_event, payload) => {
   logDebug("converter.convert.start", {
@@ -1639,7 +1669,7 @@ function removeTemporaryDirectory(directory) {
   }
 }
 
-function runConverter(args) {
+function runConverter(args, options = {}) {
   const { command, prefix, cwd } = converterCommand();
   const diagnostics = {
     command,
@@ -1661,11 +1691,25 @@ function runConverter(args) {
       cwd,
       windowsHide: true
     });
+    if (typeof options.onSpawn === "function") options.onSpawn(child);
     let stdout = "";
     let stderr = "";
+    let stderrLineBuffer = "";
     child.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
-    child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
+    child.stderr.on("data", (chunk) => {
+      const text = chunk.toString();
+      stderr += text;
+      if (typeof options.onStderrLine !== "function") return;
+      stderrLineBuffer += text;
+      const lines = stderrLineBuffer.split(/\r?\n/);
+      stderrLineBuffer = lines.pop() || "";
+      for (const line of lines) options.onStderrLine(line);
+    });
     child.on("close", (code) => {
+      if (stderrLineBuffer && typeof options.onStderrLine === "function") {
+        options.onStderrLine(stderrLineBuffer);
+        stderrLineBuffer = "";
+      }
       logDebug("converter.process.close", {
         code,
         durationMs: Date.now() - startedAt,
@@ -1687,6 +1731,38 @@ function runConverter(args) {
         diagnostics
       });
     });
+  });
+}
+
+async function cancelActivePlanning() {
+  const job = activePlanningJob;
+  if (!job) return { ok: true, cancelled: false };
+  job.cancelled = true;
+  logDebug("converter.planConversions.cancelRequested", { pid: job.child?.pid || null });
+  const stopped = await terminateChildProcessTree(job.child);
+  return { ok: true, cancelled: true, stopped };
+}
+
+function terminateChildProcessTree(child) {
+  if (!child || child.exitCode !== null || child.killed) return Promise.resolve(false);
+  if (process.platform !== "win32") {
+    try {
+      return Promise.resolve(child.kill("SIGTERM"));
+    } catch {
+      return Promise.resolve(false);
+    }
+  }
+  return new Promise((resolve) => {
+    const killer = spawn("taskkill.exe", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true });
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    killer.on("close", (code) => finish(code === 0));
+    killer.on("error", () => finish(false));
+    setTimeout(() => finish(false), 7000);
   });
 }
 

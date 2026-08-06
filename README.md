@@ -37,6 +37,13 @@ not contain, that item stops with an actionable error instead of silently using
 an `Unknown Artist` filename; **Source filename** remains available as a safe
 fallback convention.
 
+Large queues use a selective PSARC reader that loads the archive index and
+naming manifests without expanding audio or chart payloads. Metadata reads run
+in a bounded worker pool, while filename collision reservation remains stable
+in queue order. Results are cached by canonical path, file size, and modification
+time, so unchanged libraries plan even faster on later runs. Planning progress
+is shown in the desktop app and can be cancelled immediately.
+
 ## Windows, macOS, and Linux
 
 Download the latest Windows x64 portable app, macOS Apple Silicon DMG/ZIP, or

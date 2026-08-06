@@ -169,6 +169,25 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (typeof api.onPlanningProgress !== "function") return undefined;
+    return api.onPlanningProgress((progress) => {
+      if (!isConvertingRef.current) return;
+      setConversionProgress((current) => {
+        if (current.phase !== "planning") return current;
+        const total = Math.max(0, Number(progress?.total) || current.total || 0);
+        return {
+          ...current,
+          total,
+          completed: Math.min(total, Math.max(0, Number(progress?.completed) || 0)),
+          planningCached: Math.max(0, Number(progress?.cached) || 0),
+          planningWorkers: Math.max(1, Number(progress?.workers) || 1),
+          planningStage: progress?.stage || "metadata"
+        };
+      });
+    });
+  }, []);
+
+  useEffect(() => {
     let cancelled = false;
     async function check() {
       try {
@@ -604,11 +623,13 @@ function App() {
             outputLayout,
             nameTemplate,
             overwrite,
-            rs1SongsPsarc: rs1SongsPsarc || ""
+            rs1SongsPsarc: rs1SongsPsarc || "",
+            workers: effectiveConversionWorkers
           });
         } catch (error) {
           result = { ok: false, error: error?.message || "Output planning failed." };
         }
+        if (result?.cancelled || stopRequestedRef.current) return;
         if (!result?.ok) {
           for (const item of psarcItems) failPlanning(item, result?.error || "Output planning failed.");
         } else {
@@ -899,6 +920,9 @@ function App() {
     stopRequestedRef.current = true;
     setIsStopping(true);
     setConversionProgress((current) => ({ ...current, stopped: true }));
+    if (conversionProgress.phase === "planning" && typeof api.cancelPlanning === "function") {
+      Promise.resolve(api.cancelPlanning()).catch(() => {});
+    }
   }
 
   async function saveFeedpakMetadata(item, metadata, authors, options = {}) {
@@ -1978,10 +2002,13 @@ function ConversionProgress({ progress, isConverting }) {
   const failed = Math.max(0, progress.failed || 0);
   const remaining = Math.max(0, total - completed);
   const percent = total ? Math.round((completed / total) * 100) : 0;
+  const isPlanning = isConverting && progress.phase === "planning";
   const status = progress.stopped
     ? "Stopped"
     : isConverting
-      ? progress.phase === "planning" ? "Planning safe output names" : "Converting"
+      ? isPlanning
+        ? progress.planningStage === "reserving" ? "Finalizing collision-safe names" : "Reading PSARC metadata"
+        : "Converting"
       : completed >= total
         ? "Complete"
         : "Waiting";
@@ -1992,9 +2019,11 @@ function ConversionProgress({ progress, isConverting }) {
         <div>
           <strong>{status}</strong>
           <span>
-            {completed} of {total} processed
+            {completed} of {total} {isPlanning ? "checked" : "processed"}
             {remaining ? `, ${remaining} remaining` : ""}
             {failed ? `, ${failed} failed` : ""}
+            {isPlanning && progress.planningCached ? `, ${progress.planningCached} cached` : ""}
+            {isPlanning && progress.planningWorkers ? `, ${progress.planningWorkers} workers` : ""}
           </span>
         </div>
         <b>{percent}%</b>

@@ -98,7 +98,7 @@ def inspect_psarc(input_psarc: Path, *, cover_dir: Path | None = None) -> PsarcP
         raise FileNotFoundError(f"PSARC file not found: {input_psarc}")
 
     with input_psarc.open("rb") as fh:
-        content = PSARC(crypto=True).parse_stream(fh)
+        content = PSARC(crypto=True).parse_preview_stream(fh)
 
     metadata = _extract_metadata(content)
     song_count = max(1, len(_playable_song_groups(_song_groups(content))))
@@ -286,4 +286,3 @@ def _unique_preview_id(value: str, used: set[str]) -> str:
         index += 1
     used.add(candidate)
     return candidate
-
