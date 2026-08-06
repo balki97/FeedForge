@@ -10,7 +10,6 @@ import struct
 import subprocess
 import sys
 import time
-import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -25,6 +24,15 @@ import soundfile as sf
 import yaml
 
 from .feedpak_validator import FeedpakValidationResult, require_valid_feedpak
+from .output_naming import (
+    arrangement_parts_code as naming_arrangement_parts_code,
+    output_path as build_output_path,
+    render_output_template as render_naming_template,
+    safe_path_segment,
+    unique_output_path,
+    validate_name_template,
+    validate_template_metadata,
+)
 from .psarc_format.psarc import PSARC
 from .psarc_format.sng import Song
 
@@ -90,6 +98,86 @@ class AudioExportResult:
     warnings: list[ConversionWarning] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class PlannedSongOutput:
+    key: str
+    output_path: Path
+    artist: str
+    title: str
+    album: str
+    year: str
+    parts: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "key": self.key,
+            "path": str(self.output_path),
+            "artist": self.artist,
+            "title": self.title,
+            "album": self.album,
+            "year": self.year,
+            "parts": self.parts,
+        }
+
+
+@dataclass(frozen=True)
+class PlannedPsarcConversion:
+    input_path: Path
+    source_size: int
+    source_mtime_ns: int
+    outputs: list[PlannedSongOutput]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "inputPath": str(self.input_path),
+            "sourceSize": self.source_size,
+            # Nanosecond timestamps exceed JavaScript's safe integer range.
+            "sourceMtimeNs": str(self.source_mtime_ns),
+            "outputs": [output.to_dict() for output in self.outputs],
+        }
+
+
+def plan_psarc_songs(
+    input_psarc: Path,
+    output_dir: Path | None = None,
+    *,
+    output_layout: str = "flat",
+    source_root: Path | None = None,
+    name_template: str = "{source}",
+    overwrite: bool = False,
+    reserved_outputs: set[Path] | None = None,
+    rs1_songs_psarc: Path | None = None,
+) -> PlannedPsarcConversion:
+    """Plan final FeedPak paths from the same per-song metadata used by conversion."""
+    input_psarc = Path(input_psarc)
+    if not input_psarc.is_file():
+        raise FileNotFoundError(f"PSARC file not found: {input_psarc}")
+    if output_dir is not None and Path(output_dir).exists() and not Path(output_dir).is_dir():
+        raise NotADirectoryError(f"FeedPak output location is not a folder: {output_dir}")
+    validate_name_template(name_template)
+    stat = input_psarc.stat()
+    entries = _read_psarc_song_entries(input_psarc, rs1_songs_psarc=rs1_songs_psarc, include_rs1_audio=False)
+    final_stat = input_psarc.stat()
+    if stat.st_size != final_stat.st_size or stat.st_mtime_ns != final_stat.st_mtime_ns:
+        raise ValueError(f"Source PSARC changed while output names were being planned: {input_psarc}. Try again.")
+    outputs = _plan_loaded_song_outputs(
+        input_psarc,
+        entries,
+        output_dir=Path(output_dir) if output_dir is not None else None,
+        output_layout=output_layout,
+        source_root=Path(source_root) if source_root is not None else None,
+        name_template=name_template,
+        overwrite=overwrite,
+        reserved_outputs=reserved_outputs if reserved_outputs is not None else set(),
+    )
+    return PlannedPsarcConversion(
+        input_path=input_psarc,
+        source_size=final_stat.st_size,
+        source_mtime_ns=final_stat.st_mtime_ns,
+        outputs=outputs,
+    )
+
+
 def convert_psarc_songs(
     input_psarc: Path,
     output: Path | None = None,
@@ -105,70 +193,36 @@ def convert_psarc_songs(
     demucs_model: str | None = None,
     demucs_stems: list[str] | None = None,
     rs1_songs_psarc: Path | None = None,
+    output_layout: str = "flat",
+    source_root: Path | None = None,
+    name_template: str = "{source}",
+    output_plan: dict[str, Any] | None = None,
 ) -> list[ConversionResult]:
     """Convert a PSARC, splitting multi-song containers into one FeedPak per song."""
     input_psarc = Path(input_psarc)
     if not input_psarc.is_file():
         raise FileNotFoundError(f"PSARC file not found: {input_psarc}")
-    with input_psarc.open("rb") as fh:
-        content = PSARC(crypto=True).parse_stream(fh)
-    rs1_songs_content = _load_rs1_songs_content(input_psarc, content, rs1_songs_psarc)
-
-    groups = _song_groups(content)
-    playable_groups = _playable_song_groups(groups)
-    if len(playable_groups) <= 1:
-        if playable_groups:
-            key, paths = next(iter(playable_groups.items()))
-            song_entries = [
-                (key, _content_for_song_group(content, key, paths, rs1_songs_content=rs1_songs_content))
-            ]
-        else:
-            song_entries = [
-                (input_psarc.stem, _content_with_rs1_audio(content, input_psarc.stem, rs1_songs_content))
-            ]
-    else:
-        song_entries = [
-            (key, _content_for_song_group(content, key, paths, rs1_songs_content=rs1_songs_content))
-            for key, paths in sorted(playable_groups.items())
-        ]
-
+    stat = input_psarc.stat()
+    entries = _read_psarc_song_entries(input_psarc, rs1_songs_psarc=rs1_songs_psarc, include_rs1_audio=True)
+    final_stat = input_psarc.stat()
+    if stat.st_size != final_stat.st_size or stat.st_mtime_ns != final_stat.st_mtime_ns:
+        raise ValueError(f"Source PSARC changed while it was being read: {input_psarc}. Restart the conversion.")
     # Validate the complete archive before the first FeedPak is written. This
     # prevents a mismatched RS1 audio source from leaving a partial collection.
-    _validate_song_audio_entries(song_entries, input_psarc, rs1_songs_psarc=rs1_songs_psarc)
-
-    if len(song_entries) == 1:
-        _key, song_content = song_entries[0]
-        return [
-            convert_psarc(
-                input_psarc,
-                output,
-                archive=archive,
-                overwrite=overwrite,
-                keep_workdir=keep_workdir,
-                include_tones=include_tones,
-                b_standard_to_7_string=b_standard_to_7_string,
-                separate_stems=separate_stems,
-                demucs_url=demucs_url,
-                demucs_api_key=demucs_api_key,
-                demucs_model=demucs_model,
-                demucs_stems=demucs_stems,
-                _content=song_content,
-            )
-        ]
-
-    if output is None:
-        base_dir = input_psarc.parent
-    else:
-        output = Path(output)
-        base_dir = output.parent if output.suffix else output
+    _validate_song_audio_entries(entries, input_psarc, rs1_songs_psarc=rs1_songs_psarc)
+    targets = _targets_for_conversion(
+        input_psarc,
+        entries,
+        output=Path(output) if output is not None else None,
+        output_layout=output_layout,
+        source_root=Path(source_root) if source_root is not None else None,
+        name_template=name_template,
+        overwrite=overwrite,
+        output_plan=output_plan,
+        source_stat=final_stat,
+    )
     results: list[ConversionResult] = []
-    reserved_outputs: set[Path] = set()
-    for key, song_content in song_entries:
-        target = _unique_output_path(
-            base_dir / f"{_safe_output_stem(_metadata_song_title(song_content) or key)}.feedpak",
-            reserved_outputs,
-            overwrite=overwrite,
-        )
+    for (_key, song_content), target in zip(entries, targets, strict=True):
         try:
             result = convert_psarc(
                 input_psarc,
@@ -190,6 +244,152 @@ def convert_psarc_songs(
             raise
         results.append(result)
     return results
+
+
+def _read_psarc_song_entries(
+    input_psarc: Path,
+    *,
+    rs1_songs_psarc: Path | None,
+    include_rs1_audio: bool,
+) -> list[tuple[str, dict[str, bytes]]]:
+    with input_psarc.open("rb") as fh:
+        content = PSARC(crypto=True).parse_stream(fh)
+    # Output names only depend on the source package metadata. The potentially
+    # very large RS1 songs.psarc is loaded only for the actual conversion.
+    rs1_songs_content = _load_rs1_songs_content(input_psarc, content, rs1_songs_psarc) if include_rs1_audio else None
+    playable_groups = _playable_song_groups(_song_groups(content))
+    if len(playable_groups) <= 1:
+        if playable_groups:
+            key, paths = next(iter(playable_groups.items()))
+            song_content = _content_for_song_group(content, key, paths, rs1_songs_content=rs1_songs_content)
+        else:
+            key = input_psarc.stem
+            song_content = _content_with_rs1_audio(content, key, rs1_songs_content)
+        return [(key, song_content)]
+    return [
+        (key, _content_for_song_group(content, key, paths, rs1_songs_content=rs1_songs_content))
+        for key, paths in sorted(playable_groups.items())
+    ]
+
+
+def _plan_loaded_song_outputs(
+    input_psarc: Path,
+    entries: list[tuple[str, dict[str, bytes]]],
+    *,
+    output_dir: Path | None,
+    output_layout: str,
+    source_root: Path | None,
+    name_template: str,
+    overwrite: bool,
+    reserved_outputs: set[Path],
+) -> list[PlannedSongOutput]:
+    base_dir = output_dir if output_dir is not None else input_psarc.parent
+    # With "Source folder" selected, the source hierarchy is already preserved.
+    # Artist layout still has an observable meaning and is honored locally.
+    effective_layout = output_layout if output_dir is not None or str(output_layout).strip().lower() == "artist" else "flat"
+    planned: list[PlannedSongOutput] = []
+    for key, song_content in entries:
+        metadata = _extract_metadata(song_content)
+        validate_template_metadata(name_template, metadata)
+        target = build_output_path(
+            input_psarc,
+            base_dir,
+            metadata,
+            output_layout=effective_layout,
+            source_root=source_root,
+            name_template=name_template,
+            fallback_title=key,
+            suffix=".feedpak",
+        )
+        target = unique_output_path(target, reserved_outputs, overwrite=overwrite)
+        planned.append(
+            PlannedSongOutput(
+                key=key,
+                output_path=target,
+                artist=str(metadata.get("artist") or "Unknown Artist"),
+                title=str(metadata.get("title") or key or input_psarc.stem),
+                album=str(metadata.get("album") or ""),
+                year=str(metadata.get("year") or ""),
+                parts=naming_arrangement_parts_code(metadata),
+            )
+        )
+    return planned
+
+
+def _targets_for_conversion(
+    input_psarc: Path,
+    entries: list[tuple[str, dict[str, bytes]]],
+    *,
+    output: Path | None,
+    output_layout: str,
+    source_root: Path | None,
+    name_template: str,
+    overwrite: bool,
+    output_plan: dict[str, Any] | None,
+    source_stat: os.stat_result,
+) -> list[Path]:
+    if output_plan is not None:
+        return _validated_planned_targets(input_psarc, entries, output_plan, source_stat=source_stat)
+
+    output_is_directory = bool(
+        output is not None
+        and ((output.exists() and output.is_dir()) or not output.suffix)
+    )
+    if len(entries) == 1 and output is not None and not output_is_directory:
+        return [output]
+
+    planned = _plan_loaded_song_outputs(
+        input_psarc,
+        entries,
+        output_dir=output if output_is_directory else (output.parent if output is not None else None),
+        output_layout=output_layout,
+        source_root=source_root,
+        name_template=name_template,
+        overwrite=overwrite,
+        reserved_outputs=set(),
+    )
+    return [item.output_path for item in planned]
+
+
+def _validated_planned_targets(
+    input_psarc: Path,
+    entries: list[tuple[str, dict[str, bytes]]],
+    output_plan: dict[str, Any],
+    *,
+    source_stat: os.stat_result,
+) -> list[Path]:
+    planned_input = str(output_plan.get("inputPath") or "")
+    if planned_input and os.path.normcase(os.path.abspath(planned_input)) != os.path.normcase(os.path.abspath(input_psarc)):
+        raise ValueError("The output plan belongs to a different PSARC file; restart the conversion.")
+    if int(output_plan.get("sourceSize", -1)) != source_stat.st_size or str(output_plan.get("sourceMtimeNs", "")) != str(source_stat.st_mtime_ns):
+        raise ValueError(f"Source PSARC changed after output names were planned: {input_psarc}. Restart the conversion.")
+
+    planned_outputs = output_plan.get("outputs")
+    if not isinstance(planned_outputs, list) or len(planned_outputs) != len(entries):
+        raise ValueError(
+            f"Output plan expected {len(entries)} song(s) in {input_psarc.name}, but received "
+            f"{len(planned_outputs) if isinstance(planned_outputs, list) else 0}. Restart the conversion."
+        )
+
+    targets: list[Path] = []
+    for (key, song_content), planned in zip(entries, planned_outputs, strict=True):
+        if not isinstance(planned, dict) or str(planned.get("key") or "") != key:
+            raise ValueError(f"Song contents changed after output names were planned: {input_psarc}. Restart the conversion.")
+        metadata = _extract_metadata(song_content)
+        expected = {
+            "artist": str(metadata.get("artist") or "Unknown Artist"),
+            "title": str(metadata.get("title") or key or input_psarc.stem),
+            "album": str(metadata.get("album") or ""),
+            "year": str(metadata.get("year") or ""),
+            "parts": naming_arrangement_parts_code(metadata),
+        }
+        if any(str(planned.get(field) or "") != value for field, value in expected.items()):
+            raise ValueError(f"Song metadata changed after output names were planned: {input_psarc}. Restart the conversion.")
+        target = str(planned.get("path") or "").strip()
+        if not target:
+            raise ValueError(f"Output plan contains an empty path for song {expected['artist']} - {expected['title']}.")
+        targets.append(Path(target))
+    return targets
 
 
 def export_psarc_audio(
@@ -250,19 +450,7 @@ def export_psarc_audio(
 
 
 def _unique_output_path(path: Path, reserved: set[Path], *, overwrite: bool) -> Path:
-    """Return a batch-unique output path without touching the filesystem."""
-    resolved = path.resolve()
-    if resolved not in reserved and (overwrite or not path.exists()):
-        reserved.add(resolved)
-        return path
-    counter = 2
-    while True:
-        candidate = path.with_name(f"{path.stem} ({counter}){path.suffix}")
-        resolved_candidate = candidate.resolve()
-        if resolved_candidate not in reserved and (overwrite or not candidate.exists()):
-            reserved.add(resolved_candidate)
-            return candidate
-        counter += 1
+    return unique_output_path(path, reserved, overwrite=overwrite)
 
 
 def _cleanup_output(output: Path, *, archive: bool, keep_workdir: bool) -> None:
@@ -823,9 +1011,7 @@ def _decode_package_text(data: bytes) -> str:
 
 
 def _safe_output_stem(value: str) -> str:
-    normalized = unicodedata.normalize("NFKD", str(value or "")).encode("ascii", "ignore").decode("ascii")
-    safe = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", normalized).strip(" ._")
-    return safe[:120] or "converted"
+    return safe_path_segment(value)
 
 
 def _audio_output_path(
@@ -838,18 +1024,16 @@ def _audio_output_path(
     source_root: Path | None,
     name_template: str,
 ) -> Path:
-    folder = Path(base_dir)
-    if output_layout == "artist":
-        folder = folder / _safe_output_stem(str(metadata.get("artist") or "Unknown Artist"))
-    elif output_layout == "preserve" and source_root:
-        try:
-            relative_dir = input_psarc.parent.resolve().relative_to(Path(source_root).resolve())
-        except ValueError:
-            relative_dir = Path()
-        if relative_dir.parts:
-            folder = folder / relative_dir
-    name = _render_output_template(name_template, metadata, input_psarc=input_psarc, fallback=key)
-    return folder / f"{name}.ogg"
+    return build_output_path(
+        input_psarc,
+        base_dir,
+        metadata,
+        output_layout=output_layout,
+        source_root=source_root,
+        name_template=name_template,
+        fallback_title=key,
+        suffix=".ogg",
+    )
 
 
 def _render_output_template(
@@ -859,37 +1043,16 @@ def _render_output_template(
     input_psarc: Path,
     fallback: str,
 ) -> str:
-    values = {
-        "artist": str(metadata.get("artist") or "").strip(),
-        "title": str(metadata.get("title") or "").strip(),
-        "album": str(metadata.get("album") or "").strip(),
-        "year": str(metadata.get("year") or "").strip(),
-        "source": input_psarc.stem,
-        "parts": _arrangement_parts_code(metadata),
-    }
-    if not template:
-        template = "{artist} - {title}"
-    rendered = re.sub(
-        r"\{(artist|title|album|year|source|parts)\}",
-        lambda match: values.get(match.group(1).lower(), ""),
+    return render_naming_template(
         template,
-        flags=re.IGNORECASE,
+        metadata,
+        input_psarc=input_psarc,
+        fallback_title=fallback,
     )
-    if not rendered.strip(" -_."):
-        rendered = values["title"] or fallback or values["source"]
-    return _safe_output_stem(rendered)
 
 
 def _arrangement_parts_code(metadata: dict[str, Any]) -> str:
-    names = metadata.get("arrangement_names")
-    if not isinstance(names, dict):
-        return ""
-    labels = [f"{key} {value}".lower() for key, value in names.items()]
-    return "".join(
-        code
-        for needle, code in (("bass", "B"), ("lead", "L"), ("rhythm", "R"), ("vocal", "V"), ("combo", "C"))
-        if any(needle in label for label in labels)
-    )
+    return naming_arrangement_parts_code(metadata)
 
 
 def _is_vocal_sng(path: str, song: Any) -> bool:

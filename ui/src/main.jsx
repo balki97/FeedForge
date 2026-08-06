@@ -561,7 +561,7 @@ function App() {
   }
 
   async function convertQueue() {
-    if (!items.length || isConverting) return;
+    if (!items.length || isConvertingRef.current) return;
     const pending = [];
     const pendingPaths = new Set();
     for (const item of itemsRef.current) {
@@ -579,77 +579,174 @@ function App() {
     setIsStopping(false);
     setIsConverting(true);
     const conversionPending = pending;
-    setConversionProgress({ total: conversionPending.length, completed: 0, failed: 0, active: [], stopped: false });
+    setConversionProgress({ total: conversionPending.length, completed: 0, failed: 0, active: [], stopped: false, phase: "planning" });
     const batchSourceRoot = commonAncestorDir(conversionPending.map((item) => item.path));
-    const reservedOutputPaths = reserveBatchOutputPaths(conversionPending, outputDir, outputLayout, batchSourceRoot, outputNameFormat, outputNameTemplate);
-    let index = 0;
+    try {
+      const planById = new Map();
+      const planningFailures = new Set();
+      const psarcItems = conversionPending.filter((item) => item.sourceType !== "feedpak");
+      const feedpakItems = conversionPending.filter((item) => item.sourceType === "feedpak");
+      const nameTemplate = outputNameTemplateForFormat(outputNameFormat, outputNameTemplate);
 
-    async function convertNext() {
+      function failPlanning(item, message) {
+        if (planningFailures.has(item.id)) return;
+        planningFailures.add(item.id);
+        updateItem(item.id, { status: "failed", error: message || "Could not determine a safe output filename." });
+      }
+
+      if (psarcItems.length) {
+        let result;
+        try {
+          result = await api.planConversions({
+            items: psarcItems.map((item) => ({
+              inputPath: item.path,
+              sourceRoot: item.sourceRoot || batchSourceRoot || parentDir(item.path) || ""
+            })),
+            outputDir: outputDir || "",
+            outputLayout,
+            nameTemplate,
+            overwrite,
+            rs1SongsPsarc: rs1SongsPsarc || ""
+          });
+        } catch (error) {
+          result = { ok: false, error: error?.message || "Output planning failed." };
+        }
+        if (!result?.ok) {
+          for (const item of psarcItems) failPlanning(item, result?.error || "Output planning failed.");
+        } else {
+          const itemByPath = new Map(psarcItems.map((item) => [normalizePathKey(item.path), item]));
+          for (const planned of result.items || []) {
+            const item = itemByPath.get(normalizePathKey(planned.inputPath || ""));
+            if (!item) continue;
+            if (!planned.ok || !Array.isArray(planned.outputs) || !planned.outputs.length) {
+              failPlanning(item, planned.error || "No FeedPak output was planned for this PSARC.");
+            } else {
+              planById.set(item.id, planned);
+            }
+          }
+          for (const item of psarcItems) {
+            if (!planById.has(item.id) && !planningFailures.has(item.id)) {
+              failPlanning(item, "The output planner did not return a result for this PSARC.");
+            }
+          }
+        }
+      }
+
+      const feedpakReady = [];
+      for (const item of feedpakItems) {
+        let current = itemsRef.current.find((entry) => entry.id === item.id) || item;
+        if (!current.preview) {
+          try {
+            const inspected = await api.inspect(item.path);
+            if (!inspected?.ok || !inspected.preview) {
+              failPlanning(item, inspected?.error || "FeedPak metadata inspection failed.");
+              continue;
+            }
+            current = { ...current, preview: inspected.preview };
+            updateItem(item.id, { preview: inspected.preview, status: inspected.preview.arrangements?.length ? "ready" : "needs-review", error: null });
+          } catch (error) {
+            failPlanning(item, error?.message || "FeedPak metadata inspection failed.");
+            continue;
+          }
+        }
+        feedpakReady.push(current);
+      }
+
       if (stopRequestedRef.current) return;
-      const item = conversionPending[index];
-      index += 1;
-      if (!item) return;
-      updateItem(item.id, { status: "converting", warnings: [], error: null, message: null });
+      const plannedPsarcPaths = [...planById.values()].flatMap((plan) => plan.outputs.map((output) => output.path));
+      const reservedOutputPaths = reserveBatchOutputPaths(
+        feedpakReady,
+        outputDir,
+        outputLayout,
+        batchSourceRoot,
+        outputNameFormat,
+        outputNameTemplate,
+        plannedPsarcPaths
+      );
+      const feedpakById = new Map(feedpakReady.map((item) => [item.id, item]));
+      const conversionReady = conversionPending
+        .filter((item) => !planningFailures.has(item.id))
+        .map((item) => feedpakById.get(item.id) || item);
       setConversionProgress((current) => ({
         ...current,
-        active: [...current.active.filter((entry) => entry.id !== item.id), { id: item.id, name: item.preview?.title || item.name, artist: item.preview?.artist || "" }]
+        completed: planningFailures.size,
+        failed: planningFailures.size,
+        phase: "converting"
       }));
-      const outputPath = reservedOutputPaths.get(item.id) || null;
-      const payload = {
-        inputPath: item.path,
-        outputPath,
-        overwrite,
-        separateStems,
-        demucsUrl: demucsUrl.trim(),
-        demucsApiKey: demucsApiKey.trim(),
-        demucsModel,
-        demucsStems
-      };
-      if (rs1SongsPsarc && isRs1CompatibilityArchive(item.path)) {
-        payload.rs1SongsPsarc = rs1SongsPsarc;
-      }
-      let failed = false;
-      try {
-        const result = item.sourceType === "feedpak"
-          ? await api.updateFeedpak(payload)
-          : await api.convert({ ...payload, bStandardTo7String });
-        if (!result.ok) {
-          failed = true;
-          updateItem(item.id, { status: "failed", warnings: [], error: result.error });
-        } else {
-          const warnings = Array.isArray(result.warnings) ? result.warnings.filter(Boolean) : [];
-          const outputPaths = Array.isArray(result.outputPaths) ? result.outputPaths.filter(Boolean) : [];
-          const outputCount = outputPaths.length || (result.outputPath ? 1 : 0);
-          const outputFolder = outputPaths.length ? parentDir(outputPaths[0]) : "";
-          updateItem(item.id, {
-            status: "converted",
-            outputPath: result.outputPath || outputPath,
-            outputPaths,
-            validation: result.validation || null,
-            message: outputCount > 1
-              ? `Created ${outputCount} FeedPaks${outputFolder ? ` in ${outputFolder}` : ""}.`
-              : null,
-            warnings,
-            error: null
-          });
-        }
-      } catch (error) {
-        failed = true;
-        updateItem(item.id, { status: "failed", warnings: [], error: error?.message || "Conversion failed." });
-      } finally {
+      let index = 0;
+
+      async function convertNext() {
+        if (stopRequestedRef.current) return;
+        const item = conversionReady[index];
+        index += 1;
+        if (!item) return;
+        const outputPlan = planById.get(item.id) || null;
+        const plannedFirst = outputPlan?.outputs?.[0] || null;
+        const outputPath = item.sourceType === "feedpak" ? (reservedOutputPaths.get(item.id) || null) : null;
+        updateItem(item.id, { status: "converting", warnings: [], error: null, message: null });
         setConversionProgress((current) => ({
           ...current,
-          completed: Math.min(current.total, current.completed + 1),
-          failed: current.failed + (failed ? 1 : 0),
-          active: current.active.filter((entry) => entry.id !== item.id)
+          active: [...current.active.filter((entry) => entry.id !== item.id), {
+            id: item.id,
+            name: plannedFirst?.title || item.preview?.title || item.name,
+            artist: plannedFirst?.artist || item.preview?.artist || ""
+          }]
         }));
+        const payload = {
+          inputPath: item.path,
+          outputPath,
+          outputPlan,
+          overwrite,
+          separateStems,
+          demucsUrl: demucsUrl.trim(),
+          demucsApiKey: demucsApiKey.trim(),
+          demucsModel,
+          demucsStems
+        };
+        if (rs1SongsPsarc && isRs1CompatibilityArchive(item.path)) {
+          payload.rs1SongsPsarc = rs1SongsPsarc;
+        }
+        let failed = false;
+        try {
+          const result = item.sourceType === "feedpak"
+            ? await api.updateFeedpak(payload)
+            : await api.convert({ ...payload, bStandardTo7String });
+          if (!result.ok) {
+            failed = true;
+            updateItem(item.id, { status: "failed", warnings: [], error: result.error });
+          } else {
+            const warnings = Array.isArray(result.warnings) ? result.warnings.filter(Boolean) : [];
+            const outputPaths = Array.isArray(result.outputPaths) ? result.outputPaths.filter(Boolean) : [];
+            const outputCount = outputPaths.length || (result.outputPath ? 1 : 0);
+            const outputFolder = outputPaths.length ? parentDir(outputPaths[0]) : "";
+            updateItem(item.id, {
+              status: "converted",
+              outputPath: result.outputPath || outputPath || plannedFirst?.path || null,
+              outputPaths,
+              validation: result.validation || null,
+              message: outputCount > 1
+                ? `Created ${outputCount} FeedPaks${outputFolder ? ` in ${outputFolder}` : ""}.`
+                : null,
+              warnings,
+              error: null
+            });
+          }
+        } catch (error) {
+          failed = true;
+          updateItem(item.id, { status: "failed", warnings: [], error: error?.message || "Conversion failed." });
+        } finally {
+          setConversionProgress((current) => ({
+            ...current,
+            completed: Math.min(current.total, current.completed + 1),
+            failed: current.failed + (failed ? 1 : 0),
+            active: current.active.filter((entry) => entry.id !== item.id)
+          }));
+        }
+        if (stopRequestedRef.current) return;
+        await convertNext();
       }
-      if (stopRequestedRef.current) return;
-      await convertNext();
-    }
 
-    try {
-      const workerCount = Math.min(Math.max(1, effectiveConversionWorkers), conversionPending.length);
+      const workerCount = Math.min(Math.max(1, effectiveConversionWorkers), conversionReady.length);
       await Promise.all(Array.from({ length: workerCount }, () => convertNext()));
     } finally {
       const stopped = stopRequestedRef.current;
@@ -1890,7 +1987,7 @@ function ConversionProgress({ progress, isConverting }) {
   const status = progress.stopped
     ? "Stopped"
     : isConverting
-      ? "Converting"
+      ? progress.phase === "planning" ? "Planning safe output names" : "Converting"
       : completed >= total
         ? "Complete"
         : "Waiting";
@@ -2946,9 +3043,9 @@ function outputPathForItem(item, outputDir, layout, sourceRoot, nameFormat = "so
   return joinPath(outputDir, fileName);
 }
 
-function reserveBatchOutputPaths(items, outputDir, layout, batchSourceRoot, nameFormat, customTemplate) {
+function reserveBatchOutputPaths(items, outputDir, layout, batchSourceRoot, nameFormat, customTemplate, initiallyReserved = []) {
   const reserved = new Map();
-  const used = new Set();
+  const used = new Set((initiallyReserved || []).filter(Boolean).map((filePath) => normalizePath(filePath).toLowerCase()));
   for (const item of items || []) {
     const rawPath = outputDir ? outputPathForItem(item, outputDir, layout, item.sourceRoot || batchSourceRoot, nameFormat, customTemplate) : null;
     if (!rawPath) {

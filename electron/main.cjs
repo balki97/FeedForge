@@ -505,6 +505,52 @@ ipcMain.handle("files:delete", async (_event, filePaths = []) => {
   };
 });
 
+ipcMain.handle("converter:planConversions", async (_event, payload = {}) => {
+  const items = (Array.isArray(payload.items) ? payload.items : [])
+    .map((item) => ({
+      inputPath: String(item?.inputPath || ""),
+      sourceRoot: String(item?.sourceRoot || "")
+    }))
+    .filter((item) => item.inputPath);
+  if (!items.length) return { ok: false, error: "No PSARC files were provided for output planning." };
+
+  const request = {
+    items,
+    outputDir: String(payload.outputDir || ""),
+    outputLayout: String(payload.outputLayout || "flat"),
+    nameTemplate: String(payload.nameTemplate || "{source}"),
+    overwrite: payload.overwrite === true,
+    rs1SongsPsarc: String(payload.rs1SongsPsarc || "")
+  };
+  logDebug("converter.planConversions.start", {
+    total: items.length,
+    outputDir: request.outputDir,
+    outputLayout: request.outputLayout,
+    nameTemplate: request.nameTemplate,
+    overwrite: request.overwrite
+  });
+
+  const temporary = createTemporaryJsonFile("feedforge-output-plan-", "request.json", request);
+  let result;
+  try {
+    result = await runConverter(["--plan-conversion-file", temporary.filePath]);
+  } finally {
+    removeTemporaryDirectory(temporary.directory);
+  }
+  const parsed = parseJson(result.stdout);
+  if (!parsed?.ok) {
+    const error = parsed?.error || result.stderr || result.stdout || "Output planning failed.";
+    logDebug("converter.planConversions.failed", { total: items.length, code: result.code, error, diagnostics: result.diagnostics });
+    return { ok: false, error, diagnostics: result.diagnostics };
+  }
+  logDebug("converter.planConversions.ok", {
+    total: parsed.total || items.length,
+    planned: parsed.planned || 0,
+    failed: parsed.failed || 0
+  });
+  return { ...parsed, diagnostics: result.diagnostics };
+});
+
 ipcMain.handle("converter:convert", async (_event, payload) => {
   logDebug("converter.convert.start", {
     inputPath: payload.inputPath,
@@ -529,7 +575,17 @@ ipcMain.handle("converter:convert", async (_event, payload) => {
   if (Array.isArray(payload.demucsStems) && payload.demucsStems.length) {
     args.push("--demucs-stems", payload.demucsStems.join(","));
   }
-  const result = await runConverter(args);
+  let temporaryPlan = null;
+  if (payload.outputPlan && typeof payload.outputPlan === "object") {
+    temporaryPlan = createTemporaryJsonFile("feedforge-item-plan-", "plan.json", payload.outputPlan);
+    args.push("--output-plan-file", temporaryPlan.filePath);
+  }
+  let result;
+  try {
+    result = await runConverter(args);
+  } finally {
+    if (temporaryPlan) removeTemporaryDirectory(temporaryPlan.directory);
+  }
   const outputPaths = [...result.stdout.matchAll(/^wrote\s+(.+)$/gim)].map((match) => match[1].trim()).filter(Boolean);
   const validatedPaths = [...result.stdout.matchAll(/^validated\s+(.+)$/gim)].map((match) => match[1].trim()).filter(Boolean);
   const warnings = [...`${result.stdout}\n${result.stderr}`.matchAll(/^warning:\s+(.+)$/gim)].map((match) => match[1].trim()).filter(Boolean);
@@ -1558,6 +1614,28 @@ function validDefaultPath(defaultPath) {
     return fs.existsSync(defaultPath) ? defaultPath : undefined;
   } catch {
     return undefined;
+  }
+}
+
+function createTemporaryJsonFile(prefix, fileName, payload) {
+  const directory = fs.mkdtempSync(path.join(app.getPath("temp"), prefix));
+  const filePath = path.join(directory, fileName);
+  fs.writeFileSync(filePath, JSON.stringify(payload), "utf8");
+  return { directory, filePath };
+}
+
+function removeTemporaryDirectory(directory) {
+  if (!directory) return;
+  const tempRoot = path.resolve(app.getPath("temp"));
+  const resolved = path.resolve(directory);
+  if (path.dirname(resolved) !== tempRoot || !path.basename(resolved).startsWith("feedforge-")) {
+    logDebug("temporaryDirectory.cleanupRefused", { directory: resolved, tempRoot });
+    return;
+  }
+  try {
+    fs.rmSync(resolved, { recursive: true, force: true });
+  } catch (error) {
+    logDebug("temporaryDirectory.cleanupFailed", { directory: resolved, error: errorToLog(error) });
   }
 }
 
