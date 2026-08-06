@@ -1,13 +1,26 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
+import sqlite3
+import time
 import unicodedata
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable
 
-from .converter import ConversionResult, convert_psarc_songs, plan_psarc_songs
+from .converter import (
+    ConversionResult,
+    PsarcPlanningData,
+    convert_psarc_songs,
+    load_psarc_planning_data,
+    plan_loaded_psarc_songs,
+    plan_psarc_songs,
+    psarc_planning_data_from_cache,
+)
 from .inspector import inspect_psarc
 from .output_naming import validate_name_template
 
@@ -103,8 +116,12 @@ def convert_many(
     return BatchResult(items=items)
 
 
-def plan_conversion_request(request: dict[str, object]) -> dict[str, object]:
-    """Build one collision-safe output plan for a desktop conversion queue."""
+def plan_conversion_request(
+    request: dict[str, object],
+    *,
+    progress_callback: Callable[[dict[str, object]], None] | None = None,
+) -> dict[str, object]:
+    """Build one fast, deterministic, collision-safe desktop conversion plan."""
     if not isinstance(request, dict):
         raise ValueError("Conversion planning request must be a JSON object.")
     raw_items = request.get("items")
@@ -118,26 +135,118 @@ def plan_conversion_request(request: dict[str, object]) -> dict[str, object]:
     overwrite = request.get("overwrite") is True
     rs1_value = str(request.get("rs1SongsPsarc") or "").strip()
     rs1_songs_psarc = Path(rs1_value) if rs1_value else None
+    worker_count = _planning_worker_count(request.get("workers"), len(raw_items))
+    cache_value = str(request.get("cachePath") or "").strip()
+    cache = _PlanningMetadataCache(Path(cache_value) if cache_value else None)
     reserved_outputs: set[Path] = set()
-    results: list[dict[str, object]] = []
+    total = len(raw_items)
+    loaded: list[PsarcPlanningData | None] = [None] * total
+    errors: list[str | None] = [None] * total
+    input_values = [""] * total
+    source_roots: list[Path | None] = [None] * total
+    cache_hits = 0
+    completed = 0
+    last_report_at = 0.0
+    last_reported_completed = -1
+    started_at = time.perf_counter()
 
-    for raw_item in raw_items:
-        if not isinstance(raw_item, dict):
-            results.append({"ok": False, "inputPath": "", "error": "Invalid conversion planning item."})
-            continue
-        input_value = str(raw_item.get("inputPath") or "").strip()
-        source_root_value = str(raw_item.get("sourceRoot") or "").strip()
-        input_path = Path(input_value)
+    def report(*, stage: str, input_path: str = "", force: bool = False) -> None:
+        nonlocal last_report_at, last_reported_completed
+        if progress_callback is None:
+            return
+        now = time.monotonic()
+        if not force and completed < total and completed == last_reported_completed:
+            return
+        if not force and completed < total and now - last_report_at < 0.1 and completed - last_reported_completed < 20:
+            return
+        payload: dict[str, object] = {
+            "stage": stage,
+            "completed": completed,
+            "total": total,
+            "cached": cache_hits,
+            "workers": worker_count,
+        }
+        if input_path:
+            payload["inputPath"] = input_path
         try:
-            plan = plan_psarc_songs(
-                input_path,
+            progress_callback(payload)
+        except Exception:  # noqa: BLE001
+            pass
+        last_report_at = now
+        last_reported_completed = completed
+
+    report(stage="metadata", force=True)
+    futures: dict[object, tuple[int, Path]] = {}
+    try:
+        with ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="feedforge-plan") as executor:
+            for index, raw_item in enumerate(raw_items):
+                if not isinstance(raw_item, dict):
+                    errors[index] = "Invalid conversion planning item."
+                    completed += 1
+                    report(stage="metadata")
+                    continue
+                input_value = str(raw_item.get("inputPath") or "").strip()
+                source_root_value = str(raw_item.get("sourceRoot") or "").strip()
+                input_values[index] = input_value
+                source_roots[index] = Path(source_root_value) if source_root_value else None
+                input_path = Path(input_value)
+                try:
+                    stat = input_path.stat()
+                    if not input_path.is_file():
+                        raise FileNotFoundError(f"PSARC file not found: {input_path}")
+                except Exception as exc:  # noqa: BLE001
+                    errors[index] = str(exc)
+                    completed += 1
+                    report(stage="metadata", input_path=input_value)
+                    continue
+
+                cached = cache.get(input_path, stat.st_size, stat.st_mtime_ns)
+                if cached is not None:
+                    loaded[index] = cached
+                    cache_hits += 1
+                    completed += 1
+                    report(stage="metadata", input_path=input_value)
+                    continue
+
+                future = executor.submit(
+                    load_psarc_planning_data,
+                    input_path,
+                    rs1_songs_psarc=rs1_songs_psarc if _is_rs1_compatibility_archive(input_path) else None,
+                )
+                futures[future] = (index, input_path)
+
+            for future in as_completed(futures):
+                index, input_path = futures[future]
+                try:
+                    planning_data = future.result()
+                except Exception as exc:  # noqa: BLE001
+                    errors[index] = str(exc)
+                else:
+                    loaded[index] = planning_data
+                    cache.put(planning_data)
+                completed += 1
+                report(stage="metadata", input_path=str(input_path))
+        cache.commit()
+    finally:
+        cache.close()
+
+    report(stage="reserving", force=True)
+    results: list[dict[str, object]] = []
+    for index in range(total):
+        input_value = input_values[index]
+        planning_data = loaded[index]
+        if planning_data is None:
+            results.append({"ok": False, "inputPath": input_value, "error": errors[index] or "Output metadata could not be read."})
+            continue
+        try:
+            plan = plan_loaded_psarc_songs(
+                planning_data,
                 output_dir,
                 output_layout=output_layout,
-                source_root=Path(source_root_value) if source_root_value else None,
+                source_root=source_roots[index],
                 name_template=name_template,
                 overwrite=overwrite,
                 reserved_outputs=reserved_outputs,
-                rs1_songs_psarc=rs1_songs_psarc if _is_rs1_compatibility_archive(input_path) else None,
             )
         except Exception as exc:  # noqa: BLE001
             results.append({"ok": False, "inputPath": input_value, "error": str(exc)})
@@ -145,13 +254,138 @@ def plan_conversion_request(request: dict[str, object]) -> dict[str, object]:
             results.append({"ok": True, **plan.to_dict()})
 
     failed = sum(1 for item in results if not item.get("ok"))
+    report(stage="complete", force=True)
     return {
         "ok": True,
         "total": len(results),
         "planned": len(results) - failed,
         "failed": failed,
+        "cached": cache_hits,
+        "workers": worker_count,
+        "durationMs": round((time.perf_counter() - started_at) * 1000),
         "items": results,
     }
+
+
+def _planning_worker_count(value: object, total: int) -> int:
+    try:
+        requested = int(value or 4)
+    except (TypeError, ValueError):
+        requested = 4
+    return min(max(1, requested), 8, max(1, total))
+
+
+class _PlanningMetadataCache:
+    """Small persistent metadata cache keyed by canonical path and source fingerprint."""
+
+    def __init__(self, path: Path | None) -> None:
+        self.connection: sqlite3.Connection | None = None
+        self.pending = 0
+        if path is None:
+            return
+        connection: sqlite3.Connection | None = None
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            connection = sqlite3.connect(path, timeout=10)
+            connection.execute("PRAGMA journal_mode=WAL")
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS psarc_metadata_v1 (
+                    path TEXT PRIMARY KEY,
+                    size INTEGER NOT NULL,
+                    mtime_ns TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    last_used INTEGER NOT NULL
+                )
+                """
+            )
+            cutoff = int(time.time()) - 180 * 24 * 60 * 60
+            connection.execute("DELETE FROM psarc_metadata_v1 WHERE last_used < ?", (cutoff,))
+            connection.commit()
+            self.connection = connection
+        except (OSError, sqlite3.Error):
+            try:
+                if connection is not None:
+                    connection.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+    @staticmethod
+    def _key(path: Path) -> str:
+        return os.path.normcase(os.path.abspath(path))
+
+    def get(self, path: Path, size: int, mtime_ns: int) -> PsarcPlanningData | None:
+        if self.connection is None:
+            return None
+        key = self._key(path)
+        try:
+            row = self.connection.execute(
+                "SELECT payload FROM psarc_metadata_v1 WHERE path = ? AND size = ? AND mtime_ns = ?",
+                (key, int(size), str(mtime_ns)),
+            ).fetchone()
+            if row is None:
+                return None
+            payload = json.loads(row[0])
+            planning_data = psarc_planning_data_from_cache(path, size, mtime_ns, payload)
+            self.connection.execute(
+                "UPDATE psarc_metadata_v1 SET last_used = ? WHERE path = ?",
+                (int(time.time()), key),
+            )
+            self.pending += 1
+            return planning_data
+        except (ValueError, TypeError, json.JSONDecodeError, sqlite3.Error):
+            try:
+                self.connection.execute("DELETE FROM psarc_metadata_v1 WHERE path = ?", (key,))
+            except sqlite3.Error:
+                pass
+            return None
+
+    def put(self, planning_data: PsarcPlanningData) -> None:
+        if self.connection is None:
+            return
+        try:
+            self.connection.execute(
+                """
+                INSERT INTO psarc_metadata_v1(path, size, mtime_ns, payload, last_used)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(path) DO UPDATE SET
+                    size = excluded.size,
+                    mtime_ns = excluded.mtime_ns,
+                    payload = excluded.payload,
+                    last_used = excluded.last_used
+                """,
+                (
+                    self._key(planning_data.input_path),
+                    planning_data.source_size,
+                    str(planning_data.source_mtime_ns),
+                    json.dumps(planning_data.to_cache_payload(), ensure_ascii=False, separators=(",", ":")),
+                    int(time.time()),
+                ),
+            )
+            self.pending += 1
+            if self.pending >= 100:
+                self.commit()
+        except (TypeError, ValueError, sqlite3.Error):
+            pass
+
+    def commit(self) -> None:
+        if self.connection is None or not self.pending:
+            return
+        try:
+            self.connection.commit()
+            self.pending = 0
+        except sqlite3.Error:
+            pass
+
+    def close(self) -> None:
+        if self.connection is None:
+            return
+        self.commit()
+        try:
+            self.connection.close()
+        except sqlite3.Error:
+            pass
+        self.connection = None
 
 
 def _is_rs1_compatibility_archive(path: Path) -> bool:

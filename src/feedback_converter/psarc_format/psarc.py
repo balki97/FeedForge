@@ -1,4 +1,5 @@
 import zlib
+from collections.abc import Callable
 from hashlib import md5
 from io import BytesIO
 
@@ -85,6 +86,21 @@ def read_entry(stream, n, bom, end_offset=None):
     return data
 
 
+def read_index(stream):
+    """Read the PSARC table and file listing without expanding archive payloads."""
+    header = HEADER.parse_stream(stream)
+    stream.seek(0, 2)
+    file_size = stream.tell()
+    offsets = [entry.offset for entry in header.bom.entries]
+    end_offsets = offsets[1:] + [file_size]
+    listing_data = read_entry(stream, 0, header.bom, end_offsets[0])
+    listing = listing_data.decode("utf-8", errors="replace").splitlines()
+    expected = max(0, header.n_entries - 1)
+    if len(listing) != expected:
+        raise ValueError(f"PSARC listing contains {len(listing)} paths but the archive table contains {expected} entries.")
+    return header, listing, end_offsets
+
+
 def create_entry(name, data):
     zlength = []
     output = BytesIO()
@@ -129,19 +145,62 @@ class PSARC(Construct):
         super().__init__()
 
     def _parse(self, stream, context, path):
-        header = HEADER.parse_stream(stream)
-        stream.seek(0, 2)
-        file_size = stream.tell()
-        offsets = [entry.offset for entry in header.bom.entries]
-        end_offsets = offsets[1:] + [file_size]
-        listing, *entries = [
-            read_entry(stream, i, header.bom, end_offsets[i]) for i in range(header.n_entries)
-        ]
-        listing = listing.decode("utf-8", errors="replace").splitlines()
-        content = dict(zip(listing, entries))
+        header, listing, end_offsets = read_index(stream)
+        content = {
+            name: read_entry(stream, index, header.bom, end_offsets[index])
+            for index, name in enumerate(listing, start=1)
+        }
         if self.crypto:
             content = decrypt_psarc(content)
         return content
+
+    def parse_selected_stream(
+        self,
+        stream,
+        include: Callable[[str], bool],
+        *,
+        placeholder: Callable[[str], bool] | None = None,
+    ):
+        """Read only selected archive entries while retaining chosen path placeholders."""
+        header, listing, end_offsets = read_index(stream)
+        content = {}
+        for index, name in enumerate(listing, start=1):
+            if include(name):
+                content[name] = read_entry(stream, index, header.bom, end_offsets[index])
+            elif placeholder is not None and placeholder(name):
+                content[name] = b""
+        if self.crypto:
+            content = decrypt_psarc(content)
+        return content
+
+    def parse_metadata_stream(self, stream):
+        """Read naming metadata and SNG paths without expanding chart/audio payloads."""
+        metadata_suffixes = (".json", ".hsan")
+        return self.parse_selected_stream(
+            stream,
+            lambda name: name.replace("\\", "/").lower().endswith(metadata_suffixes),
+            placeholder=lambda name: name.replace("\\", "/").lower().endswith(".sng"),
+        )
+
+    def parse_preview_stream(self, stream):
+        """Read preview metadata, charts, and artwork while skipping audio payloads."""
+        preview_suffixes = (
+            ".json",
+            ".hsan",
+            ".version",
+            ".txt",
+            ".ini",
+            ".xml",
+            ".sng",
+            ".png",
+            ".jpg",
+            ".jpeg",
+            ".dds",
+        )
+        return self.parse_selected_stream(
+            stream,
+            lambda name: name.replace("\\", "/").lower().endswith(preview_suffixes),
+        )
 
     def _build(self, content, stream, context, path):
         if self.crypto:

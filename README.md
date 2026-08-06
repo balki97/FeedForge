@@ -31,6 +31,13 @@ browser. When a source has no usable preview, FeedForge creates a short preview
 from the full mix instead. Preview creation is optional, so it cannot prevent an
 otherwise playable song from converting.
 
+Large queues use a selective PSARC reader that loads the archive index and
+naming manifests without expanding audio or chart payloads. Metadata reads run
+in a bounded worker pool, while filename collision reservation remains stable
+in queue order. Results are cached by canonical path, file size, and modification
+time, so unchanged libraries plan even faster on later runs. Planning progress
+is shown in the desktop app and can be cancelled immediately.
+
 ## Windows, macOS, and Linux
 
 Download the latest Windows x64 portable app, macOS Apple Silicon DMG/ZIP, or

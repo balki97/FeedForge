@@ -18,6 +18,8 @@ from feedback_converter.feedpak import export_feedpak_audio, inspect_feedpak, up
 from feedback_converter.feedpak_validator import validate_feedpak
 from feedback_converter.inspector import inspect_psarc
 
+PLAN_PROGRESS_PREFIX = "FEEDFORGE_PROGRESS "
+
 
 def _configure_stdio() -> None:
     for stream in (sys.stdout, sys.stderr):
@@ -34,14 +36,22 @@ def _safe_text(value: Any) -> str:
     return text.encode("utf-8", errors="backslashreplace").decode("utf-8", errors="replace")
 
 
-def _print(value: Any, *, stream: Any = None) -> None:
+def _print(value: Any, *, stream: Any = None, flush: bool = False) -> None:
     target = stream or sys.stdout
     try:
-        print(_safe_text(value), file=target)
+        print(_safe_text(value), file=target, flush=flush)
     except UnicodeEncodeError:
         encoded = _safe_text(value).encode(getattr(target, "encoding", None) or "utf-8", errors="backslashreplace")
         target.buffer.write(encoded + b"\n")
         target.flush()
+
+
+def _emit_planning_progress(payload: dict[str, object]) -> None:
+    _print(
+        f"{PLAN_PROGRESS_PREFIX}{json.dumps(payload, ensure_ascii=False, separators=(',', ':'))}",
+        stream=sys.stderr,
+        flush=True,
+    )
 
 
 def _jsonable(value: Any) -> Any:
@@ -215,7 +225,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.plan_conversion_file:
         try:
             request = json.loads(Path(args.plan_conversion_file).read_text(encoding="utf-8"))
-            result = plan_conversion_request(request)
+            result = plan_conversion_request(request, progress_callback=_emit_planning_progress)
         except Exception as exc:  # noqa: BLE001
             _print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False), stream=sys.stdout)
             return 1

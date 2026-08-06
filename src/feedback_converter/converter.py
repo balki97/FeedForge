@@ -137,6 +137,76 @@ class PlannedPsarcConversion:
         }
 
 
+@dataclass(frozen=True)
+class PsarcPlanningData:
+    input_path: Path
+    source_size: int
+    source_mtime_ns: int
+    songs: list[tuple[str, dict[str, Any]]]
+
+    def to_cache_payload(self) -> dict[str, Any]:
+        return {
+            "songs": [
+                {"key": key, "metadata": metadata}
+                for key, metadata in self.songs
+            ]
+        }
+
+
+def psarc_planning_data_from_cache(
+    input_path: Path,
+    source_size: int,
+    source_mtime_ns: int,
+    payload: dict[str, Any],
+) -> PsarcPlanningData:
+    raw_songs = payload.get("songs") if isinstance(payload, dict) else None
+    if not isinstance(raw_songs, list) or not raw_songs:
+        raise ValueError("Cached PSARC metadata does not contain any songs.")
+    songs: list[tuple[str, dict[str, Any]]] = []
+    for raw_song in raw_songs:
+        if not isinstance(raw_song, dict):
+            raise ValueError("Cached PSARC song metadata is invalid.")
+        key = str(raw_song.get("key") or "").strip()
+        metadata = raw_song.get("metadata")
+        if not key or not isinstance(metadata, dict):
+            raise ValueError("Cached PSARC song metadata is incomplete.")
+        songs.append((key, metadata))
+    return PsarcPlanningData(
+        input_path=Path(input_path),
+        source_size=int(source_size),
+        source_mtime_ns=int(source_mtime_ns),
+        songs=songs,
+    )
+
+
+def load_psarc_planning_data(
+    input_psarc: Path,
+    *,
+    rs1_songs_psarc: Path | None = None,
+) -> PsarcPlanningData:
+    """Read only the PSARC entries needed to determine authoritative output names."""
+    input_psarc = Path(input_psarc)
+    if not input_psarc.is_file():
+        raise FileNotFoundError(f"PSARC file not found: {input_psarc}")
+    stat = input_psarc.stat()
+    entries = _read_psarc_song_entries(
+        input_psarc,
+        rs1_songs_psarc=rs1_songs_psarc,
+        include_rs1_audio=False,
+        metadata_only=True,
+    )
+    final_stat = input_psarc.stat()
+    if stat.st_size != final_stat.st_size or stat.st_mtime_ns != final_stat.st_mtime_ns:
+        raise ValueError(f"Source PSARC changed while output names were being planned: {input_psarc}. Try again.")
+    songs = [(key, _extract_output_metadata(song_content)) for key, song_content in entries]
+    return PsarcPlanningData(
+        input_path=input_psarc,
+        source_size=final_stat.st_size,
+        source_mtime_ns=final_stat.st_mtime_ns,
+        songs=songs,
+    )
+
+
 def plan_psarc_songs(
     input_psarc: Path,
     output_dir: Path | None = None,
@@ -150,19 +220,36 @@ def plan_psarc_songs(
 ) -> PlannedPsarcConversion:
     """Plan final FeedPak paths from the same per-song metadata used by conversion."""
     input_psarc = Path(input_psarc)
-    if not input_psarc.is_file():
-        raise FileNotFoundError(f"PSARC file not found: {input_psarc}")
     if output_dir is not None and Path(output_dir).exists() and not Path(output_dir).is_dir():
         raise NotADirectoryError(f"FeedPak output location is not a folder: {output_dir}")
     validate_name_template(name_template)
-    stat = input_psarc.stat()
-    entries = _read_psarc_song_entries(input_psarc, rs1_songs_psarc=rs1_songs_psarc, include_rs1_audio=False)
-    final_stat = input_psarc.stat()
-    if stat.st_size != final_stat.st_size or stat.st_mtime_ns != final_stat.st_mtime_ns:
-        raise ValueError(f"Source PSARC changed while output names were being planned: {input_psarc}. Try again.")
-    outputs = _plan_loaded_song_outputs(
+    planning_data = load_psarc_planning_data(input_psarc, rs1_songs_psarc=rs1_songs_psarc)
+    return plan_loaded_psarc_songs(
+        planning_data,
+        output_dir=Path(output_dir) if output_dir is not None else None,
+        output_layout=output_layout,
+        source_root=Path(source_root) if source_root is not None else None,
+        name_template=name_template,
+        overwrite=overwrite,
+        reserved_outputs=reserved_outputs if reserved_outputs is not None else set(),
+    )
+
+
+def plan_loaded_psarc_songs(
+    planning_data: PsarcPlanningData,
+    output_dir: Path | None = None,
+    *,
+    output_layout: str = "flat",
+    source_root: Path | None = None,
+    name_template: str = "{source}",
+    overwrite: bool = False,
+    reserved_outputs: set[Path] | None = None,
+) -> PlannedPsarcConversion:
+    """Finalize deterministic paths after metadata loading, in stable queue order."""
+    input_psarc = Path(planning_data.input_path)
+    outputs = _plan_loaded_metadata_outputs(
         input_psarc,
-        entries,
+        planning_data.songs,
         output_dir=Path(output_dir) if output_dir is not None else None,
         output_layout=output_layout,
         source_root=Path(source_root) if source_root is not None else None,
@@ -172,8 +259,8 @@ def plan_psarc_songs(
     )
     return PlannedPsarcConversion(
         input_path=input_psarc,
-        source_size=final_stat.st_size,
-        source_mtime_ns=final_stat.st_mtime_ns,
+        source_size=planning_data.source_size,
+        source_mtime_ns=planning_data.source_mtime_ns,
         outputs=outputs,
     )
 
@@ -251,13 +338,30 @@ def _read_psarc_song_entries(
     *,
     rs1_songs_psarc: Path | None,
     include_rs1_audio: bool,
+    metadata_only: bool = False,
 ) -> list[tuple[str, dict[str, bytes]]]:
     with input_psarc.open("rb") as fh:
-        content = PSARC(crypto=True).parse_stream(fh)
+        parser = PSARC(crypto=True)
+        content = parser.parse_metadata_stream(fh) if metadata_only else parser.parse_stream(fh)
     # Output names only depend on the source package metadata. The potentially
     # very large RS1 songs.psarc is loaded only for the actual conversion.
     rs1_songs_content = _load_rs1_songs_content(input_psarc, content, rs1_songs_psarc) if include_rs1_audio else None
     playable_groups = _playable_song_groups(_song_groups(content))
+    if metadata_only:
+        if len(playable_groups) <= 1:
+            key = next(iter(playable_groups), input_psarc.stem)
+            return [(key, {path: data for path, data in content.items() if path.lower().endswith((".json", ".hsan"))})]
+        return [
+            (
+                key,
+                {
+                    path: content[path]
+                    for path in paths
+                    if path in content and path.lower().endswith((".json", ".hsan"))
+                },
+            )
+            for key, paths in sorted(playable_groups.items())
+        ]
     if len(playable_groups) <= 1:
         if playable_groups:
             key, paths = next(iter(playable_groups.items()))
@@ -283,13 +387,36 @@ def _plan_loaded_song_outputs(
     overwrite: bool,
     reserved_outputs: set[Path],
 ) -> list[PlannedSongOutput]:
+    metadata_entries = [(key, _output_planning_metadata(_extract_metadata(song_content))) for key, song_content in entries]
+    return _plan_loaded_metadata_outputs(
+        input_psarc,
+        metadata_entries,
+        output_dir=output_dir,
+        output_layout=output_layout,
+        source_root=source_root,
+        name_template=name_template,
+        overwrite=overwrite,
+        reserved_outputs=reserved_outputs,
+    )
+
+
+def _plan_loaded_metadata_outputs(
+    input_psarc: Path,
+    entries: list[tuple[str, dict[str, Any]]],
+    *,
+    output_dir: Path | None,
+    output_layout: str,
+    source_root: Path | None,
+    name_template: str,
+    overwrite: bool,
+    reserved_outputs: set[Path],
+) -> list[PlannedSongOutput]:
     base_dir = output_dir if output_dir is not None else input_psarc.parent
     # With "Source folder" selected, the source hierarchy is already preserved.
     # Artist layout still has an observable meaning and is honored locally.
     effective_layout = output_layout if output_dir is not None or str(output_layout).strip().lower() == "artist" else "flat"
     planned: list[PlannedSongOutput] = []
-    for key, song_content in entries:
-        metadata = _extract_metadata(song_content)
+    for key, metadata in entries:
         validate_template_metadata(name_template, metadata)
         target = build_output_path(
             input_psarc,
@@ -314,6 +441,17 @@ def _plan_loaded_song_outputs(
             )
         )
     return planned
+
+
+def _output_planning_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    """Keep the exact metadata fields that can affect output names or validation."""
+    return {
+        "title": metadata.get("title"),
+        "artist": metadata.get("artist"),
+        "album": metadata.get("album"),
+        "year": metadata.get("year"),
+        "arrangement_names": metadata.get("arrangement_names") if isinstance(metadata.get("arrangement_names"), dict) else {},
+    }
 
 
 def _targets_for_conversion(
@@ -1091,6 +1229,26 @@ def _extract_metadata(content: dict[str, bytes]) -> dict[str, Any]:
         "authors": authors,
         "arrangement_names": _arrangement_names(flat),
         "arrangement_tones": _arrangement_tones(flat),
+    }
+
+
+def _extract_output_metadata(content: dict[str, bytes]) -> dict[str, Any]:
+    """Extract only fields that can affect output paths; skip expensive preview data."""
+    objects: list[Any] = []
+    for path, data in content.items():
+        if not path.lower().endswith((".json", ".hsan")):
+            continue
+        try:
+            objects.append(json.loads(_decode_package_text(data)))
+        except Exception:  # noqa: BLE001
+            continue
+    flat = list(_walk_dicts(objects))
+    return {
+        "title": _first_key(flat, "SongName", "Title", "Name", "SongTitle"),
+        "artist": _first_key(flat, "ArtistName", "Artist", "SongArtist"),
+        "album": _first_key(flat, "AlbumName", "Album"),
+        "year": _first_key(flat, "SongYear", "Year"),
+        "arrangement_names": _arrangement_names(flat),
     }
 
 
