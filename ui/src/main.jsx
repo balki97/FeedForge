@@ -23,6 +23,7 @@ import {
   UploadCloud,
   XCircle
 } from "lucide-react";
+import { runConversionQueues, usesSharedRs1SongsAudio } from "./conversion-scheduler.mjs";
 import "./styles.css";
 
 const api = window.feedbackConverter;
@@ -296,7 +297,7 @@ function App() {
   }, [workspaceItems]);
 
   const filtered = workspaceItems.filter((item) => {
-    const haystack = `${item.preview?.title || item.name} ${item.preview?.artist || ""} ${item.preview?.album || ""}`.toLowerCase();
+    const haystack = `${item.name || ""} ${item.path || ""} ${item.preview?.title || ""} ${item.preview?.artist || ""} ${item.preview?.album || ""}`.toLowerCase();
     const matchesQuery = haystack.includes(query.toLowerCase());
     const matchesFilter =
       filter === "all" ||
@@ -570,7 +571,9 @@ function App() {
       pending.push(item);
     }
     if (!pending.length) return;
-    const rs1SongsItem = pending.find((item) => isRs1SongsArchive(item.path)) || null;
+    // A previously converted songs.psarc is still the shared audio source when
+    // retrying a compatibility archive, so find it in the full queue.
+    const rs1SongsItem = itemsRef.current.find((item) => isRs1SongsArchive(item.path)) || null;
     const rs1SongsPsarc = rs1SongsItem?.path || null;
     isConvertingRef.current = true;
     stopRequestedRef.current = false;
@@ -580,17 +583,12 @@ function App() {
     setConversionProgress({ total: conversionPending.length, completed: 0, failed: 0, active: [], stopped: false });
     const batchSourceRoot = commonAncestorDir(conversionPending.map((item) => item.path));
     const reservedOutputPaths = reserveBatchOutputPaths(conversionPending, outputDir, outputLayout, batchSourceRoot, outputNameFormat, outputNameTemplate);
-    let index = 0;
-
-    async function convertNext() {
+    async function convertItem(item) {
       if (stopRequestedRef.current) return;
-      const item = conversionPending[index];
-      index += 1;
-      if (!item) return;
       updateItem(item.id, { status: "converting", error: null, message: null });
       setConversionProgress((current) => ({
         ...current,
-        active: [...current.active.filter((entry) => entry.id !== item.id), { id: item.id, name: item.preview?.title || item.name, artist: item.preview?.artist || "" }]
+        active: [...current.active.filter((entry) => entry.id !== item.id), { id: item.id, name: itemDisplayTitle(item), artist: itemProgressSubtitle(item) }]
       }));
       const outputPath = reservedOutputPaths.get(item.id) || null;
       const payload = {
@@ -603,7 +601,7 @@ function App() {
         demucsModel,
         demucsStems
       };
-      if (rs1SongsPsarc && isRs1CompatibilityArchive(item.path)) {
+      if (rs1SongsPsarc && usesSharedRs1SongsAudio(item.path) && !isRs1SongsArchive(item.path)) {
         payload.rs1SongsPsarc = rs1SongsPsarc;
       }
       let failed = false;
@@ -641,13 +639,18 @@ function App() {
           active: current.active.filter((entry) => entry.id !== item.id)
         }));
       }
-      if (stopRequestedRef.current) return;
-      await convertNext();
     }
 
     try {
-      const workerCount = Math.min(Math.max(1, effectiveConversionWorkers), conversionPending.length);
-      await Promise.all(Array.from({ length: workerCount }, () => convertNext()));
+      const linkedItems = conversionPending.filter((item) => usesSharedRs1SongsAudio(item.path));
+      const regularItems = conversionPending.filter((item) => !usesSharedRs1SongsAudio(item.path));
+      await runConversionQueues({
+        linkedItems,
+        regularItems,
+        workerLimit: effectiveConversionWorkers,
+        runItem: convertItem,
+        shouldStop: () => stopRequestedRef.current
+      });
     } finally {
       const stopped = stopRequestedRef.current;
       isConvertingRef.current = false;
@@ -688,7 +691,7 @@ function App() {
       updateItem(item.id, { status: "converting", error: null, message: null });
       setConversionProgress((current) => ({
         ...current,
-        active: [...current.active.filter((entry) => entry.id !== item.id), { id: item.id, name: item.preview?.title || item.name, artist: item.preview?.artist || "" }]
+        active: [...current.active.filter((entry) => entry.id !== item.id), { id: item.id, name: itemDisplayTitle(item), artist: itemProgressSubtitle(item) }]
       }));
       let failed = false;
       try {
@@ -756,7 +759,7 @@ function App() {
       total: 1,
       completed: 0,
       failed: 0,
-      active: [{ id: item.id, name: item.preview?.title || item.name, artist: item.preview?.artist || "" }],
+      active: [{ id: item.id, name: itemDisplayTitle(item), artist: itemProgressSubtitle(item) }],
       stopped: false
     });
     updateItem(item.id, { status: "converting", error: null, message: null });
@@ -2108,6 +2111,38 @@ function DropZone({ onClick }) {
   );
 }
 
+function isMultiSongPackage(item) {
+  return item?.sourceType !== "feedpak"
+    && Boolean(item?.preview?.is_multi_song || Number(item?.preview?.song_count) > 1);
+}
+
+function firstSongLabel(preview) {
+  const title = String(preview?.title || "").trim();
+  const artist = String(preview?.artist || "").trim();
+  if (title && artist) return `${title} — ${artist}`;
+  return title || artist;
+}
+
+function itemDisplayTitle(item) {
+  return isMultiSongPackage(item)
+    ? item?.name || item?.preview?.title || "Unknown archive"
+    : item?.preview?.title || item?.name || "Unknown file";
+}
+
+function itemDisplaySubtitle(item) {
+  if (!isMultiSongPackage(item)) return item?.preview?.artist || item?.path || "";
+  const count = Number(item?.preview?.song_count) || 0;
+  const previewLabel = firstSongLabel(item?.preview);
+  const archiveLabel = count ? `${count} songs` : "Multi-song archive";
+  return previewLabel ? `${archiveLabel} • First song: ${previewLabel}` : archiveLabel;
+}
+
+function itemProgressSubtitle(item) {
+  const count = Number(item?.preview?.song_count) || 0;
+  if (!isMultiSongPackage(item) && count <= 1) return item?.preview?.artist || "";
+  return count ? `${count} songs` : "Multi-song archive";
+}
+
 function Queue({ items, selectedId, onSelect, onRemove, onExportAudio, onExportAudioItem, canRemove, canExportAudio }) {
   const visibleItems = items.slice(0, QUEUE_RENDER_LIMIT);
   const hiddenCount = Math.max(0, items.length - visibleItems.length);
@@ -2133,8 +2168,8 @@ function Queue({ items, selectedId, onSelect, onRemove, onExportAudio, onExportA
           >
             <StatusIcon status={item.status} />
             <div className="queue-main">
-              <strong>{item.preview?.title || item.name}</strong>
-              <span>{item.preview?.artist || item.path}</span>
+              <strong>{itemDisplayTitle(item)}</strong>
+              <span>{itemDisplaySubtitle(item)}</span>
               {item.preview?.is_multi_song && item.status !== "converted" && (
                 <em>{item.preview.song_count} songs will export as separate FeedPaks</em>
               )}
@@ -2349,6 +2384,7 @@ function Inspector({
   const stems = preview?.stems || [];
   const validation = item?.validation || preview?.validation;
   const isFeedpak = item?.sourceType === "feedpak" || preview?.source_type === "feedpak";
+  const isMultiSong = !isFeedpak && isMultiSongPackage(item);
   const outputCount = Array.isArray(item?.outputPaths) ? item.outputPaths.length : 0;
 
   useEffect(() => {
@@ -2431,14 +2467,16 @@ function Inspector({
         <section className="song-hero">
           <div className="cover">{cover ? <img src={cover} alt="" /> : <ImageIcon size={44} />}</div>
           <div className="song-copy">
-            <span className="eyebrow">{isFeedpak ? "FeedPak package" : "Selected song"}</span>
-            <h2>{preview?.title || item?.name || "No song selected"}</h2>
-            <p>{preview?.artist || "Add PSARC or FeedPak files to inspect package details."}</p>
+            <span className="eyebrow">{isFeedpak ? "FeedPak package" : isMultiSong ? "Selected archive" : "Selected song"}</span>
+            <h2>{itemDisplayTitle(item) || "No song selected"}</h2>
+            <p>{isMultiSong
+              ? firstSongLabel(preview) ? `First song preview: ${firstSongLabel(preview)}` : "Multi-song PSARC archive"
+              : preview?.artist || "Add PSARC or FeedPak files to inspect package details."}</p>
             <div className="chips">
-              {preview?.album && <span>{preview.album}</span>}
-              {preview?.year && <span>{preview.year}</span>}
-              {preview?.duration && <span>{duration(preview.duration)}</span>}
-              {preview?.is_multi_song && <span>{preview.song_count} songs</span>}
+              {!isMultiSong && preview?.album && <span>{preview.album}</span>}
+              {!isMultiSong && preview?.year && <span>{preview.year}</span>}
+              {!isMultiSong && preview?.duration && <span>{duration(preview.duration)}</span>}
+              {isMultiSong && <span>{preview.song_count} songs</span>}
               {authors.length > 0 && <span>{authors.length} credit{authors.length === 1 ? "" : "s"}</span>}
             </div>
           </div>
@@ -2845,11 +2883,6 @@ function fileType(filePath) {
 
 function isRs1SongsArchive(filePath) {
   return basename(String(filePath || "")).toLowerCase() === "songs.psarc";
-}
-
-function isRs1CompatibilityArchive(filePath) {
-  const name = basename(String(filePath || "")).toLowerCase();
-  return name.endsWith(".psarc") && name.includes("rs1compatibility");
 }
 
 function countToneDefinitions(tones) {
