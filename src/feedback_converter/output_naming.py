@@ -47,7 +47,7 @@ def validate_template_metadata(template: str | None, metadata: dict[str, Any]) -
     if missing:
         fields = ", ".join(f"{{{field}}}" for field in missing)
         raise ValueError(
-            f"Cannot apply the selected output naming convention because PSARC metadata is missing: {fields}. "
+            f"Cannot apply the selected output naming convention because source metadata is missing: {fields}. "
             "Choose Source filename or fix the source metadata."
         )
 

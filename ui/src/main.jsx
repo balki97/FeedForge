@@ -2589,13 +2589,13 @@ function Inspector({
             {item?.error && <div className="error-box"><AlertTriangle size={17} /> {item.error}</div>}
             <div className="overview-metrics">
               <FeedPakMetric label={preview?.is_multi_song ? "Songs" : "Arrangements"} value={preview?.is_multi_song ? preview.song_count : arrangements.length} />
-              <FeedPakMetric label={preview?.is_multi_song ? "Arrangements" : "Stems"} value={preview?.is_multi_song ? arrangements.length : stems.length} />
-              <FeedPakMetric label="Tone rigs" value={countToneDefinitions(tones)} />
+              <FeedPakMetric label={preview?.is_multi_song ? "Preview arrangements" : "Stems"} value={preview?.is_multi_song ? arrangements.length : stems.length} />
+              <FeedPakMetric label={preview?.is_multi_song ? "Preview tone rigs" : "Tone rigs"} value={countToneDefinitions(tones)} />
               <FeedPakMetric label="Credits" value={authors.length} />
             </div>
             <ul className="readiness readiness-grid">
               <ReadyLine ok={!!cover} text={cover ? "Cover image detected" : "No cover image"} muted={!cover} />
-              <ReadyLine ok={arrangements.length > 0} text={`${arrangements.length || 0} arrangement${arrangements.length === 1 ? "" : "s"}`} />
+              <ReadyLine ok={arrangements.length > 0} text={`${arrangements.length || 0} ${isMultiSong ? "first-song preview " : ""}arrangement${arrangements.length === 1 ? "" : "s"}`} />
               {isFeedpak && <ReadyLine ok={stems.some((stem) => String(stem.id || "").toLowerCase() === "full")} text="Full mix present" />}
               <ReadyLine ok={!!preview?.lyrics} text={preview?.lyrics ? `${preview.lyrics} lyric timing events` : "No lyric timing"} muted={!preview?.lyrics} />
               <ReadyLine ok={authors.length > 0} text={authors.length ? `${authors.length} credit${authors.length === 1 ? "" : "s"}` : "No embedded credit"} muted={!authors.length} />
@@ -2637,7 +2637,7 @@ function Inspector({
 
           <section className="panel">
             <div className="panel-title">
-              <h2>Arrangements</h2>
+              <h2>{isMultiSong ? "First-song arrangements" : "Arrangements"}</h2>
               <Guitar size={18} />
             </div>
             <div className="arrangements">

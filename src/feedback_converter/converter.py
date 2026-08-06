@@ -27,7 +27,6 @@ from .feedpak_validator import FeedpakValidationResult, require_valid_feedpak
 from .output_naming import (
     arrangement_parts_code as naming_arrangement_parts_code,
     output_path as build_output_path,
-    render_output_template as render_naming_template,
     safe_path_segment,
     unique_output_path,
     validate_name_template,
@@ -415,10 +414,13 @@ def _plan_loaded_metadata_outputs(
     overwrite: bool,
     reserved_outputs: set[Path],
 ) -> list[PlannedSongOutput]:
-    base_dir = output_dir if output_dir is not None else input_psarc.parent
+    base_dir = Path(output_dir) if output_dir is not None else input_psarc.parent
+    if base_dir.exists() and not base_dir.is_dir():
+        raise NotADirectoryError(f"FeedPak output location is not a folder: {base_dir}")
     # With "Source folder" selected, the source hierarchy is already preserved.
     # Artist layout still has an observable meaning and is honored locally.
     effective_layout = output_layout if output_dir is not None or str(output_layout).strip().lower() == "artist" else "flat"
+    working_reservations = set(reserved_outputs)
     planned: list[PlannedSongOutput] = []
     for key, metadata in entries:
         validate_template_metadata(name_template, metadata)
@@ -432,7 +434,7 @@ def _plan_loaded_metadata_outputs(
             fallback_title=key,
             suffix=".feedpak",
         )
-        target = unique_output_path(target, reserved_outputs, overwrite=overwrite)
+        target = unique_output_path(target, working_reservations, overwrite=overwrite)
         planned.append(
             PlannedSongOutput(
                 key=key,
@@ -444,6 +446,9 @@ def _plan_loaded_metadata_outputs(
                 parts=naming_arrangement_parts_code(metadata),
             )
         )
+    # Reserve names only after every song in this archive has a valid plan.
+    # A later metadata error must not consume filenames for unrelated files.
+    reserved_outputs.update(working_reservations)
     return planned
 
 
@@ -514,6 +519,7 @@ def _validated_planned_targets(
         )
 
     targets: list[Path] = []
+    target_keys: set[str] = set()
     for (key, song_content), planned in zip(entries, planned_outputs, strict=True):
         if not isinstance(planned, dict) or str(planned.get("key") or "") != key:
             raise ValueError(f"Song contents changed after output names were planned: {input_psarc}. Restart the conversion.")
@@ -542,7 +548,12 @@ def _validated_planned_targets(
         target = str(planned.get("path") or "").strip()
         if not target:
             raise ValueError(f"Output plan contains an empty path for song {expected['artist']} - {expected['title']}.")
-        targets.append(Path(target))
+        target_path = Path(target)
+        target_key = os.path.normcase(os.path.abspath(target_path))
+        if target_key in target_keys:
+            raise ValueError(f"Output plan assigns more than one song to the same path: {target_path}")
+        target_keys.add(target_key)
+        targets.append(target_path)
     return targets
 
 
@@ -1099,25 +1110,6 @@ def _audio_output_path(
         fallback_title=key,
         suffix=".ogg",
     )
-
-
-def _render_output_template(
-    template: str,
-    metadata: dict[str, Any],
-    *,
-    input_psarc: Path,
-    fallback: str,
-) -> str:
-    return render_naming_template(
-        template,
-        metadata,
-        input_psarc=input_psarc,
-        fallback_title=fallback,
-    )
-
-
-def _arrangement_parts_code(metadata: dict[str, Any]) -> str:
-    return naming_arrangement_parts_code(metadata)
 
 
 def _is_vocal_sng(path: str, song: Any) -> bool:
