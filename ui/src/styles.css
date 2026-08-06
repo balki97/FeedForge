@@ -2189,6 +2189,18 @@ button:disabled {
   gap: 8px;
 }
 
+.warning-box {
+  margin: 0 16px 16px;
+  padding: 12px;
+  border: 1px solid rgba(245, 184, 73, 0.28);
+  border-radius: 10px;
+  background: rgba(245, 184, 73, 0.11);
+  color: #ffe0a3;
+  display: flex;
+  gap: 8px;
+  white-space: pre-wrap;
+}
+
 .info-box {
   margin: 0 16px 16px;
   padding: 12px;
@@ -3267,4 +3279,3 @@ button:disabled {
     transition-duration: 0.001ms !important;
   }
 }
-

@@ -345,6 +345,7 @@ function App() {
         outputPath: null,
         outputPaths: [],
         message: null,
+        warnings: [],
         error: null
     }));
     if (!incoming.length) return;
@@ -400,7 +401,7 @@ function App() {
     if (!result.ok) {
       updateItem(item.id, (current) => {
         if (current.status === "converted" || current.status === "converting") return current;
-        return { ...current, status: "failed", error: result.error };
+        return { ...current, status: "failed", warnings: [], error: result.error };
       });
       return;
     }
@@ -411,6 +412,7 @@ function App() {
         ...current,
         status: preview.arrangements?.length ? "ready" : "needs-review",
         preview,
+        warnings: Array.isArray(preview.warnings) ? preview.warnings.filter(Boolean) : [],
         error: null
       };
     });
@@ -587,7 +589,7 @@ function App() {
       const item = conversionPending[index];
       index += 1;
       if (!item) return;
-      updateItem(item.id, { status: "converting", error: null, message: null });
+      updateItem(item.id, { status: "converting", warnings: [], error: null, message: null });
       setConversionProgress((current) => ({
         ...current,
         active: [...current.active.filter((entry) => entry.id !== item.id), { id: item.id, name: item.preview?.title || item.name, artist: item.preview?.artist || "" }]
@@ -613,7 +615,7 @@ function App() {
           : await api.convert({ ...payload, bStandardTo7String });
         if (!result.ok) {
           failed = true;
-          updateItem(item.id, { status: "failed", error: result.error });
+          updateItem(item.id, { status: "failed", warnings: [], error: result.error });
         } else {
           const warnings = Array.isArray(result.warnings) ? result.warnings.filter(Boolean) : [];
           const outputPaths = Array.isArray(result.outputPaths) ? result.outputPaths.filter(Boolean) : [];
@@ -627,12 +629,13 @@ function App() {
             message: outputCount > 1
               ? `Created ${outputCount} FeedPaks${outputFolder ? ` in ${outputFolder}` : ""}.`
               : null,
-            error: warnings.length ? warnings.join("\n") : null
+            warnings,
+            error: null
           });
         }
       } catch (error) {
         failed = true;
-        updateItem(item.id, { status: "failed", error: error?.message || "Conversion failed." });
+        updateItem(item.id, { status: "failed", warnings: [], error: error?.message || "Conversion failed." });
       } finally {
         setConversionProgress((current) => ({
           ...current,
@@ -685,7 +688,7 @@ function App() {
       const item = pending[index];
       index += 1;
       if (!item) return;
-      updateItem(item.id, { status: "converting", error: null, message: null });
+      updateItem(item.id, { status: "converting", warnings: [], error: null, message: null });
       setConversionProgress((current) => ({
         ...current,
         active: [...current.active.filter((entry) => entry.id !== item.id), { id: item.id, name: item.preview?.title || item.name, artist: item.preview?.artist || "" }]
@@ -702,7 +705,7 @@ function App() {
         });
         if (!result.ok) {
           failed = true;
-          updateItem(item.id, { status: "failed", error: result.error });
+          updateItem(item.id, { status: "failed", warnings: [], error: result.error });
         } else {
           const warnings = Array.isArray(result.warnings) ? result.warnings.filter(Boolean) : [];
           const outputPaths = Array.isArray(result.outputPaths) ? result.outputPaths.filter(Boolean) : [];
@@ -714,12 +717,13 @@ function App() {
             message: outputPaths.length > 1
               ? `Exported ${outputPaths.length} audio files${outputFolder ? ` in ${outputFolder}` : ""}.`
               : "Exported audio.",
-            error: warnings.length ? warnings.join("\n") : null
+            warnings,
+            error: null
           });
         }
       } catch (error) {
         failed = true;
-        updateItem(item.id, { status: "failed", error: error?.message || "Audio export failed." });
+        updateItem(item.id, { status: "failed", warnings: [], error: error?.message || "Audio export failed." });
       } finally {
         setConversionProgress((current) => ({
           ...current,
@@ -759,7 +763,7 @@ function App() {
       active: [{ id: item.id, name: item.preview?.title || item.name, artist: item.preview?.artist || "" }],
       stopped: false
     });
-    updateItem(item.id, { status: "converting", error: null, message: null });
+    updateItem(item.id, { status: "converting", warnings: [], error: null, message: null });
     let failed = false;
     try {
       const nameTemplate = outputNameTemplateForFormat(outputNameFormat, outputNameTemplate);
@@ -773,7 +777,7 @@ function App() {
       });
       if (!result.ok) {
         failed = true;
-        updateItem(item.id, { status: "failed", error: result.error });
+        updateItem(item.id, { status: "failed", warnings: [], error: result.error });
       } else {
         const warnings = Array.isArray(result.warnings) ? result.warnings.filter(Boolean) : [];
         const outputPaths = Array.isArray(result.outputPaths) ? result.outputPaths.filter(Boolean) : [];
@@ -782,12 +786,13 @@ function App() {
           outputPath: result.outputPath || outputPaths[0] || null,
           outputPaths,
           message: outputPaths.length > 1 ? `Exported ${outputPaths.length} audio files.` : "Exported audio.",
-          error: warnings.length ? warnings.join("\n") : null
+          warnings,
+          error: null
         });
       }
     } catch (error) {
       failed = true;
-      updateItem(item.id, { status: "failed", error: error?.message || "Audio export failed." });
+      updateItem(item.id, { status: "failed", warnings: [], error: error?.message || "Audio export failed." });
     } finally {
       isConvertingRef.current = false;
       stopRequestedRef.current = false;
@@ -806,7 +811,7 @@ function App() {
 
   async function saveFeedpakMetadata(item, metadata, authors, options = {}) {
     if (!item || item.sourceType !== "feedpak") return { ok: false, error: "Select a FeedPak first." };
-    updateItem(item.id, { status: "converting", error: null });
+    updateItem(item.id, { status: "converting", warnings: [], error: null });
     const overwriteOriginal = options.overwriteOriginal === true;
     const outputPath = overwriteOriginal ? null : editedFeedpakPath(item, outputDir);
     const result = await api.updateFeedpak({
@@ -817,7 +822,7 @@ function App() {
       authors
     });
     if (!result.ok) {
-      updateItem(item.id, { status: "failed", error: result.error });
+      updateItem(item.id, { status: "failed", warnings: [], error: result.error });
       return result;
     }
     if (overwriteOriginal) {
@@ -828,6 +833,7 @@ function App() {
         status: "converted",
         outputPath: result.outputPath || outputPath,
         validation: result.validation || null,
+        warnings: Array.isArray(result.warnings) ? result.warnings.filter(Boolean) : [],
         error: null
       });
     }
@@ -838,7 +844,7 @@ function App() {
     if (!item || item.sourceType !== "feedpak") return;
     const coverPath = await api.pickCoverImage({ defaultPath: parentDir(item.path) || undefined });
     if (!coverPath) return;
-    updateItem(item.id, { status: "converting", error: null });
+    updateItem(item.id, { status: "converting", warnings: [], error: null });
     const overwriteOriginal = options.overwriteOriginal === true;
     const outputPath = overwriteOriginal ? null : editedFeedpakPath(item, outputDir);
     const result = await api.updateFeedpak({
@@ -848,20 +854,20 @@ function App() {
       coverPath
     });
     if (!result.ok) {
-      updateItem(item.id, { status: "failed", error: result.error });
+      updateItem(item.id, { status: "failed", warnings: [], error: result.error });
       return;
     }
     if (overwriteOriginal) {
       updateItem(item.id, { status: "queued", error: null });
       await inspectItem({ ...item, status: "queued" });
     } else {
-      updateItem(item.id, { status: "converted", outputPath: result.outputPath || outputPath, validation: result.validation || null, error: null });
+      updateItem(item.id, { status: "converted", outputPath: result.outputPath || outputPath, validation: result.validation || null, warnings: Array.isArray(result.warnings) ? result.warnings.filter(Boolean) : [], error: null });
     }
   }
 
   async function removeFeedpakCover(item, options = {}) {
     if (!item || item.sourceType !== "feedpak") return;
-    updateItem(item.id, { status: "converting", error: null });
+    updateItem(item.id, { status: "converting", warnings: [], error: null });
     const overwriteOriginal = options.overwriteOriginal === true;
     const outputPath = overwriteOriginal ? null : editedFeedpakPath(item, outputDir);
     const result = await api.updateFeedpak({
@@ -871,14 +877,14 @@ function App() {
       removeCover: true
     });
     if (!result.ok) {
-      updateItem(item.id, { status: "failed", error: result.error });
+      updateItem(item.id, { status: "failed", warnings: [], error: result.error });
       return;
     }
     if (overwriteOriginal) {
       updateItem(item.id, { status: "queued", error: null });
       await inspectItem({ ...item, status: "queued" });
     } else {
-      updateItem(item.id, { status: "converted", outputPath: result.outputPath || outputPath, validation: result.validation || null, error: null });
+      updateItem(item.id, { status: "converted", outputPath: result.outputPath || outputPath, validation: result.validation || null, warnings: Array.isArray(result.warnings) ? result.warnings.filter(Boolean) : [], error: null });
     }
   }
 
@@ -895,7 +901,7 @@ function App() {
   }
 
   async function updateFeedpakStems(item, stemUpdates, removeStems, options = {}) {
-    updateItem(item.id, { status: "converting", error: null });
+    updateItem(item.id, { status: "converting", warnings: [], error: null });
     const overwriteOriginal = options.overwriteOriginal === true;
     const outputPath = overwriteOriginal ? null : editedFeedpakPath(item, outputDir);
     const result = await api.updateFeedpak({
@@ -906,14 +912,14 @@ function App() {
       removeStems
     });
     if (!result.ok) {
-      updateItem(item.id, { status: "failed", error: result.error });
+      updateItem(item.id, { status: "failed", warnings: [], error: result.error });
       return result;
     }
     if (overwriteOriginal) {
       updateItem(item.id, { status: "queued", error: null });
       await inspectItem({ ...item, status: "queued" });
     } else {
-      updateItem(item.id, { status: "converted", outputPath: result.outputPath || outputPath, validation: result.validation || null, error: null });
+      updateItem(item.id, { status: "converted", outputPath: result.outputPath || outputPath, validation: result.validation || null, warnings: Array.isArray(result.warnings) ? result.warnings.filter(Boolean) : [], error: null });
     }
     return result;
   }
@@ -921,7 +927,7 @@ function App() {
   async function reprocessFeedpakStems(item, options = {}) {
     if (!item || item.sourceType !== "feedpak") return { ok: false, error: "Select a FeedPak first." };
     if (!separateStems) return { ok: false, error: "Enable Separate stems in Settings first." };
-    updateItem(item.id, { status: "converting", error: null });
+    updateItem(item.id, { status: "converting", warnings: [], error: null });
     const overwriteOriginal = options.overwriteOriginal === true;
     const outputPath = overwriteOriginal ? null : editedFeedpakPath(item, outputDir);
     const result = await api.updateFeedpak({
@@ -935,14 +941,14 @@ function App() {
       demucsStems
     });
     if (!result.ok) {
-      updateItem(item.id, { status: "failed", error: result.error });
+      updateItem(item.id, { status: "failed", warnings: [], error: result.error });
       return result;
     }
     if (overwriteOriginal) {
       updateItem(item.id, { status: "queued", error: null });
       await inspectItem({ ...item, status: "queued" });
     } else {
-      updateItem(item.id, { status: "converted", outputPath: result.outputPath || outputPath, validation: result.validation || null, error: null });
+      updateItem(item.id, { status: "converted", outputPath: result.outputPath || outputPath, validation: result.validation || null, warnings: Array.isArray(result.warnings) ? result.warnings.filter(Boolean) : [], error: null });
     }
     return result;
   }
@@ -2348,6 +2354,9 @@ function Inspector({
   const authors = preview?.authors || [];
   const stems = preview?.stems || [];
   const validation = item?.validation || preview?.validation;
+  const itemWarnings = Array.isArray(item?.warnings)
+    ? item.warnings.filter(Boolean)
+    : Array.isArray(preview?.warnings) ? preview.warnings.filter(Boolean) : [];
   const isFeedpak = item?.sourceType === "feedpak" || preview?.source_type === "feedpak";
   const outputCount = Array.isArray(item?.outputPaths) ? item.outputPaths.length : 0;
 
@@ -2461,6 +2470,9 @@ function Inspector({
               <span>{item ? statusText(item.status) : "Waiting"}</span>
             </div>
             {item?.error && <div className="error-box"><AlertTriangle size={17} /> {item.error}</div>}
+            {itemWarnings.length > 0 && (
+              <div className="warning-box"><AlertTriangle size={17} /> <span>{itemWarnings.join("\n")}</span></div>
+            )}
             <div className="overview-metrics">
               <FeedPakMetric label={preview?.is_multi_song ? "Songs" : "Arrangements"} value={preview?.is_multi_song ? preview.song_count : arrangements.length} />
               <FeedPakMetric label={preview?.is_multi_song ? "Arrangements" : "Stems"} value={preview?.is_multi_song ? arrangements.length : stems.length} />
