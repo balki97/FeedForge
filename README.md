@@ -24,26 +24,6 @@ FeedForge helps you inspect, validate, edit, organize, and maintain FeedPak
 song libraries. It includes package details, metadata and stem tools, library
 auditing, duplicate checks, and optional local stem separation.
 
-### Reliable song previews
-
-Converted songs keep Rocksmith's authored preview audio for FeedBack's song
-browser. When a source has no usable preview, FeedForge creates a short preview
-from the full mix instead. Preview creation is optional, so it cannot prevent an
-otherwise playable song from converting.
-
-Large queues use a selective PSARC reader that loads the archive index and
-naming manifests without expanding audio or chart payloads. Metadata reads run
-in a bounded worker pool, while filename collision reservation remains stable
-in queue order. Results are cached by canonical path, file size, and modification
-time, so unchanged libraries plan even faster on later runs. Planning progress
-is shown in the desktop app and can be cancelled immediately.
-
-Background inspection is selective too. For a multi-song PSARC, the queue
-counts every playable song from the archive index but expands only the first
-song's arrangements, tones, and cover for the on-screen preview. Conversion
-still processes every song. This avoids parsing hundreds of unrelated charts
-before a large archive can be identified or converted.
-
 ## Windows, macOS, and Linux
 
 Download the latest Windows x64 portable app, macOS Apple Silicon DMG/ZIP, or
