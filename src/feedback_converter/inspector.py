@@ -186,20 +186,32 @@ def inspect_psarc(input_psarc: Path, *, cover_dir: Path | None = None) -> PsarcP
 def _read_preview_content(input_psarc: Path) -> tuple[dict[str, bytes], int]:
     """Read one representative song from a multi-song archive for fast UI inspection."""
     with input_psarc.open("rb") as fh:
-        metadata_content = PSARC(crypto=True).parse_metadata_stream(fh)
+        parser = PSARC(crypto=True)
+        metadata_content = (
+            parser.parse_metadata_stream(fh)
+            if hasattr(parser, "parse_metadata_stream")
+            else parser.parse_stream(fh)
+        )
 
     playable_groups = _playable_song_groups(_song_groups(metadata_content))
     song_count = max(1, len(playable_groups))
     if not playable_groups:
         with input_psarc.open("rb") as fh:
-            return PSARC(crypto=True).parse_preview_stream(fh), song_count
+            parser = PSARC(crypto=True)
+            return (
+                parser.parse_preview_stream(fh)
+                if hasattr(parser, "parse_preview_stream")
+                else parser.parse_stream(fh)
+            ), song_count
 
     key, paths = next(iter(playable_groups.items()))
     content = _content_for_song_group(metadata_content, key, paths)
     with input_psarc.open("rb") as fh:
-        details = PSARC(crypto=True).parse_selected_stream(
-            fh,
-            lambda path: _is_preview_detail_for_song(path, key),
+        parser = PSARC(crypto=True)
+        details = (
+            parser.parse_selected_stream(fh, lambda path: _is_preview_detail_for_song(path, key))
+            if hasattr(parser, "parse_selected_stream")
+            else parser.parse_stream(fh)
         )
     # Updating placeholder SNG entries preserves their original archive order.
     content.update(details)

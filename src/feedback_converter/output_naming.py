@@ -62,7 +62,7 @@ def normalize_output_layout(layout: str | None) -> str:
 
 def safe_path_segment(value: str, fallback: str = "converted", *, max_length: int = 120) -> str:
     def clean(candidate: str) -> str:
-        normalized = unicodedata.normalize("NFC", candidate)
+        normalized = unicodedata.normalize("NFKD", candidate).encode("ascii", "ignore").decode("ascii")
         sanitized = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", normalized)
         sanitized = re.sub(r"\s+", " ", sanitized).strip().rstrip(". ")
         return sanitized[:max_length].rstrip(". ")
