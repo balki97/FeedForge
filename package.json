@@ -1,6 +1,6 @@
 {
   "name": "feedforge",
-  "version": "0.1.40",
+  "version": "0.1.41",
   "private": true,
   "description": "Desktop toolkit for FeedPak files for the FeedBack game.",
   "author": "FeedForge Contributors",
@@ -120,7 +120,7 @@
       "appimage": "1.0.3"
     },
     "portable": {
-      "unpackDirName": "FeedForge"
+      "unpackDirName": "FeedForge-${version}"
     }
   }
 }
