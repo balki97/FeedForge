@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "feedforge"
-version = "0.1.41"
+version = "0.1.42"
 description = "Desktop toolkit for FeedPak files for the FeedBack game."
 readme = "README.md"
 license = "MIT"

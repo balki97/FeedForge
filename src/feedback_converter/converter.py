@@ -2885,7 +2885,7 @@ def _maybe_separate_stems(
                 "id": stem_id,
                 "file": rel_file,
                 "codec": _codec_for_audio_path(rel_file),
-                "default": False,
+                "default": True,
             }
         )
     stem_entries.sort(key=lambda item: _stem_sort_key(str(item["id"])))

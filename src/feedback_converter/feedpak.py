@@ -58,6 +58,7 @@ def inspect_feedpak(input_path: Path, *, cover_dir: Path | None = None) -> dict[
         tones = _arrangement_tone_previews(arrangement_payloads)
         if not tones:
             tones = _rig_previews(rigs)
+        stems = _stem_previews(package_dir, manifest)
         result = {
             "source_type": "feedpak",
             "title": str(manifest.get("title") or input_path.stem),
@@ -70,11 +71,11 @@ def inspect_feedpak(input_path: Path, *, cover_dir: Path | None = None) -> dict[
             "cover_path": cover_path,
             "cover": manifest.get("cover"),
             "arrangements": arrangements,
-            "stems": _stem_previews(package_dir, manifest),
+            "stems": stems,
             "tones": tones,
             "rigs": manifest.get("rigs"),
             "lyrics": _lyrics_count(package_dir, manifest),
-            "warnings": [],
+            "warnings": _stem_readiness_warnings(stems),
         }
         result["validation"] = validation
         return result
@@ -90,6 +91,7 @@ def _inspect_feedpak_zip(input_path: Path, *, cover_dir: Path | None) -> dict[st
         tones = _arrangement_tone_previews(arrangement_payloads)
         if not tones:
             tones = _rig_previews(rigs)
+        stems = _stem_previews_from_zip(zf, manifest)
         return {
             "source_type": "feedpak",
             "title": str(manifest.get("title") or input_path.stem),
@@ -102,11 +104,11 @@ def _inspect_feedpak_zip(input_path: Path, *, cover_dir: Path | None) -> dict[st
             "cover_path": cover_path,
             "cover": manifest.get("cover"),
             "arrangements": arrangements,
-            "stems": _stem_previews_from_zip(zf, manifest),
+            "stems": stems,
             "tones": tones,
             "rigs": manifest.get("rigs"),
             "lyrics": _lyrics_count_from_zip(zf, manifest),
-            "warnings": [],
+            "warnings": _stem_readiness_warnings(stems),
         }
 
 
@@ -480,6 +482,13 @@ def _stem_previews_from_zip(zf: zipfile.ZipFile, manifest: dict[str, Any]) -> li
     return rows
 
 
+def _stem_readiness_warnings(stems: list[dict[str, Any]]) -> list[str]:
+    separated = [stem for stem in stems if str(stem.get("id") or "").lower() != "full"]
+    if separated and not any(stem.get("default") for stem in separated):
+        return ["Separated stems are present but all are disabled by default. Reprocess this FeedPak to enable playback through the stem mixer."]
+    return []
+
+
 def _rig_previews(rigs: Any) -> list[dict[str, Any]]:
     if not isinstance(rigs, dict):
         return []
@@ -709,7 +718,7 @@ def _apply_stem_edits(
             "id": stem_id,
             "file": target.relative_to(package_dir).as_posix(),
             "codec": _codec_for_audio_path(target),
-            "default": bool(update.get("default", False)),
+            "default": bool(update["default"]) if "default" in update else stem_id != "full",
         }
 
     if stem_updates or remove_stems:
