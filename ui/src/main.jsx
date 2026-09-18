@@ -4,6 +4,7 @@ import { Coffee, Download, ExternalLink, FileMusic, FolderOpen, Globe, Guitar, P
 import { runConversionQueues, usesSharedRs1SongsAudio } from "./conversion-scheduler.mjs";
 import SongsterrWorkspace from "./features/songsterr/SongsterrWorkspace.jsx";
 import Home from "./features/Home.jsx";
+import ConversionDialog from "./features/ConversionDialog.jsx";
 import { importDestination } from "./import-navigation.mjs";
 import feedForgeLogo from "../../assets/feedforge.png";
 import "./workbench.css";
@@ -30,6 +31,32 @@ function DiscordIcon({ size = 17 }) {
 }
 
 function App() {
+  const [conversionRequest, setConversionRequest] = useState(null);
+  const conversionChoiceRef = useRef(null);
+
+  async function requestConversion() {
+    if (conversionChoiceRef.current) return null;
+    const options = { demucsUrl: demucsUrl.trim() || "http://127.0.0.1:7865", demucsApiKey: demucsApiKey.trim(), demucsModel, demucsStems };
+    // Reserve before the health request so repeated clicks cannot queue dialogs.
+    conversionChoiceRef.current = () => {};
+    let status;
+    try { status = await api.checkStemServer({ url: demucsUrl, apiKey: demucsApiKey, model: demucsModel }); }
+    catch (error) { status = { ready: false, error: error.message }; }
+    return new Promise(resolve => {
+      conversionChoiceRef.current = resolve;
+      setConversionRequest({ enabled: separateStems, ready: status.ready, stems: demucsStems, error: status.error, options });
+    });
+  }
+
+  function finishConversionChoice(choice) {
+    const resolve = conversionChoiceRef.current;
+    conversionChoiceRef.current = null;
+    setConversionRequest(null);
+    resolve?.(choice === null ? null : {
+      ...conversionRequest.options, separateStems: choice
+    });
+  }
+
   const initialSettingsRef = useRef(null);
   if (initialSettingsRef.current === null) {
     initialSettingsRef.current = readSettings();
@@ -538,13 +565,15 @@ function App() {
     const pending = [];
     const pendingPaths = new Set();
     for (const item of itemsRef.current) {
-      if (item.status === "converted" || item.status === "converting") continue;
+      if (item.sourceType === "feedpak" || item.status === "converted" || item.status === "converting") continue;
       const key = normalizePathKey(item.path);
       if (pendingPaths.has(key)) continue;
       pendingPaths.add(key);
       pending.push(item);
     }
     if (!pending.length) return;
+    const stemOptions = await requestConversion();
+    if (!stemOptions) return;
     // A previously converted songs.psarc is still the shared audio source when
     // retrying a compatibility archive, so find it in the full queue.
     const rs1SongsItem = itemsRef.current.find((item) => isRs1SongsArchive(item.path)) || null;
@@ -670,11 +699,7 @@ function App() {
           outputPath,
           outputPlan,
           overwrite,
-          separateStems,
-          demucsUrl: demucsUrl.trim(),
-          demucsApiKey: demucsApiKey.trim(),
-          demucsModel,
-          demucsStems
+          ...stemOptions
         };
         if (rs1SongsPsarc && usesSharedRs1SongsAudio(item.path) && !isRs1SongsArchive(item.path)) {
           payload.rs1SongsPsarc = rs1SongsPsarc;
@@ -1074,25 +1099,24 @@ function App() {
     event.preventDefault();
   }
 
-  const viewMeta = activeView === "home"
-    ? { title: "Home", description: "Create and maintain your FeedPak collection." }
-    : activeView === "songsterr"
-    ? { title: "Create from Songsterr", description: "Select arrangements, prepare media, and build validated FeedPaks." }
-    : activeView === "stems"
-    ? { title: "Stem splitting", description: "Local Demucs or remote stem server setup." }
-    : activeView === "settings"
-    ? { title: "Settings", description: "Conversion defaults and diagnostics." }
-    : activeView === "feedpak"
-      ? { title: "Library & editor", description: "Inspect packages, update metadata, manage stems, and organize files." }
-      : { title: "Convertor", description: "Build FeedBack-ready packages from CDLC files." };
+  const viewTitle = {
+    songsterr: "From Songsterr", stems: "Stem splitting", settings: "Settings",
+    feedpak: "Library & editor", workspace: "Convertor"
+  }[activeView];
 
   return (
     <div className="app" onDragOver={(event) => event.preventDefault()} onDrop={onDrop}>
+      {conversionRequest && <ConversionDialog request={conversionRequest} finish={finishConversionChoice} setup={() => {
+        const ready = conversionRequest.ready;
+        finishConversionChoice(null);
+        if (ready) { setSettingsSection("conversion"); setActiveView("settings"); }
+        else { setSeparateStems(true); setActiveView("stems"); }
+      }} />}
       <aside className="app-sidebar">
         <div className="brand">
           <img className="brand-logo" src={feedForgeLogo} alt="" />
           <div>
-            <strong>FeedForge {appVersion && <span className="version-badge">v{appVersion}</span>}</strong>
+            <strong>FeedForge</strong>{appVersion && <span className="version-badge">v{appVersion}</span>}
           </div>
         </div>
         <nav className="side-nav" aria-label="FeedForge sections">
@@ -1117,11 +1141,11 @@ function App() {
           </button>
         </nav>
         <div className="sidebar-links">
-          <button className="support-link sidebar-support" onClick={() => api.openWebsite()} title="Open FeedForge Hub">
+          <button className="support-link sidebar-support website" onClick={() => api.openWebsite()} title="Open FeedForge Hub">
             <Globe size={17} />
             Website
           </button>
-          <button className="support-link sidebar-support" onClick={() => api.openDiscord()} title="Join the FeedForge Discord">
+          <button className="support-link sidebar-support discord" onClick={() => api.openDiscord()} title="Join the FeedForge Discord">
             <DiscordIcon size={17} />
             Discord
           </button>
@@ -1132,11 +1156,9 @@ function App() {
         </div>
       </aside>
       <main className="workspace" ref={workspaceRef}>
-        <header className="topbar">
+        {activeView !== "home" && <header className="topbar">
           <div className="title-group">
-            <span className="page-kicker">FeedForge</span>
-            <h1>{viewMeta.title}</h1>
-            <p>{viewMeta.description}</p>
+            <h1>{viewTitle}</h1>
           </div>
           <div className="header-actions">
             <button
@@ -1152,7 +1174,7 @@ function App() {
                 <small>{headerStemStatusLabel(separateStems, stemServerStatus, isStartingStemServer, stemServerMatchesSelectedConfig)}</small>
               </span>
             </button>
-            {activeView === "workspace" && <button className="primary" onClick={convertQueue} disabled={!items.length || isConverting}>
+            {activeView === "workspace" && <button className="primary" onClick={convertQueue} disabled={!workspaceItems.length || isConverting}>
               {isConverting ? <RotateCw className="spin" size={18} /> : <Download size={18} />}
               Convert queue{isConverting ? ` (${effectiveConversionWorkers}x)` : ""}
             </button>}
@@ -1163,7 +1185,7 @@ function App() {
               </button>
             )}
           </div>
-        </header>
+        </header>}
 
         {["workspace", "feedpak"].includes(activeView) && <section className="toolbar">
           <div className="search">
@@ -1193,7 +1215,7 @@ function App() {
         )}
 
         <div hidden={activeView !== "songsterr"}>
-          <SongsterrWorkspace outputDir={outputDir} setOutputDir={setOutputDir} onCreated={paths => addFiles(paths, null, false)} />
+          <SongsterrWorkspace requestConversion={requestConversion} outputDir={outputDir} setOutputDir={setOutputDir} onCreated={paths => addFiles(paths, null, false)} />
         </div>
         {activeView === "home" ? <Home navigate={setActiveView} chooseFiles={chooseFiles} chooseFolder={() => chooseFolder("feedpak")} items={items} selectItem={item => {setSelectedId(item.id); setActiveView(item.sourceType === "feedpak" ? "feedpak" : "workspace");}} /> : activeView === "songsterr" ? null : activeView === "settings" || activeView === "stems" ? (
           <section className={`settings-page ${activeView === "stems" ? "settings-page-full" : ""}`}>
@@ -1209,7 +1231,7 @@ function App() {
               <div className="settings-card-head">
                 <div>
                   <h2>Conversion</h2>
-                  <p>Output, naming, and package options.</p>
+
                 </div>
               </div>
               <div className="settings-grid">
@@ -1269,7 +1291,7 @@ function App() {
                 <div className="settings-card-head">
                   <div>
                     <h2>Configuration</h2>
-                    <p>Choose your model, audio stems, and processing device.</p>
+
                   </div>
                   <span className={`server-badge ${stemServerBadge(stemServerStatus, isStartingStemServer, stemServerMatchesSelectedConfig).toLowerCase().replace(/\s+/g, "-")}`}>{stemServerBadge(stemServerStatus, isStartingStemServer, stemServerMatchesSelectedConfig)}</span>
                 </div>
@@ -1457,7 +1479,7 @@ function App() {
                 <div className="settings-card-head">
                   <div>
                     <h2>Diagnostics</h2>
-                    <p>Logs, stem server output, and library checks.</p>
+
                   </div>
                 </div>
                 <LibraryAuditPanel

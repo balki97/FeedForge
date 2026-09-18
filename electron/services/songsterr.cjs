@@ -73,7 +73,7 @@ function registerSongsterr({ app, ipcMain, dialog, window, runConverter, termina
               SONGSTERR_NODE_PATH: process.execPath, ELECTRON_RUN_AS_NODE: "1" },
             onSpawn: child => {
               state.child = child;
-              timer = setTimeout(() => { timedOut = true; terminateChildProcessTree(child); }, operation === "create" ? 600000 : 180000);
+              timer = setTimeout(() => { timedOut = true; terminateChildProcessTree(child); }, operation === "create" ? (value.separateStems ? 3600000 : 600000) : 180000);
             },
             onStderrLine: line => {
               if (!line.startsWith("FEEDFORGE_PROGRESS ")) return;

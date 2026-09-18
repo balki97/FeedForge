@@ -10,6 +10,7 @@ import tempfile
 import math
 import urllib.parse
 from pathlib import Path
+from .feedpak import update_feedpak
 
 from .songsterr import (
     feedpak_filename,
@@ -107,11 +108,20 @@ def create(payload):
             lyrics_source="authored", source_urls=[payload["url"]],
             offset=offset,
         )
+        warnings = (["Selected artwork could not be loaded; package has no cover."]
+                    if (payload.get("cover_path") or payload.get("cover_url")) and not cover else [])
+        if payload.get("separateStems"):
+            progress("Separating audio stems", title=payload.get("title"))
+            result = update_feedpak(
+                output, separate_stems=True, overwrite=True,
+                demucs_url=payload.get("demucsUrl"), demucs_api_key=payload.get("demucsApiKey"),
+                demucs_model=payload.get("demucsModel"), demucs_stems=payload.get("demucsStems"),
+            )
+            warnings.extend(warning.message for warning in result.warnings)
         return {"output_path": str(output), "arrangements": len(arrangements),
                 "lyrics": sum(str(event.get("w") or "").endswith("+")
                               for event in payload.get("lyrics") or ()),
-                "warnings": (["Selected artwork could not be loaded; package has no cover."]
-                             if (payload.get("cover_path") or payload.get("cover_url")) and not cover else [])}
+                "warnings": warnings}
     finally:
         try:
             shutil.rmtree(work)

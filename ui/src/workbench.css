@@ -325,3 +325,18 @@ label, .select-control, .filter-select, .stem-settings label, .feedpak-editor la
 .error-box, .warning-box, .info-box, .update-banner { border-radius: var(--radius); }
 .cover { background: var(--bg); }
 .active-file-track { background: var(--control); border-color: var(--line); }
+.home-workspace { padding-top: 42px; }
+.brand .version-badge { display: block; margin-top: 4px; text-align: left; }
+.sidebar-links .website { --service-color: #227f94; }
+.sidebar-links .discord { --service-color: #5865f2; }
+.sidebar-links .kofi { --service-color: #df4562; }
+.sidebar-links button:hover, .sidebar-links button:focus-visible {
+  background: var(--service-color) !important; border-color: var(--service-color); color: white;
+}
+.conversion-dialog { width: min(520px, calc(100vw - 48px)); padding: 26px; color: var(--text); background: var(--panel); border: 1px solid var(--line-hover); border-radius: 6px; }
+.conversion-dialog::backdrop { background: #0009; }
+.conversion-dialog h2 { margin: 0 0 12px; font-size: 20px; }
+.conversion-dialog p { color: var(--muted); line-height: 1.65; margin: 0 0 20px; }
+.conversion-dialog .dialog-error { color: var(--yellow); }
+.dialog-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.dialog-actions .primary { min-width: 0; }

@@ -627,7 +627,7 @@ export function DropZone({ onClick }) {
     <button className="drop-zone" onClick={onClick}>
       <UploadCloud size={30} />
       <strong>Drop PSARC or FeedPak files here</strong>
-      <span>Convert CDLC, inspect FeedPaks, edit metadata, or split stems.</span>
+      <span>Or use Add files.</span>
     </button>
   );
 }
@@ -990,7 +990,7 @@ export function Inspector({
     <aside className="inspector inspector-empty">
       <FileMusic size={26} />
       <h2>No file selected</h2>
-      <p>Add a file, then select it in the queue to inspect its arrangements, audio, and metadata.</p>
+      <p>Select a file from the queue.</p>
     </aside>
   );
 

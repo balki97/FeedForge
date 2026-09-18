@@ -99,3 +99,30 @@ def test_edit_failure_does_not_unlink_original(tmp_path, monkeypatch):
     with pytest.raises(OSError):
         update_feedpak(original, metadata={'title':'Updated'}, overwrite=True)
     assert original.read_bytes() == before
+
+
+def test_songsterr_creation_uses_shared_stem_editor_and_returns_warnings(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    inspection = {'meta': {'title': 'Test', 'artist': 'Test'}, 'video_url': ''}
+    monkeypatch.setattr(songsterr_cli, 'inspect_songsterr', lambda *a, **kw: inspection)
+    monkeypatch.setattr(songsterr_cli, 'load_songsterr_selection', lambda *a: synthetic_song())
+    audio = tmp_path / 'audio.ogg'
+    audio.write_bytes(b'OggS-fixture')
+    monkeypatch.setattr(songsterr_cli, 'prepare_audio', lambda *a: audio)
+    monkeypatch.setattr(songsterr_cli, 'prepare_cover', lambda *a: None)
+    calls = []
+    def split(output, **options):
+        assert validate_feedpak(output).ok
+        calls.append(options)
+        return SimpleNamespace(warnings=[SimpleNamespace(message='Server unavailable; full mix only')])
+    monkeypatch.setattr(songsterr_cli, 'update_feedpak', split)
+    payload = dict(url='https://www.songsterr.com/a/wsa/test-s1', selected_parts=[0, 1],
+                   audio_path=str(audio), output_path=str(tmp_path / 'test.feedpak'))
+    assert not songsterr_cli.create(payload)['warnings']
+    assert not calls
+    payload.update(separateStems=True, demucsUrl='http://127.0.0.1:7865', demucsModel='htdemucs_6s', demucsStems=['guitar'])
+    result = songsterr_cli.create(payload)
+    assert result['warnings'] == ['Server unavailable; full mix only']
+    assert calls[0]['separate_stems'] is True
+    assert calls[0]['demucs_stems'] == ['guitar']
+    assert calls[0]['demucs_model'] == 'htdemucs_6s'

@@ -45,7 +45,7 @@ function songEditor(result, selectedParts = [result.selected_part_id]) {
   };
 }
 
-export default function SongsterrWorkspace({ outputDir: sharedOutputDir, setOutputDir, onCreated }) {
+export default function SongsterrWorkspace({ outputDir: sharedOutputDir, setOutputDir, onCreated, requestConversion }) {
   const [defaultOutput, setDefaultOutput] = useState("");
   const outputDir = sharedOutputDir || defaultOutput;
   const [url, setUrl] = useState("");
@@ -183,17 +183,20 @@ export default function SongsterrWorkspace({ outputDir: sharedOutputDir, setOutp
   async function createFeedPak() {
     if (!selectedTracks.length) return setNotice({ type: "error", text: "Select at least one arrangement." });
     if (!outputDir) return setNotice({ type: "error", text: "Choose an output folder." });
+    const stemOptions = await requestConversion();
+    if (!stemOptions) return;
     setBusy("create");
     setStopping(false);
     setResults([]);
     setProgress(null);
-    setNotice({ type: "info", text: "Downloading charts and audio, then building the FeedPak… A temporary browser may open if YouTube requests verification." });
+    setNotice({ type: "info", text: "Preparing charts and audio…" });
     try {
       const live = currentEditor();
       const jobs = batch.map((entry, index) => index === activeIndex ? live : entry);
       const payloads = jobs.map((entry) => {
         const chosen = entry.tracks.filter((track) => track.selected);
         return {
+          ...stemOptions,
           url: entry.song.url,
           offset: Number(entry.offset || 0),
           title: entry.form.title,
@@ -254,7 +257,7 @@ export default function SongsterrWorkspace({ outputDir: sharedOutputDir, setOutp
     </div>
     {notice && <div role={notice.type === 'error' ? 'alert' : 'status'} className={`workflow-notice ${notice.type}`}>{notice.type === 'error' ? <XCircle size={17}/> : <InfoIcon/>}<span>{notice.text}</span></div>}
     {busy && <div role="status" className="job-stage"><LoaderCircle size={16} className="spin"/><span>{progress?.stage || 'Working…'}{progress?.total > 1 ? ` · Song ${progress.index} of ${progress.total}` : ''}</span>{busy === 'create' && batch.length > 1 && <button disabled={stopping} onClick={() => guarded(async () => {await api.cancel(); setStopping(true);})}>{stopping ? 'Stopping after current song' : 'Stop after current song'}</button>}</div>}
-    {!song ? <div className="workflow-empty"><Music2 size={30}/><h2>Turn a tab into a FeedPak</h2><p>Read a song link to choose arrangements, edit release details, and prepare audio and lyrics. Multiple links to the same song are grouped automatically.</p><p className="muted">Guitar, bass and drums · Local audio or synchronized video · Individual or batch output</p></div> : <>
+    {!song ? <div className="workflow-empty"><Music2 size={30}/><p>Paste a Songsterr link to begin.</p></div> : <>
       {batch.length > 1 && <div className="song-batch" aria-label="Songs in this batch">{batch.map((entry,index) => <button key={entry.song.song_id || index} className={index === activeIndex ? 'active' : ''} disabled={Boolean(busy)} onClick={() => selectSong(index)}><span>{index + 1}</span><strong>{entry.form.title}</strong><small>{entry.form.artist}</small></button>)}</div>}
       <fieldset className="song-editor" disabled={Boolean(busy)}>
         <section className="editor-section release-editor"><h2>Release & credits</h2><div className="release-fields"><div className="artwork-editor"><div className="artwork-preview">{coverPreview ? <img src={coverPreview} alt="Album artwork"/> : <ImageIcon size={32}/>}</div><div className="compact-actions"><button title="Replace artwork" aria-label="Replace artwork" onClick={() => guarded(replaceCover)}><Upload size={15}/></button><button title="Restore release artwork" aria-label="Restore release artwork" disabled={!fetchedCover?.url} onClick={() => setCover(fetchedCover)}><RefreshCw size={15}/></button><button title="Remove artwork" aria-label="Remove artwork" onClick={() => setCover({url:'',path:'',preview:'',source:'No cover'})}><Trash2 size={15}/></button></div><small>{cover.source}</small></div><div className="form-grid">{[['title','Song title'],['artist','Artist'],['album','Album'],['year','Year'],['author','Charter / author']].map(([key,label]) => <label key={key}>{label}<input value={form[key]} onChange={event => setForm({...form,[key]:event.target.value})}/></label>)}</div></div></section>
@@ -262,7 +265,7 @@ export default function SongsterrWorkspace({ outputDir: sharedOutputDir, setOutp
         <section className="editor-section"><h2>Audio & output</h2><div className="form-grid"><div><span className="field-label">Audio source</span><p className="file-value">{audioPath || song.video_url || 'No synchronized video — choose local audio'}</p><div className="compact-actions"><button onClick={() => guarded(chooseAudio)}><FileAudio size={15}/> Choose audio</button>{audioPath && <button onClick={() => setAudioPath('')}>Use video</button>}</div></div><div><span className="field-label">Output folder</span><p className="file-value">{outputDir || 'Choose a folder'}</p><button onClick={() => guarded(chooseOutput)}><FolderOpen size={15}/> Choose folder</button></div></div><details className="advanced-options"><summary>Advanced timing</summary><label>Chart offset (seconds)<input type="number" step="0.01" value={offset} onChange={event => setOffset(event.target.value)}/></label><small>Moves chart events and the song timeline relative to audio. Lyrics keep their authored timestamps.</small></details></section>
         <section className="editor-section lyrics-editor"><div className="section-heading"><h2>Synchronized lyrics</h2><div className="compact-actions"><button onClick={() => guarded(importLyrics)}><Upload size={15}/> Import LRC</button><button onClick={retryLyrics}><RefreshCw size={15}/> Search again</button></div></div><label className="check-row"><input type="checkbox" checked={lyricsEnabled} disabled={!lyrics.length} onChange={event => setLyricsEnabled(event.target.checked)}/> Include {lyrics.length} timed lines</label><p className="muted">{song.lyrics?.provider || song.lyrics?.message || 'No lyrics found. Import an LRC file or retry the search.'}</p>{lyrics.length > 0 && <div className="lyrics-table"><div className="lyric-labels"><span>Seconds</span><span>Lyric line</span></div>{lyrics.map((line,index) => <div className="lyric-row" key={index}><input aria-label={`Time for lyric ${index+1}`} type="number" min="0" step="0.01" value={line.t} onChange={event => updateLyric(index,{t:event.target.value})}/><input aria-label={`Lyric ${index+1}`} value={line.text} onChange={event => updateLyric(index,{text:event.target.value})}/></div>)}</div>}</section>
       </fieldset>
-      <footer className="creation-footer"><div><strong>{outputName(form)}</strong><small>Validated against the bundled FeedPak schemas before saving. Existing files receive a numbered suffix.</small></div><button className="primary" onClick={createFeedPak} disabled={Boolean(busy) || !selectedTracks.length}><Download size={17}/> {batch.length > 1 ? `Create ${batch.length} FeedPaks` : 'Create FeedPak'}</button></footer>
+      <footer className="creation-footer"><div><strong>{outputName(form)}</strong><small>Existing files are kept.</small></div><button className="primary" onClick={createFeedPak} disabled={Boolean(busy) || !selectedTracks.length}><Download size={17}/> {batch.length > 1 ? `Create ${batch.length} FeedPaks` : 'Create FeedPak'}</button></footer>
       {results.length > 0 && <section className="creation-results" aria-label="Creation results"><h2>Results</h2>{results.map((row,index) => <div key={index} className={row.ok ? 'result-ok' : 'result-failed'}>{row.ok ? <Check size={16}/> : <XCircle size={16}/>}<span>{row.output_path || row.title}{row.error && <small>{row.error}</small>}{row.warnings?.map(warning => <small key={warning}>{warning}</small>)}</span>{row.ok && <button onClick={() => api.reveal(row.output_path)}>Show in folder</button>}</div>)}</section>}
     </>}
   </section>;

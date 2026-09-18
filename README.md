@@ -37,6 +37,7 @@ Home provides the source actions and files opened during the current session.
    **Search again** to retry lyric providers. Advanced options include chart offset.
 3. Choose local audio or use the linked video, select an output folder, then create
    one package or the batch. Existing filenames receive a numbered suffix.
+   Confirm whether to include separated stems before conversion starts.
 4. Review per-song results or open the new packages in **Library & editor** to
    inspect, edit, organize, or manage stems. Batch stop finishes the current song.
 
@@ -61,6 +62,12 @@ Linux x64 AppImage from the [latest release](https://github.com/balki97/FeedForg
   then run it.
 
 Optional local stem separation requires Python 3.11 or newer.
+
+Before PSARC or Songsterr conversion, FeedForge checks the selected stem server.
+You can continue with the full mix only, enable splitting in Settings, or open
+Tools · stems to install/start the local server. Both sources use the same model
+and stem selection. If separation fails during conversion, the result shows the
+warning and retains the full mix.
 
 ## Support
 

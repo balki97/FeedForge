@@ -87,6 +87,7 @@ contextBridge.exposeInMainWorld("feedbackConverter", {
   showFileInFolder: (filePath) => ipcRenderer.invoke("files:showInFolder", filePath),
   deleteFiles: (filePaths) => ipcRenderer.invoke("files:delete", filePaths),
   getStemServerStatus: () => ipcRenderer.invoke("stemServer:status"),
+  checkStemServer: options => ipcRenderer.invoke("stemServer:check", options),
   getStemServerModels: (options) => ipcRenderer.invoke("stemServer:models", options),
   startStemServer: (options) => ipcRenderer.invoke("stemServer:start", options),
   stopStemServer: () => ipcRenderer.invoke("stemServer:stop"),

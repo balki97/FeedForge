@@ -719,6 +719,9 @@ ipcMain.handle("stemServer:status", async () => {
   return stemServerStatus();
 });
 
+ipcMain.handle("stemServer:check", (_event, options = {}) =>
+  require("./services/stem-preflight.cjs").checkStemServer(options, requestJson));
+
 ipcMain.handle("stemServer:models", async (_event, options = {}) => {
   const installRoot = demucsInstallRoot(options.installDir);
   const busy = stemServerStarting || Boolean(stemServerProcess && stemServerProcess.exitCode === null);
@@ -1587,9 +1590,10 @@ function appendStemServerLog(chunk) {
   logDebug("stemServer.output", { tail: tail(text, 2000) });
 }
 
-function requestJson(url, timeoutMs) {
+function requestJson(url, timeoutMs, headers = {}) {
   return new Promise((resolve) => {
-    const request = http.get(url, { timeout: timeoutMs }, (response) => {
+    const transport = new URL(url).protocol === "https:" ? https : http;
+    const request = transport.get(url, { timeout: timeoutMs, headers }, (response) => {
       let body = "";
       response.setEncoding("utf8");
       response.on("data", (chunk) => { body += chunk; });
