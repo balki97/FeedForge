@@ -2,6 +2,10 @@
 
 import os
 from pathlib import Path
+from PyInstaller.utils.hooks import collect_all
+
+media_datas, media_binaries, media_imports = collect_all('imageio_ffmpeg')
+ejs_datas, ejs_binaries, ejs_imports = collect_all('yt_dlp_ejs')
 
 
 root = Path.cwd()
@@ -17,7 +21,7 @@ native_tools = [name for name in tool_names if (tools / name).is_file()]
 a = Analysis(
     [str(root / 'src' / 'feedback_converter' / 'cli.py')],
     pathex=[],
-    binaries=[(str(tools / name), 'feedback_converter/tools') for name in native_tools],
+    binaries=[(str(tools / name), 'feedback_converter/tools') for name in native_tools] + media_binaries + ejs_binaries,
     datas=[
         (str(tools / 'packed_codebooks.bin'), 'feedback_converter/tools'),
         (
@@ -27,8 +31,8 @@ a = Analysis(
         (str(root / 'src' / 'feedback_converter' / 'data' / 'equipment.json'), 'feedback_converter/data'),
         (str(root / 'src' / 'feedback_converter' / 'data' / 'feedback_equipment.json'), 'feedback_converter/data'),
         (str(root / 'src' / 'feedback_converter' / 'data' / 'feedpak_schemas'), 'feedback_converter/data/feedpak_schemas'),
-    ],
-    hiddenimports=[],
+    ] + media_datas + ejs_datas,
+    hiddenimports=media_imports + ejs_imports + ['yt_dlp_plugins.extractor.getpot_wpc'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

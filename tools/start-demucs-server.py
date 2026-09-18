@@ -102,7 +102,13 @@ def sync_install_source(source_root: Path, install_root: Path) -> Path:
     target = install_root / "app-src"
     print(f"FeedForge: copying bundled app source to writable folder {target}", flush=True)
     shutil.rmtree(target, ignore_errors=True)
-    shutil.copytree(source_root, target)
+    # A development checkout also contains builds, user outputs and potentially
+    # locked Electron profiles. Only the installable Python project is needed.
+    def ignored(directory, names):
+        if Path(directory) == source_root:
+            return set(names) - {"src", "pyproject.toml", "README.md", "LICENSE"}
+        return {name for name in names if name == "__pycache__" or name.endswith(".pyc")}
+    shutil.copytree(source_root, target, ignore=ignored)
     return target
 
 

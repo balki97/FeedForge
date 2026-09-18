@@ -3640,15 +3640,5 @@ def _write_json(path: Path, data: Any) -> None:
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
-def _write_manifest(path: Path, manifest: dict[str, Any]) -> None:
-    path.write_text(
-        yaml.safe_dump(manifest, sort_keys=False, allow_unicode=True),
-        encoding="utf-8",
-    )
-
-
-def _zip_dir(source: Path, target: Path) -> None:
-    with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        for file in sorted(source.rglob("*")):
-            if file.is_file():
-                zf.write(file, file.relative_to(source).as_posix())
+# Compatibility names retained for the editor and existing integrations.
+from .package_io import write_manifest as _write_manifest, write_archive as _zip_dir

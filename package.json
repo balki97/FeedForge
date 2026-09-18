@@ -19,7 +19,7 @@
     "release:mac": "npm run converter:pack && npm run electron:pack:mac",
     "release:linux": "npm run converter:pack && npm run electron:pack:linux",
     "lint:ui": "vite build",
-    "test": "python -m pytest -q -p no:cacheprovider && node --test tests/test_release_cleanup.cjs",
+    "test": "python -m pytest -q -p no:cacheprovider && node --test tests/*.cjs && node tests/test_lyrics.mjs",
     "clean": "node tools/clean-build.cjs"
   },
   "dependencies": {

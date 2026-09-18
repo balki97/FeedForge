@@ -1,0 +1,101 @@
+import json
+import zipfile
+from pathlib import Path
+
+import pytest
+from feedback_converter import songsterr, songsterr_cli
+from feedback_converter.feedpak import inspect_feedpak, update_feedpak
+from feedback_converter.feedpak_validator import validate_feedpak
+from feedback_converter.package_io import write_archive
+
+
+def synthetic_song():
+    guitar = {
+        'title': 'Synthetic lead', 'instrument': 'Guitar', 'strings': 6,
+        'tuning': [64, 59, 55, 50, 45, 40],
+        'automations': {'tempo': [{'measure': 0, 'bpm': 120, 'type': 4}]},
+        'measures': [{'signature': [4, 4], 'voices': [{'beats': [
+            {'duration': [1, 4], 'notes': [{'string': 5, 'fret': 3, 'leftHandVibrato': True,
+             'bend': {'points': [{'position': 0, 'tone': 0}, {'position': 60, 'tone': 100}]}}]},
+            {'duration': [3, 4], 'notes': []}]}]}]}
+    drums = {'title': 'Synthetic drums', 'instrument': 'Drums', 'measures': [
+        {'signature': [4, 4], 'voices': [{'beats': [
+            {'duration': [1, 4], 'notes': [{'fret': 38, 'ghost': True}]},
+            {'duration': [3, 4], 'notes': []}]}]}]}
+    return {'parts': [guitar, drums]}
+
+
+def test_songsterr_package_roundtrips_through_shared_editor(tmp_path):
+    tracks, timeline = songsterr.songsterr_to_tracks(synthetic_song())
+    audio = tmp_path / 'audio.ogg'
+    audio.write_bytes(b'OggS-synthetic-fixture')
+    original = tmp_path / 'original.feedpak'
+    songsterr.write_feedpak(tracks, timeline, audio, original, title='Synthetic', artist='FeedForge',
+                           authors=[{'name': 'Tester', 'role': 'transcriber'}], offset=1.25)
+    assert validate_feedpak(original).ok
+    preview = inspect_feedpak(original)
+    assert len(preview['arrangements']) == 2
+    assert preview['authors'][0]['role'] == 'transcriber'
+    assert preview['arrangements'][1]['notes'] == 1
+    edited = tmp_path / 'edited.feedpak'
+    update_feedpak(original, edited, metadata={'title': 'Edited'})
+    assert validate_feedpak(edited).ok
+    assert inspect_feedpak(edited)['title'] == 'Edited'
+    with zipfile.ZipFile(original) as before, zipfile.ZipFile(edited) as after:
+        for name in before.namelist():
+            if name != 'manifest.yaml':
+                assert before.read(name) == after.read(name), name
+        chart = json.loads(before.read('arrangements/lead.json'))
+        assert chart['notes'][0]['t'] == 1.25
+        assert chart['notes'][0]['bn'] == 2
+        assert chart['notes'][0]['vb'] is True
+        assert json.loads(before.read('drum_tab_drums.json'))['hits'][0]['g'] is True
+
+
+@pytest.mark.parametrize('url', ['http://songsterr.com/a/wsa/x-s1', 'https://songsterr.com.evil.test/a/wsa/x-s1',
+                               'file:///etc/passwd', 'https://user:pass@songsterr.com/a/wsa/x-s1',
+                               'https://songsterr.com:5000/a/wsa/x-s1'])
+def test_url_boundary_rejects_non_songsterr_sources(url):
+    with pytest.raises(ValueError):
+        songsterr_cli.validate_url(url)
+
+
+def test_archive_failure_preserves_previous_output(tmp_path, monkeypatch):
+    source = tmp_path / 'stage'
+    source.mkdir()
+    (source / 'manifest.yaml').write_text('test')
+    target = tmp_path / 'song.feedpak'
+    target.write_bytes(b'previous package')
+    def fail(*args, **kwargs):
+        raise OSError('disk full')
+    monkeypatch.setattr(zipfile.ZipFile, 'write', fail)
+    with pytest.raises(OSError):
+        write_archive(source, target)
+    assert target.read_bytes() == b'previous package'
+    assert not list(tmp_path.glob('*.tmp'))
+
+
+def test_invalid_generation_never_replaces_existing_package(tmp_path):
+    tracks, timeline = songsterr.songsterr_to_tracks(synthetic_song())
+    tracks[0]['notes'][0]['s'] = -20
+    audio = tmp_path / 'audio.ogg'
+    audio.write_bytes(b'OggS-fixture')
+    target = tmp_path / 'song.feedpak'
+    target.write_bytes(b'keep me')
+    with pytest.raises(ValueError):
+        songsterr.write_feedpak(tracks, timeline, audio, target, title='Test', artist='Test')
+    assert target.read_bytes() == b'keep me'
+
+def test_edit_failure_does_not_unlink_original(tmp_path, monkeypatch):
+    tracks, timeline = songsterr.songsterr_to_tracks(synthetic_song())
+    audio = tmp_path / 'audio.ogg'
+    audio.write_bytes(b'OggS-fixture')
+    original = tmp_path / 'original.feedpak'
+    songsterr.write_feedpak(tracks, timeline, audio, original, title='Original', artist='Test')
+    before = original.read_bytes()
+    def fail(*args, **kwargs):
+        raise OSError('disk full')
+    monkeypatch.setattr(zipfile.ZipFile, 'write', fail)
+    with pytest.raises(OSError):
+        update_feedpak(original, metadata={'title':'Updated'}, overwrite=True)
+    assert original.read_bytes() == before

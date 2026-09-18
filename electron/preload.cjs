@@ -37,6 +37,24 @@ window.addEventListener("unhandledrejection", (event) => {
 });
 
 contextBridge.exposeInMainWorld("feedbackConverter", {
+  songsterr: {
+    analyze: url => ipcRenderer.invoke("songsterr:analyze", url),
+    create: payload => ipcRenderer.invoke("songsterr:create", payload),
+    createBatch: payloads => ipcRenderer.invoke("songsterr:batch", payloads),
+    findLyrics: payload => ipcRenderer.invoke("songsterr:lyrics", payload),
+    importLrc: () => ipcRenderer.invoke("songsterr:lrc"),
+    pickCover: () => ipcRenderer.invoke("songsterr:cover"),
+    pickAudio: () => ipcRenderer.invoke("dialog:pickAudioStem", {}),
+    pickOutput: () => ipcRenderer.invoke("dialog:pickOutput", {}),
+    defaults: () => ipcRenderer.invoke("songsterr:defaults"),
+    reveal: file => ipcRenderer.invoke("files:showInFolder", file),
+    cancel: () => ipcRenderer.invoke("songsterr:cancel"),
+    onProgress: callback => {
+      const listener = (_event, value) => callback(value);
+      ipcRenderer.on("songsterr:progress", listener);
+      return () => ipcRenderer.removeListener("songsterr:progress", listener);
+    }
+  },
   pickPsarc: (options) => ipcRenderer.invoke("dialog:pickPsarc", options),
   pickFolder: (options) => ipcRenderer.invoke("dialog:pickFolder", options),
   pickFolderWithRoot: (options) => ipcRenderer.invoke("dialog:pickFolderWithRoot", options),

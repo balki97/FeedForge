@@ -73,6 +73,8 @@ def test_packaged_stem_source_is_copied_to_writable_install_folder(tmp_path) -> 
     install = tmp_path / "install"
     source.mkdir()
     (source / "pyproject.toml").write_text("[project]\nname='feedforge'\n", encoding="utf-8")
+    (source / "outputs").mkdir()
+    (source / "outputs" / "private.txt").write_text("user output", encoding="utf-8")
     stale = install / "app-src" / "stale.txt"
     stale.parent.mkdir(parents=True)
     stale.write_text("old", encoding="utf-8")
@@ -81,5 +83,6 @@ def test_packaged_stem_source_is_copied_to_writable_install_folder(tmp_path) -> 
 
     assert copied == install / "app-src"
     assert (copied / "pyproject.toml").is_file()
+    assert not (copied / "outputs").exists()
     assert not stale.exists()
     assert launcher["sync_install_source"](source, source) == source

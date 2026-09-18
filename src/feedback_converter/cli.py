@@ -219,6 +219,19 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     _configure_stdio()
+    command_args = list(sys.argv[1:] if argv is None else argv)
+    if command_args and command_args[0] == "songsterr":
+        try:
+            from feedback_converter.songsterr_cli import dispatch
+            if len(command_args) != 2:
+                raise ValueError("Usage: psarc2feedpak songsterr request.json")
+            request = json.loads(Path(command_args[1]).read_text(encoding="utf-8"))
+            result = dispatch(request)
+            _print(json.dumps({"ok": True, "result": result}, ensure_ascii=False))
+            return 0
+        except Exception as exc:
+            _print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
+            return 1
     parser = build_parser()
     args = parser.parse_args(argv)
 

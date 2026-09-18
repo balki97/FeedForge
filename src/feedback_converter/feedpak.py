@@ -36,7 +36,7 @@ class FeedpakAudioExportResult:
 
 
 METADATA_FIELDS = ("title", "artist", "album", "year", "duration", "language")
-AUTHOR_ROLES = {"charter", "creator", "arranger", "author", "contributor"}
+AUTHOR_ROLES = {"charter", "creator", "arranger", "author", "contributor", "transcriber"}
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 AUDIO_SUFFIXES = {".ogg", ".wav", ".mp3", ".flac", ".opus"}
 
@@ -248,7 +248,7 @@ def _write_package(package_dir: Path, target: Path, *, overwrite: bool) -> None:
             raise FileExistsError(f"Output already exists: {target}")
         if target.is_dir():
             shutil.rmtree(target)
-        else:
+        elif target.suffix.lower() != ".feedpak":
             target.unlink()
     target.parent.mkdir(parents=True, exist_ok=True)
     if target.suffix.lower() == ".feedpak":
@@ -352,7 +352,7 @@ def _arrangement_payloads(package_dir: Path, manifest: dict[str, Any]) -> list[t
     rows = []
     for entry in manifest.get("arrangements") or []:
         if isinstance(entry, dict):
-            rows.append((entry, _read_json(package_dir / str(entry.get("file") or ""))))
+            rows.append((entry, _read_json(package_dir / str(entry.get("file") or entry.get("drum_tab") or ""))))
     return rows
 
 
@@ -360,7 +360,7 @@ def _arrangement_payloads_from_zip(zf: zipfile.ZipFile, manifest: dict[str, Any]
     rows = []
     for entry in manifest.get("arrangements") or []:
         if isinstance(entry, dict):
-            rows.append((entry, _read_json_from_zip(zf, str(entry.get("file") or ""))))
+            rows.append((entry, _read_json_from_zip(zf, str(entry.get("file") or entry.get("drum_tab") or ""))))
     return rows
 
 
@@ -379,7 +379,7 @@ def _arrangement_previews(payloads: list[tuple[dict[str, Any], Any]]) -> list[di
                 "chords": 0,
                 "note_count": entry.get("note_count") or _event_count(data),
                 "event_count": entry.get("event_count") or _event_count(data),
-                "file": entry.get("file") or "",
+                "file": entry.get("file") or entry.get("drum_tab") or "",
             }
         )
     return rows
@@ -560,6 +560,8 @@ def _event_count(data: Any) -> int:
         return 0
     if isinstance(data.get("notes"), list):
         return len(data["notes"])
+    if isinstance(data.get("hits"), list):
+        return len(data["hits"])
     if isinstance(data.get("events"), list):
         return len(data["events"])
     if isinstance(data.get("levels"), list):

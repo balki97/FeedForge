@@ -4,6 +4,10 @@ const fs = require("fs");
 const http = require("http");
 const https = require("https");
 const path = require("path");
+const { registerSongsterr } = require("./services/songsterr.cjs");
+
+registerSongsterr({ app, ipcMain, dialog, window: () => mainWindow, runConverter,
+  terminateChildProcessTree, logDebug, removeTemporaryDirectory });
 
 let mainWindow;
 let inspectCacheRoot;
@@ -169,7 +173,7 @@ ipcMain.handle("dialog:pickPsarc", async (_event, options = {}) => {
 
 ipcMain.handle("dialog:pickFolder", async (_event, options = {}) => {
   const result = await dialog.showOpenDialog(mainWindow, {
-    title: "Choose a CDLC folder",
+    title: "Choose a PSARC or FeedPak folder",
     defaultPath: validDefaultPath(options.defaultPath),
     properties: ["openDirectory"]
   });
@@ -181,7 +185,7 @@ ipcMain.handle("dialog:pickFolder", async (_event, options = {}) => {
 
 ipcMain.handle("dialog:pickFolderWithRoot", async (_event, options = {}) => {
   const result = await dialog.showOpenDialog(mainWindow, {
-    title: "Choose a CDLC folder",
+    title: "Choose a PSARC or FeedPak folder",
     defaultPath: validDefaultPath(options.defaultPath),
     properties: ["openDirectory"]
   });
@@ -1689,8 +1693,11 @@ function runConverter(args, options = {}) {
     const startedAt = Date.now();
     const child = spawn(command, [...prefix, ...args], {
       cwd,
-      windowsHide: true
+      windowsHide: true,
+      env: { ...process.env, PYTHONPATH: path.join(app.getAppPath(), "src"), ...options.env }
     });
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
     if (typeof options.onSpawn === "function") options.onSpawn(child);
     let stdout = "";
     let stderr = "";
@@ -1713,7 +1720,7 @@ function runConverter(args, options = {}) {
       logDebug("converter.process.close", {
         code,
         durationMs: Date.now() - startedAt,
-        stdoutTail: tail(stdout),
+        stdoutTail: options.logOutput === false ? "[structured response omitted]" : tail(stdout),
         stderrTail: tail(stderr),
         diagnostics
       });
