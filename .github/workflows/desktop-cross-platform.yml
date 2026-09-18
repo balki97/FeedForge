@@ -58,7 +58,7 @@ jobs:
 
       - name: Install macOS decoder libraries
         if: runner.os == 'macOS'
-        run: brew install ffmpeg libogg libvorbis mpg123
+        run: brew install ffmpeg@8 libogg libvorbis mpg123
 
       - name: Bundle native WEM decoder
         shell: bash
@@ -89,6 +89,18 @@ jobs:
           if os.name != "nt":
               tool.chmod(tool.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
           PY
+
+      - name: Link macOS decoder to its FFmpeg ABI
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          decoder=src/feedback_converter/tools/vgmstream-cli
+          ffmpeg_prefix="$(brew --prefix ffmpeg@8)"
+          for library in libswresample.6.dylib libavcodec.62.dylib libavformat.62.dylib libavutil.60.dylib; do
+            test -f "$ffmpeg_prefix/lib/$library"
+            install_name_tool -change "/opt/homebrew/opt/ffmpeg/lib/$library" "$ffmpeg_prefix/lib/$library" "$decoder"
+          done
+          codesign --force --sign - "$decoder"
 
       - name: Test
         run: |
