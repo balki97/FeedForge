@@ -117,10 +117,12 @@ jobs:
         shell: bash
         run: |
           codesign --verify --deep --strict --verbose=2 release/mac-arm64/FeedForge.app
-          decoder="$(find release/mac-arm64/FeedForge.app -type f -path '*/feedback_converter/tools/vgmstream-cli' -print -quit)"
+          decoder="$(find -L release/mac-arm64/FeedForge.app -type f -path '*/feedback_converter/tools/vgmstream-cli' -print -quit)"
           test -n "$decoder"
+          echo "Checking decoder: $decoder"
           status=0
           output="$("$decoder" -h 2>&1)" || status=$?
+          printf '%s\n' "$output"
           test "$status" -lt 126
           grep -qi vgmstream <<<"$output"
 
