@@ -6,6 +6,7 @@ import SongsterrWorkspace from "./features/songsterr/SongsterrWorkspace.jsx";
 import Home from "./features/Home.jsx";
 import ConversionDialog from "./features/ConversionDialog.jsx";
 import { importDestination } from "./import-navigation.mjs";
+import { prioritizeInspections } from "./inspection-queue.mjs";
 import feedForgeLogo from "../../assets/feedforge.png";
 import "./workbench.css";
 
@@ -113,6 +114,16 @@ function App() {
   const activeInspectionsRef = useRef(0);
   const isConvertingRef = useRef(false);
   const stopRequestedRef = useRef(false);
+
+  useEffect(() => {
+    // Home displays the end of the import list; do not make its covers wait
+    // behind the entire library. Selected editor files get the same priority.
+    const visibleIds = activeView === "home"
+      ? itemsRef.current.slice(-8).reverse().map(item => item.id)
+      : selectedId ? [selectedId] : [];
+    inspectionQueueRef.current = prioritizeInspections(inspectionQueueRef.current, visibleIds);
+    pumpInspectionQueue();
+  }, [activeView, items.length, selectedId]);
 
   useEffect(() => {
     itemsRef.current = items;

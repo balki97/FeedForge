@@ -125,7 +125,7 @@ app.whenReady().then(() => {
     platform: process.platform,
     arch: process.arch
   });
-  inspectCacheRoot = path.join(app.getPath("temp"), "feedforge-inspect-cache");
+  inspectCacheRoot = path.join(app.getPath("temp"), `feedforge-inspect-cache-${process.pid}`);
   createWindow();
   setTimeout(() => {
     cleanupStalePortableArtifacts();
@@ -2198,7 +2198,7 @@ function parseJson(value) {
 function createInspectionFolder(inputPath) {
   inspectCacheTouched = true;
   if (!inspectCacheRoot) {
-    inspectCacheRoot = path.join(app.getPath("temp"), "feedforge-inspect-cache");
+    inspectCacheRoot = path.join(app.getPath("temp"), `feedforge-inspect-cache-${process.pid}`);
   }
   fs.mkdirSync(inspectCacheRoot, { recursive: true });
   const safeName = path.basename(inputPath, path.extname(inputPath)).replace(/[^a-z0-9._-]+/gi, "_").slice(0, 80) || "song";

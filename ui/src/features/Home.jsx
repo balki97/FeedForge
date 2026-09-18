@@ -16,10 +16,10 @@ export default function Home({ navigate, chooseFiles, chooseFolder, items, selec
     <div className="home-hero" style={{ backgroundImage: `url(${studio})` }}>
       <div className="home-hero-content">
         <h1>FeedForge</h1>
-        <p className="home-formats">PSARC <span>·</span> Songsterr <span>·</span> FeedPak</p>
+        <p className="home-formats">Songsterr <span>·</span> FeedPak</p>
         <div className="home-create-actions">
-          <button className="primary" onClick={() => navigate("workspace")}><Guitar size={19}/><span>Convert PSARC</span><ArrowRight size={17}/></button>
-          <button onClick={() => navigate("songsterr")}><Music2 size={19}/><span>Songsterr link</span><ArrowRight size={17}/></button>
+          <button className="primary" onClick={() => navigate("workspace")}><Guitar size={19}/><span>Convert files</span><ArrowRight size={17}/></button>
+          <button onClick={() => navigate("songsterr")}><Music2 size={19}/><span>Create from Songsterr</span><ArrowRight size={17}/></button>
         </div>
         <div className="home-open-actions">
           <button onClick={chooseFiles}><FileMusic size={16}/>Open package</button>
@@ -32,7 +32,7 @@ export default function Home({ navigate, chooseFiles, chooseFolder, items, selec
       {recent.length ? <div className="home-file-list">{recent.map((item, index) => <button className="home-file-row" key={item.id} onClick={() => selectItem(item)} title={item.path}>
         <span className="home-row-number">{String(index + 1).padStart(2, "0")}</span>
         <Artwork item={item}/>
-        <span className="home-file-title"><strong>{item.preview?.title || item.name}</strong><small>{item.error || item.preview?.artist || item.name}</small></span>
+        <span className="home-file-title"><strong>{item.preview?.title || item.name}</strong><small>{item.error || item.preview?.artist || (["queued", "inspecting"].includes(item.status) ? "Loading artwork and details…" : "No artist information")}</small></span>
         <span className="home-file-album">{item.preview?.album || "—"}</span>
         <span className="home-file-type">{item.sourceType === "feedpak" ? "FeedPak" : "PSARC"}</span>
         <span className={`home-file-status status-${item.status}`}>{item.status.replaceAll("-", " ")}</span>
