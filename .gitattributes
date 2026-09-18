@@ -1,6 +1,8 @@
 * text=auto
 
 *.js text eol=lf
+*.cjs text eol=lf
+*.mjs text eol=lf
 *.jsx text eol=lf
 *.css text eol=lf
 *.html text eol=lf
@@ -8,6 +10,7 @@
 *.md text eol=lf
 *.py text eol=lf
 *.toml text eol=lf
+*.yml text eol=lf
 *.spec text eol=lf
 
 *.ico binary

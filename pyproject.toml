@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "feedforge"
-version = "0.1.43"
+version = "0.1.44"
 description = "Desktop toolkit for FeedPak files for the FeedBack game."
 readme = "README.md"
 license = "MIT"
@@ -42,3 +42,4 @@ feedback_converter = ["tools/*", "data/*.json", "data/feedpak_schemas/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["src"]

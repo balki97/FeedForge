@@ -1074,11 +1074,17 @@ def _content_with_rs1_audio(
 
 
 def _content_has_full_mix_audio(content: dict[str, bytes]) -> bool:
+    return bool(_full_mix_audio_candidates(content))
+
+
+def _full_mix_audio_candidates(content: dict[str, bytes]) -> list[tuple[str, bytes]]:
+    """Use identical audio eligibility for preflight, conversion, and export."""
     preview_paths = {path for path, _data in _preview_audio_candidates(content)}
-    return any(
-        path.lower().endswith(AUDIO_SUFFIXES) and path not in preview_paths and bool(data)
+    return [
+        (path, data)
         for path, data in content.items()
-    )
+        if path.lower().endswith(AUDIO_SUFFIXES) and path not in preview_paths and data
+    ]
 
 
 def _validate_song_audio_entries(
@@ -2573,13 +2579,7 @@ def _copy_audio(
     demucs_model: str | None = None,
     demucs_stems: list[str] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, str] | None]:
-    preview_paths = {path for path, _data in _preview_audio_candidates(content)}
-    audio = [
-        (path, data)
-        for path, data in content.items()
-        if path.lower().endswith((".wem", ".ogg", ".wav", ".mp3", ".flac", ".opus"))
-        and path not in preview_paths
-    ]
+    audio = _full_mix_audio_candidates(content)
     if not audio:
         raise ValueError(
             "No audio file found in PSARC. This appears to be a charts-only package, such as an RS1 "
@@ -2784,13 +2784,7 @@ def _export_audio_from_content(
     overwrite: bool,
     metadata: dict[str, Any] | None = None,
 ) -> Path:
-    preview_paths = {path for path, _data in _preview_audio_candidates(content)}
-    audio = [
-        (path, data)
-        for path, data in content.items()
-        if path.lower().endswith((".wem", ".ogg", ".wav", ".mp3", ".flac", ".opus"))
-        and path not in preview_paths
-    ]
+    audio = _full_mix_audio_candidates(content)
     if not audio:
         raise ValueError("No audio file found in PSARC.")
 

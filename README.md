@@ -55,13 +55,18 @@ Source lives in `src/` (converter), `electron/` (desktop shell), and `ui/`.
 Regression tests live in `tests/`; maintenance and launch scripts live in `tools/`.
 
 Install dependencies with `python -m pip install -e ".[dev]"` and `npm ci`.
-Run `python -m pytest -q` and `npm run build` before packaging.
+Run `npm test` and `npm run build` before packaging.
 Use `npm run release:win`, `release:mac`, or `release:linux` for a local release.
 Finished downloads are written to `release/`. Successful packaging removes
 superseded FeedForge downloads of the same artifact type; failed builds retain
 the previous release. `build/`, `dist/`, `desktop-dist/`, and `release/` are
 generated and ignored by Git. Keep conversion results in `outputs/` or outside
 the repository.
+
+Run `npm run clean -- --dry-run` to preview cleanup, then `npm run clean`
+to remove generated build folders, unpacked releases, and Python caches.
+Release downloads and `SHA256SUMS.txt` are retained, as are source files,
+dependencies, local decoder tools, and conversion outputs.
 
 ## License
 

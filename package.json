@@ -1,6 +1,6 @@
 {
   "name": "feedforge",
-  "version": "0.1.43",
+  "version": "0.1.44",
   "private": true,
   "description": "Desktop toolkit for FeedPak files for the FeedBack game.",
   "author": "FeedForge Contributors",
@@ -18,7 +18,9 @@
     "release:win": "npm run converter:pack && npm run electron:pack",
     "release:mac": "npm run converter:pack && npm run electron:pack:mac",
     "release:linux": "npm run converter:pack && npm run electron:pack:linux",
-    "lint:ui": "vite build"
+    "lint:ui": "vite build",
+    "test": "python -m pytest -q -p no:cacheprovider && node --test tests/test_release_cleanup.cjs",
+    "clean": "node tools/clean-build.cjs"
   },
   "dependencies": {
     "lucide-react": "^0.468.0",
@@ -30,7 +32,6 @@
     "concurrently": "^9.1.0",
     "electron": "^43.0.0",
     "electron-builder": "^26.15.3",
-    "typescript": "^5.7.2",
     "vite": "^6.0.7",
     "wait-on": "^8.0.1"
   },
