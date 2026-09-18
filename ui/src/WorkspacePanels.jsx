@@ -986,6 +986,14 @@ export function Inspector({
       : result?.error || "Stem reprocess failed");
   }
 
+  if (!item) return (
+    <aside className="inspector inspector-empty">
+      <FileMusic size={26} />
+      <h2>No file selected</h2>
+      <p>Add a file, then select it in the queue to inspect its arrangements, audio, and metadata.</p>
+    </aside>
+  );
+
   return (
     <aside className={isFeedpak ? "inspector feedpak-inspector" : "inspector convert-inspector"}>
       <div className="inspector-rail">

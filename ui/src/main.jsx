@@ -4,7 +4,8 @@ import { Coffee, Download, ExternalLink, FileMusic, FolderOpen, Globe, Guitar, P
 import { runConversionQueues, usesSharedRs1SongsAudio } from "./conversion-scheduler.mjs";
 import SongsterrWorkspace from "./features/songsterr/SongsterrWorkspace.jsx";
 import Home from "./features/Home.jsx";
-import "./styles.css";
+import { importDestination } from "./import-navigation.mjs";
+import feedForgeLogo from "../../assets/feedforge.png";
 import "./workbench.css";
 
 import { api, INSPECTION_WORKERS, AUTO_SETTING, DEFAULT_CONVERSION_WORKERS, DEFAULT_DEMUCS_STEM_JOBS, DEFAULT_DEMUCS_STEMS, DEMUCS_STEM_OPTIONS } from "./settings.mjs";
@@ -42,7 +43,6 @@ function App() {
   const [outputNameTemplate, setOutputNameTemplate] = useState(() => initialSettingsRef.current.outputNameTemplate || "{artist} - {title}");
   const [lastSourcePath, setLastSourcePath] = useState(() => initialSettingsRef.current.lastSourcePath || null);
   const [overwrite, setOverwrite] = useState(false);
-  const [bStandardTo7String, setBStandardTo7String] = useState(() => initialSettingsRef.current.bStandardTo7String === true);
   const [separateStems, setSeparateStems] = useState(() => initialSettingsRef.current.separateStems === true);
   const [demucsUrl, setDemucsUrl] = useState(() => initialSettingsRef.current.demucsUrl || "");
   const [demucsApiKey, setDemucsApiKey] = useState("");
@@ -92,8 +92,8 @@ function App() {
   }, [items]);
 
   useEffect(() => {
-    writeSettings({ outputDir, outputLayout, outputNameFormat, outputNameTemplate, lastSourcePath, bStandardTo7String, separateStems, conversionWorkers, demucsUrl, demucsInstallDir, pythonPath, demucsModel, demucsDevice, demucsStemJobs, demucsStems, auditFolder, auditCriteria, performanceSettingsVersion: 2 });
-  }, [outputDir, outputLayout, outputNameFormat, outputNameTemplate, lastSourcePath, bStandardTo7String, separateStems, conversionWorkers, demucsUrl, demucsInstallDir, pythonPath, demucsModel, demucsDevice, demucsStemJobs, demucsStems, auditFolder, auditCriteria]);
+    writeSettings({ bStandardTo7String: false, outputDir, outputLayout, outputNameFormat, outputNameTemplate, lastSourcePath, separateStems, conversionWorkers, demucsUrl, demucsInstallDir, pythonPath, demucsModel, demucsDevice, demucsStemJobs, demucsStems, auditFolder, auditCriteria, performanceSettingsVersion: 2 });
+  }, [outputDir, outputLayout, outputNameFormat, outputNameTemplate, lastSourcePath, separateStems, conversionWorkers, demucsUrl, demucsInstallDir, pythonPath, demucsModel, demucsDevice, demucsStemJobs, demucsStems, auditFolder, auditCriteria]);
 
   useEffect(() => {
     let cancelled = false;
@@ -290,6 +290,14 @@ function App() {
   const stemServerReadyForSelection = stemServerStatus.healthy && stemServerMatchesSelectedConfig;
 
   async function addFiles(paths, sourceRoot = null, navigate = true) {
+    const supported = paths.filter(isSongPackage);
+    const destination = importDestination(supported, navigate);
+    if (destination) {
+      setActiveView(destination);
+      const selectedPath = supported.find(path => fileType(path) === (destination === "feedpak" ? "feedpak" : "psarc"));
+      const loaded = itemsRef.current.find(item => normalizePathKey(item.path) === normalizePathKey(selectedPath));
+      if (loaded) setSelectedId(loaded.id);
+    }
     const existing = new Set(itemsRef.current.map((item) => normalizePathKey(item.path)));
     const incoming = paths
       .filter((filePath) => isSongPackage(filePath))
@@ -319,9 +327,6 @@ function App() {
     itemsRef.current = nextItems;
     setItems(nextItems);
     if (!selectedId) setSelectedId(incoming[0].id);
-    if (navigate && incoming.every((item) => item.sourceType === "feedpak")) {
-      setActiveView("feedpak");
-    }
     inspectionQueueRef.current.push(...incoming.map((item) => item.id));
     pumpInspectionQueue();
   }
@@ -389,16 +394,19 @@ function App() {
     addFiles(paths);
   }
 
-  async function chooseFolder() {
+  async function chooseFolder(destination = null) {
     if (api.pickFolderWithRoot) {
       const result = await api.pickFolderWithRoot({ defaultPath: lastSourcePath || outputDir || undefined });
+      if (!result.folder && !result.files?.length) return;
       rememberSourcePath(result.folder || result.files?.[0]);
-      addFiles(result.files || [], result.folder || null);
+      if (result.folder && destination) setActiveView(destination);
+      addFiles(result.files || [], result.folder || null, destination || true);
       return;
     }
     const paths = await api.pickFolder({ defaultPath: lastSourcePath || outputDir || undefined });
+    if (!paths.length) return;
     rememberSourcePath(paths[0]);
-    addFiles(paths);
+    addFiles(paths, null, destination || true);
   }
 
   async function chooseOutput() {
@@ -675,7 +683,7 @@ function App() {
         try {
           const result = item.sourceType === "feedpak"
             ? await api.updateFeedpak(payload)
-            : await api.convert({ ...payload, bStandardTo7String });
+            : await api.convert(payload);
           if (!result.ok) {
             failed = true;
             updateItem(item.id, { status: "failed", warnings: [], error: result.error });
@@ -1076,26 +1084,25 @@ function App() {
     ? { title: "Settings", description: "Conversion defaults and diagnostics." }
     : activeView === "feedpak"
       ? { title: "Library & editor", description: "Inspect packages, update metadata, manage stems, and organize files." }
-      : { title: "Convert Rocksmith / PSARC", description: "Build FeedBack-ready packages from CDLC files." };
+      : { title: "Convertor", description: "Build FeedBack-ready packages from CDLC files." };
 
   return (
     <div className="app" onDragOver={(event) => event.preventDefault()} onDrop={onDrop}>
       <aside className="app-sidebar">
         <div className="brand">
-          <span className="brand-mark">FF</span>
+          <img className="brand-logo" src={feedForgeLogo} alt="" />
           <div>
             <strong>FeedForge {appVersion && <span className="version-badge">v{appVersion}</span>}</strong>
-            <small>FeedBack song toolkit</small>
           </div>
         </div>
         <nav className="side-nav" aria-label="FeedForge sections">
           <button className={activeView === "home" ? "active" : ""} onClick={() => setActiveView("home")}><FolderOpen size={18}/><span>Home</span></button>
           <span className="nav-group-label">Create FeedPak</span>
-          <button className={activeView === "songsterr" ? "active" : ""} onClick={() => setActiveView("songsterr")}><FileMusic size={18}/><span>From Songsterr</span></button>
           <button className={activeView === "workspace" ? "active" : ""} onClick={() => setActiveView("workspace")}>
             <Guitar size={18} />
-            <span>From Rocksmith / PSARC</span>
+            <span>Convertor</span>
           </button>
+          <button className={activeView === "songsterr" ? "active" : ""} onClick={() => setActiveView("songsterr")}><FileMusic size={18}/><span>From Songsterr</span></button>
           <button className={activeView === "stems" ? "active" : ""} onClick={() => setActiveView("stems")}>
             <Server size={18} />
             <span>Tools · stems</span>
@@ -1164,7 +1171,7 @@ function App() {
             <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search title, artist, or album" />
           </div>
           <button onClick={chooseFiles}><Plus size={17} /> Add files</button>
-          <button onClick={chooseFolder}><FolderOpen size={17} /> Add folder</button>
+          <button onClick={() => chooseFolder()}><FolderOpen size={17} /> Add folder</button>
           {activeView === "feedpak" && <button onClick={() => {setActiveView("settings"); setSettingsSection("diagnostics");}}>Audit library</button>}
         </section>}
 
@@ -1188,7 +1195,7 @@ function App() {
         <div hidden={activeView !== "songsterr"}>
           <SongsterrWorkspace outputDir={outputDir} setOutputDir={setOutputDir} onCreated={paths => addFiles(paths, null, false)} />
         </div>
-        {activeView === "home" ? <Home navigate={setActiveView} chooseFiles={chooseFiles} chooseFolder={chooseFolder} items={items} selectItem={item => {setSelectedId(item.id); setActiveView(item.sourceType === "feedpak" ? "feedpak" : "workspace");}} /> : activeView === "songsterr" ? null : activeView === "settings" || activeView === "stems" ? (
+        {activeView === "home" ? <Home navigate={setActiveView} chooseFiles={chooseFiles} chooseFolder={() => chooseFolder("feedpak")} items={items} selectItem={item => {setSelectedId(item.id); setActiveView(item.sourceType === "feedpak" ? "feedpak" : "workspace");}} /> : activeView === "songsterr" ? null : activeView === "settings" || activeView === "stems" ? (
           <section className={`settings-page ${activeView === "stems" ? "settings-page-full" : ""}`}>
             {activeView === "settings" && (
               <div className="settings-nav" aria-label="Settings sections">
@@ -1252,10 +1259,6 @@ function App() {
                 <div className="option-grid">
                   <label className="toggle"><input type="checkbox" checked={overwrite} onChange={(event) => setOverwrite(event.target.checked)} /> Overwrite existing output</label>
                   <label className="toggle"><input type="checkbox" checked={separateStems} onChange={(event) => setSeparateStems(event.target.checked)} disabled={isConverting} /> Separate stems</label>
-                  <label className="toggle lab-toggle">
-                    <input type="checkbox" checked={bStandardTo7String} onChange={(event) => setBStandardTo7String(event.target.checked)} disabled={isConverting} />
-                    B standard to 7-string
-                  </label>
                 </div>
               </div>
             </div>
@@ -1265,8 +1268,8 @@ function App() {
               <div className="settings-card">
                 <div className="settings-card-head">
                   <div>
-                    <h2>Stem splitting</h2>
-                    <p>Local Demucs or a remote FeedBack stem server.</p>
+                    <h2>Configuration</h2>
+                    <p>Choose your model, audio stems, and processing device.</p>
                   </div>
                   <span className={`server-badge ${stemServerBadge(stemServerStatus, isStartingStemServer, stemServerMatchesSelectedConfig).toLowerCase().replace(/\s+/g, "-")}`}>{stemServerBadge(stemServerStatus, isStartingStemServer, stemServerMatchesSelectedConfig)}</span>
                 </div>
