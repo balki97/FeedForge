@@ -55,3 +55,19 @@ Validation: 119 Python tests, six Node test entries, lyrics checks and Vite buil
 passed. Native Windows smoke checks confirmed mixed-folder navigation, reopening
 the same folder without duplicates, and metadata layout. Packaging and UI checks
 use isolated QA profiles and copies of song files.
+
+## Home visual refresh (2.0.0)
+
+The Home page combines the approved studio photograph concept with FeedForge's
+existing sidebar, logo, charcoal surfaces and teal controls. The session list uses
+real package artwork, title/artist hierarchy, album metadata and compact file-type
+labels. No example library data ships in the application.
+
+The background asset is `assets/home-studio.png`, generated with the built-in
+image generation tool. Art direction: wide photographic rehearsal studio, worn
+black electric guitar at right, dark low-detail space at left for interface text,
+warm distant lamp, rug and cables; no lettering, logos or baked-in UI.
+
+Verified the empty and populated Home in native Electron, loading actual FeedPaks
+through Open library; covers and metadata display correctly. The folder action
+still opens Library & editor. Production UI build and the full test suite pass.
