@@ -49,6 +49,20 @@ macOS:   ~/Library/Application Support/FeedForge/logs/feedforge-debug.log
 Linux:   ~/.config/FeedForge/logs/feedforge-debug.log
 ```
 
+## Development and packaging
+
+Source lives in `src/` (converter), `electron/` (desktop shell), and `ui/`.
+Regression tests live in `tests/`; maintenance and launch scripts live in `tools/`.
+
+Install dependencies with `python -m pip install -e ".[dev]"` and `npm ci`.
+Run `python -m pytest -q` and `npm run build` before packaging.
+Use `npm run release:win`, `release:mac`, or `release:linux` for a local release.
+Finished downloads are written to `release/`. Successful packaging removes
+superseded FeedForge downloads of the same artifact type; failed builds retain
+the previous release. `build/`, `dist/`, `desktop-dist/`, and `release/` are
+generated and ignored by Git. Keep conversion results in `outputs/` or outside
+the repository.
+
 ## License
 
 FeedForge is available under the [MIT License](LICENSE).

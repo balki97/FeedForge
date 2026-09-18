@@ -2740,7 +2740,10 @@ def _write_preview_from_full_mix(source: Path, target: Path) -> bool:
                 format="OGG",
                 subtype="VORBIS",
             ) as preview:
-                preview.write(samples)
+                # Keep native Vorbis writes bounded, as in the full-mix encoder.
+                # A whole 30-second clip can overflow its Windows stack.
+                for offset in range(0, len(samples), 65536):
+                    preview.write(samples[offset:offset + 65536])
         return target.stat().st_size >= 1024 and target.read_bytes().startswith(b"OggS")
     except Exception:  # noqa: BLE001
         target.unlink(missing_ok=True)
@@ -2755,11 +2758,21 @@ def _preview_audio_candidates(content: dict[str, bytes]) -> list[tuple[str, byte
         and Path(path.replace("\\", "/")).stem.lower().endswith("_preview")
     ]
     wem_paths = _wem_paths_for_banks(content, preview_banks)
+    # Some CDLCs reuse the full-length WEM in their preview bank. A main-bank
+    # reference takes precedence; create a short preview from the full mix.
+    main_banks = [
+        path for path in content
+        if path.replace("\\", "/").lower().endswith(".bnk")
+        and path not in preview_banks
+    ]
+    full_mix_paths = _wem_paths_for_banks(content, main_banks)
     return [
         (path, data)
         for path, data in content.items()
-        if path in wem_paths
-        or (path.lower().endswith((".wem", ".ogg", ".wav", ".mp3", ".flac", ".opus")) and "preview" in Path(path).stem.lower())
+        if path not in full_mix_paths and (
+            path in wem_paths
+            or (path.lower().endswith(AUDIO_SUFFIXES) and "preview" in Path(path).stem.lower())
+        )
     ]
 
 

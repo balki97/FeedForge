@@ -47,7 +47,6 @@ outputs/
 .agents/
 .codex/
 references/
-tests/
 coverage/
 *.log
 Tmp/

@@ -92,6 +92,7 @@ jobs:
 
       - name: Test
         run: |
+          python -m pytest -q
           node --check electron/main.cjs
           python -m compileall -q src tools/start-demucs-server.py
           npm run build
