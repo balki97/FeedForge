@@ -345,7 +345,7 @@ def test_youtube_download_uses_browser_token_as_final_fallback(monkeypatch, tmp_
 
     assert calls[-1]["extractor_args"] == {
         "youtube": {"player_client": ["mweb"]},
-        "youtubepot-wpc": {"browser_path": ["C:\\Chrome\\chrome.exe"]},
+        "youtubepot-wpc": {"browser_path": [str(Path("C:/Chrome/chrome.exe"))]},
     }
     assert calls[-1]["js_runtimes"] == {
         "node": {"path": "C:/Node/node.exe"}}
