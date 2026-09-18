@@ -144,6 +144,7 @@ def _validate_dir(root: Path, report: _Report) -> None:
 
     arrangement_validator = _schema_validator("arrangement.schema.json")
     notation_validator = _schema_validator("notation.schema.json")
+    drum_tab_validator = _schema_validator("drum-tab.schema.json")
     for index, arrangement in enumerate(manifest.get("arrangements", []) or []):
         if not isinstance(arrangement, dict):
             continue
@@ -153,6 +154,9 @@ def _validate_dir(root: Path, report: _Report) -> None:
         notation = arrangement.get("notation")
         if notation is not None and _check_pointer(root, notation, f"arrangements[{index}].notation", report):
             _validate_json_file(root, notation, notation_validator, report)
+        drum_tab = arrangement.get("drum_tab")
+        if drum_tab is not None and _check_pointer(root, drum_tab, f"arrangements[{index}].drum_tab", report):
+            _validate_json_file(root, drum_tab, drum_tab_validator, report)
 
     for index, stem in enumerate(manifest.get("stems", []) or []):
         if isinstance(stem, dict) and "file" in stem:

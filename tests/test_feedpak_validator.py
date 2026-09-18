@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import zipfile
+import json
+
+import yaml
 
 import pytest
 
@@ -42,3 +45,24 @@ def test_require_valid_feedpak_raises_with_validation_report(tmp_path):
 
     assert raised.value.result.ok is False
     assert "no manifest.yaml" in str(raised.value)
+
+
+@pytest.mark.parametrize("payload,valid", [
+    ({"version": 1, "hits": [{"t": 0, "p": "snare"}]}, True),
+    ({"version": 1, "hits": [{"t": 0}]}, False),
+    (None, False),
+])
+def test_arrangement_drum_tab_validation(tmp_path, payload, valid):
+    manifest = {
+        "title": "Drums", "artist": "Test", "duration": 1,
+        "arrangements": [{"id": "drums", "drum_tab": "drums.json"}],
+        "stems": [{"id": "full", "file": "full.ogg"}],
+    }
+    (tmp_path / "manifest.yaml").write_text(yaml.safe_dump(manifest))
+    (tmp_path / "full.ogg").write_bytes(b"audio")
+    if payload is not None:
+        (tmp_path / "drums.json").write_text(json.dumps(payload))
+    report = validate_feedpak(tmp_path)
+    assert report.ok is valid, report.errors
+    if not valid:
+        assert any("drums.json" in error for error in report.errors)

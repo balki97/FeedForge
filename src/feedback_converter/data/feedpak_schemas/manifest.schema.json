@@ -116,11 +116,13 @@
         "capo": { "type": "integer", "minimum": 0 },
         "centOffset": { "type": "number" },
         "type": { "type": "string" },
-        "notation": { "$ref": "#/$defs/relpath" }
+        "notation": { "$ref": "#/$defs/relpath" },
+        "drum_tab": { "$ref": "#/$defs/relpath" }
       },
       "anyOf": [
         { "required": ["file"] },
-        { "required": ["notation"] }
+        { "required": ["notation"] },
+        { "required": ["drum_tab"] }
       ]
     },
     "stemEntry": {
