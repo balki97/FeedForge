@@ -325,8 +325,9 @@ label, .select-control, .filter-select, .stem-settings label, .feedpak-editor la
 .dialog-actions .primary { min-width: 0; }
 
 /* Home: studio photography, shared controls, and artwork-led file rows. */
-.home-workspace { max-width: 1480px; margin: 0 auto; padding-top: 24px; }
-.home-hero { min-height: 380px; height: clamp(380px, 43vh, 510px); background-size: cover; background-position: center right; border: 1px solid #34332f; border-radius: var(--radius); display: flex; align-items: center; }
+.workspace:has(> .home-workspace) { padding: 0; }
+.home-workspace { margin: 0; }
+.home-hero { min-height: 420px; height: clamp(420px, 56vh, 620px); background-size: cover; background-position: center right; display: flex; align-items: center; }
 .home-hero-content { padding: 38px clamp(24px, 4vw, 64px); width: min(100%, 520px); }
 .home-hero h1 { font-size: clamp(40px, 4.4vw, 66px); font-weight: 650; line-height: 1.08; letter-spacing: -.045em; margin: 0 0 12px; color: #f3f1ec; }
 .home-formats { font-size: 13px; letter-spacing: .13em; color: #c2c3c2; margin: 0 0 30px; }
@@ -339,7 +340,7 @@ label, .select-control, .filter-select, .stem-settings label, .feedpak-editor la
 .home-open-actions { display: flex; gap: 16px; margin-top: 18px; }
 .home-open-actions button { background: transparent !important; border: 0; color: #c6ccd0; padding: 5px 0; display: flex; gap: 7px; align-items: center; font-size: 12px; }
 .home-open-actions button:hover { color: var(--blue); }
-.home-session { padding: 28px 0 8px; }
+.home-session { padding: 28px clamp(24px, 3vw, 44px) 32px; }
 .home-session-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
 .home-session-heading h2 { font-size: 23px; font-weight: 600; letter-spacing: -.55px; margin: 0 0 5px; }
 .home-session-heading span { color: var(--muted); font-size: 11px; }
@@ -371,7 +372,7 @@ label, .select-control, .filter-select, .stem-settings label, .feedpak-editor la
   .home-artwork { width: 48px; height: 48px; }
 }
 @media (max-width: 760px) {
-  .home-workspace { padding-top: 16px; }
+  .home-session { padding: 24px 16px; }
   .home-hero { background-position: 65% center; }
   .home-hero-content { background: #10131480; width: 100%; }
   .home-file-row { grid-template-columns: 44px minmax(80px, 1fr) 60px 18px; }
