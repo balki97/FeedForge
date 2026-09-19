@@ -207,3 +207,45 @@ def test_video_search_returns_candidates_without_claiming_accuracy(monkeypatch):
     monkeypatch.setattr(songsterr_cli, 'selected_song', lambda payload: (None, None, synthetic_song()))
     chart = songsterr_cli.search_videos({'artist': 'Band', 'title': 'Song', 'url': 'chart', 'duration': 999})
     assert chart[0]['duration_difference'] == 201  # Two-second score, not missing/replaced video metadata.
+
+
+def test_automatic_alternative_retains_its_sync_for_preview_and_cached_export(tmp_path, monkeypatch):
+    inspection = {'meta': {'title': 'Test', 'artist': 'Test'}, 'video_url': 'primary',
+                  'video_points': [4, 6], 'video_candidates': [
+                      {'url': 'primary', 'points': [4, 6]}, {'url': 'alternate', 'points': [1.75, 3.75]}]}
+    monkeypatch.setattr(songsterr_cli, 'inspect_songsterr', lambda *a, **kw: inspection)
+    monkeypatch.setattr(songsterr_cli, 'load_songsterr_selection',
+                        lambda *a: {**synthetic_song(), 'video_points': inspection['video_points']})
+    sources = []
+    def audio(source, work):
+        sources.append(source)
+        if source == 'primary':
+            raise songsterr.YouTubeAudioError('Video unavailable')
+        result = work / 'full.ogg'
+        result.write_bytes(b'OggS-fixture')
+        return result
+    monkeypatch.setattr(songsterr_cli, 'prepare_audio', audio)
+    monkeypatch.setattr(songsterr_cli, 'prepare_cover', lambda *a: None)
+    payload = dict(url='https://www.songsterr.com/a/wsa/test-s1', selected_parts=[0, 1],
+                   preview_dir=str(tmp_path), output_path=str(tmp_path / 'alternate.feedpak'))
+    result = songsterr_cli.preview(payload)
+    assert sources == ['primary', 'alternate']
+    assert result['source_url'] == 'alternate'
+    assert result['measures'][0]['time'] == 1.75
+    payload.update(audio_path=result['audio_path'], audio_sync_points=result['audio_sync_points'])
+    songsterr_cli.create(payload)
+    with zipfile.ZipFile(payload['output_path']) as archive:
+        assert json.loads(archive.read('arrangements/lead.json'))['notes'][0]['t'] == 1.75
+        assert json.loads(archive.read('drum_tab_drums.json'))['hits'][0]['t'] == 1.75
+    assert sources[-1] == result['audio_path']
+    payload['audio_sync_points'] = [2, 1]
+    with pytest.raises(ValueError, match='Cached audio timing'):
+        songsterr_cli.create(payload)
+
+
+def test_audio_fallback_does_not_hide_local_conversion_errors(tmp_path, monkeypatch):
+    def fail(*args):
+        raise RuntimeError('Audio encoder failed')
+    monkeypatch.setattr(songsterr_cli, 'prepare_audio', fail)
+    with pytest.raises(RuntimeError, match='Audio encoder failed'):
+        songsterr_cli.prepare_song_audio({}, {'video_candidates': [{'url': 'primary', 'points': []}]}, tmp_path)

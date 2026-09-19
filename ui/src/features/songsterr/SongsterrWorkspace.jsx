@@ -294,6 +294,7 @@ export default function SongsterrWorkspace({ outputDir: sharedOutputDir, setOutp
           cover_path: entry.cover.path,
           lyrics: entry.lyricsEnabled ? exportLyricEvents(entry.lyrics) : [],
           audio_path: entry.audioPreview?.audio_path || entry.audioPath,
+          audio_sync_points: entry.audioPreview?.audio_sync_points,
           output_dir: outputDir,
           output_name: outputName(entry.form)
         };
@@ -366,6 +367,7 @@ export default function SongsterrWorkspace({ outputDir: sharedOutputDir, setOutp
             </div>
             <p className="muted">Positive offsets move notes later; negative offsets move them earlier. Use score tempo if the original video timing is unsuitable. Lyrics keep their own timestamps.</p>
             {audioPreview && <>
+              {audioPreview.source_url && <p className="file-value">Preview source: {audioPreview.source_url}</p>}
               <audio ref={audioRef} key={audioPreview.audio_url} src={audioPreview.audio_url} controls preload="metadata" aria-label="Song audio preview" onError={() => setNotice({type:'error',text:'Audio preview could not be played. Try loading it again or choose local audio.'})}/>
               <div className="sync-controls">
                 <label>Measure<select value={measureIndex} onChange={event => setMeasureIndex(Number(event.target.value))}>{audioPreview.measures.map((measure,index) => <option value={index} key={measure.measure}>Measure {measure.measure} · {measure.time.toFixed(2)}s</option>)}</select></label>

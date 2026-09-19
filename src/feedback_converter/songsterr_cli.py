@@ -23,6 +23,7 @@ from .songsterr import (
     songsterr_to_tracks,
     write_feedpak,
     parse_lrc,
+    YouTubeAudioError,
 )
 
 
@@ -104,11 +105,37 @@ def selected_song(payload):
 def preview(payload):
     progress("Preparing audio preview and measure timing")
     inspection, _, song = selected_song(payload)
+    audio, sync_points, source_url = prepare_song_audio(payload, inspection, Path(payload["preview_dir"]))
+    if sync_points is not None and payload.get("timing_mode", "songsterr") == "songsterr":
+        song = {**song, "video_points": sync_points}
     _, timeline = songsterr_to_tracks(song)
-    audio = prepare_audio(audio_source(payload, inspection), Path(payload["preview_dir"]))
-    return {"audio_path": str(audio), "measures": [
+    return {"audio_path": str(audio), "audio_sync_points": sync_points, "source_url": source_url, "measures": [
         {"measure": index + 1, "time": info["start"]}
         for index, info in enumerate(timeline["measure_info"])]}
+
+
+def prepare_song_audio(payload, inspection, work):
+    if payload.get("audio_path") or payload.get("video_url"):
+        points = payload.get("audio_sync_points")
+        if points is not None:
+            if (not isinstance(points, list) or
+                    any(not isinstance(value, (int, float)) or not math.isfinite(value) for value in points) or
+                    any(right <= left for left, right in zip(points, points[1:]))):
+                raise ValueError("Cached audio timing is invalid. Load its preview again.")
+        return prepare_audio(audio_source(payload, inspection), work), points, payload.get("video_url") or ""
+    candidates = inspection.get("video_candidates") or [
+        {"url": audio_source(payload, inspection), "points": inspection.get("video_points") or []}]
+    errors = []
+    for index, candidate in enumerate(candidates):
+        progress("Trying Songsterr audio" if index == 0 else "Trying an alternative recording listed by Songsterr",
+                 source=candidate["url"])
+        try:
+            audio = prepare_audio(candidate["url"], work)
+            return audio, candidate["points"], candidate["url"]
+        except YouTubeAudioError as error:
+            errors.append(str(error))
+    raise YouTubeAudioError(f"None of the {len(candidates)} recordings listed by Songsterr could be downloaded. "
+                            f"Find a replacement video or choose local audio. {errors[-1]}")
 
 
 def search_videos(payload):
@@ -149,20 +176,21 @@ def create(payload):
         raise ValueError("Chart offset must be a finite number of seconds.")
     progress("Downloading selected arrangements", title=payload.get("title"))
     inspection, selected, song = selected_song(payload)
-    arrangements, timeline = songsterr_to_tracks(song)
     roles = {int(key): value for key, value in (payload.get("roles") or {}).items()}
     names = {int(key): str(value).strip()
              for key, value in (payload.get("names") or {}).items() if str(value).strip()}
-    for part_id, arrangement in zip(selected, arrangements):
-        arrangement["role"] = roles.get(part_id) or arrangement.get("role")
-        if arrangement["role"] and arrangement["role"] not in {"lead", "rhythm", "combo", "bass", "drums"}:
-            raise ValueError("Unsupported arrangement role")
-        arrangement["name"] = names.get(part_id) or arrangement.get("name")
-
     work = Path(tempfile.mkdtemp(prefix="feedforge-songsterr-audio-"))
     try:
         progress("Preparing audio", title=payload.get("title"))
-        audio = prepare_audio(audio_source(payload, inspection), work)
+        audio, sync_points, _ = prepare_song_audio(payload, inspection, work)
+        if sync_points is not None and payload.get("timing_mode", "songsterr") == "songsterr":
+            song = {**song, "video_points": sync_points}
+        arrangements, timeline = songsterr_to_tracks(song)
+        for part_id, arrangement in zip(selected, arrangements):
+            arrangement["role"] = roles.get(part_id) or arrangement.get("role")
+            if arrangement["role"] and arrangement["role"] not in {"lead", "rhythm", "combo", "bass", "drums"}:
+                raise ValueError("Unsupported arrangement role")
+            arrangement["name"] = names.get(part_id) or arrangement.get("name")
         progress("Preparing artwork", title=payload.get("title"))
         cover = prepare_cover(payload.get("cover_path") or payload.get("cover_url"), work)
         author = str(payload.get("author") or "").strip()

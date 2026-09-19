@@ -7,6 +7,21 @@ from feedback_converter import songsterr_cli as creator_cli
 from feedback_converter.songsterr import songsterr_to_tracks, write_feedpak
 
 
+def test_main_video_keeps_full_mix_alternatives_and_excludes_stems(monkeypatch):
+    rows = [{'videoId': 'stem', 'status': 'done', 'feature': 'backing'},
+            {'videoId': 'alternate', 'status': 'done', 'feature': 'alternative', 'points': [1, 3]},
+            {'videoId': 'primary', 'status': 'done', 'feature': None, 'points': [2, 4]},
+            {'videoId': 'solo', 'status': 'done', 'feature': 'solo'},
+            {'videoId': 'pending', 'status': 'pending', 'feature': 'alternative'}]
+    monkeypatch.setattr(creator, '_get_bytes', lambda url: json.dumps(rows).encode())
+    result = creator._main_video({'songId': 1, 'revisionId': 2})
+    assert result['videoId'] == 'primary'
+    assert [video['videoId'] for video in result['alternatives']] == ['alternate']
+    assert result['alternatives'][0]['points'] == [1, 3]
+    rows[:] = rows[:1]
+    assert creator._main_video({'songId': 1, 'revisionId': 2}) is None
+
+
 def test_unsuffixed_links_select_their_own_parts(monkeypatch):
     guitar = "https://www.songsterr.com/a/wsa/deftones-root-tab-s29211"
     bass = "https://www.songsterr.com/a/wsa/deftones-root-bass-tab-s29211"

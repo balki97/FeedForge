@@ -94,9 +94,12 @@ def _main_video(meta):
             f"{meta['revisionId']}/list"))
     except Exception:
         return None
-    usable = [video for video in videos if video.get("status") == "done"]
-    return next((item for item in usable if not item.get("feature")),
-                usable[0] if usable else None)
+    # Solo/backing variants are not complete recordings. Alternatives carry
+    # their own sync points and must remain paired with those recordings.
+    usable = sorted((video for video in videos if video.get("status") == "done"
+                     and video.get("videoId") and video.get("feature") in (None, "", "alternative")),
+                    key=lambda video: bool(video.get("feature")))
+    return {**usable[0], "alternatives": usable[1:]} if usable else None
 
 
 def _youtube_metadata(video_url):
@@ -463,6 +466,9 @@ def inspect_songsterr(url, enrich=True):
         "meta": current, "tracks": tracks, "urls": [url],
         "selected_part_id": _part_id(url, current),
         "video_url": video_url,
+        "video_candidates": [{"url": f"https://youtu.be/{item['videoId']}",
+                              "points": list(item.get("points") or [])}
+                             for item in ([video] + video.get("alternatives", []) if video else [])],
         "video_points": list(video.get("points") or []) if video else [],
         "album": release.get("album") or current.get("album") or "",
         "year": release.get("year") or current.get("year"),
@@ -1292,6 +1298,10 @@ def _node_runtime():
     return configured if configured and Path(configured).is_file() else shutil.which("node")
 
 
+class YouTubeAudioError(RuntimeError):
+    """A source could not be downloaded; another listed recording may work."""
+
+
 def _download_youtube(source, work_dir):
     import yt_dlp
 
@@ -1331,7 +1341,7 @@ def _download_youtube(source, work_dir):
         except yt_dlp.utils.DownloadError as exc:
             errors.append(str(exc))
     detail = errors[-1] if errors else "no audio file was returned"
-    raise RuntimeError(f"YouTube blocked every available audio client. Try again or use local audio. {detail}")
+    raise YouTubeAudioError(f"Could not download audio from {source}. The video may be unavailable in your region, removed, or inaccessible to the downloader. Choose another video or local audio. {detail}")
 
 
 def prepare_audio(source, work_dir):
