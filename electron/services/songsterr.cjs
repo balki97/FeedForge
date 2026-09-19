@@ -107,7 +107,7 @@ function registerSongsterr({ app, ipcMain, dialog, window, runConverter, termina
       return { results, created: results.filter(r => r.ok).length, failed: results.filter(r => !r.ok).length, cancelled: state.cancelled, skipped: payloads.length - results.length };
     } finally { active = null; }
   }
-  for (const action of ["analyze", "create", "batch", "lyrics", "preview"]) {
+  for (const action of ["analyze", "create", "batch", "lyrics", "preview", "search"]) {
     ipcMain.handle(`songsterr:${action}`, (event, payload) => invoke(event, action, payload));
   }
   ipcMain.handle("songsterr:cancel", () => { if (active) active.cancelled = true; return { stopping: Boolean(active) }; });

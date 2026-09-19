@@ -173,3 +173,34 @@ def test_replacement_preview_and_export_share_audio_and_timing(tmp_path, monkeyp
         assert json.loads(archive.read('drum_tab_drums.json'))['hits'][0]['t'] == 1.25
     payload['timing_mode'] = 'songsterr'
     assert songsterr_cli.preview(payload)['measures'][0]['time'] == 4
+
+
+def test_video_search_returns_candidates_without_claiming_accuracy(monkeypatch):
+    import yt_dlp
+    class Search:
+        def __init__(self, options):
+            assert options['extract_flat'] is True
+            assert options['skip_download'] is True
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+        def extract_info(self, query, download):
+            assert query == 'ytsearch5:Band Song'
+            assert download is False
+            return {'entries': [
+                {'id': 'abcdefghijk', 'title': 'Live', 'duration': 400},
+                {'id': 'lmnopqrstuv', 'title': 'Album', 'duration': 203, 'channel': 'Band'},
+                {'id': '12345678901', 'title': 'Unknown', 'duration': None},
+                {'id': '../invalid', 'duration': 200}, None]}
+    monkeypatch.setattr(yt_dlp, 'YoutubeDL', Search)
+    results = songsterr_cli.dispatch({'action': 'search', 'payload': {
+        'artist': 'Band', 'title': 'Song', 'duration': 200}})
+    assert len(results) == 3
+    assert results[0]['title'] == 'Album'
+    assert results[0]['duration_difference'] == 3
+    assert results[0]['url'] == 'https://www.youtube.com/watch?v=lmnopqrstuv'
+    assert results[-1]['duration_difference'] is None
+    assert all('accuracy' not in row for row in results)
+    unknown = songsterr_cli.search_videos({'artist': 'Band', 'title': 'Song'})
+    assert all(row['duration_difference'] is None for row in unknown)

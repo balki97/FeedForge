@@ -111,6 +111,33 @@ def preview(payload):
         for index, info in enumerate(timeline["measure_info"])]}
 
 
+def search_videos(payload):
+    import yt_dlp
+
+    query = " ".join(str(payload.get(key) or "").strip() for key in ("artist", "title")).strip()
+    if not query or len(query) > 300:
+        raise ValueError("Enter an artist and song title before searching.")
+    duration = float(payload.get("duration") or 0)
+    duration = duration if math.isfinite(duration) and duration > 0 else 0
+    progress("Searching YouTube for replacement audio")
+    with yt_dlp.YoutubeDL({"extract_flat": True, "quiet": True, "no_warnings": True,
+                          "skip_download": True, "socket_timeout": 15, "retries": 1}) as downloader:
+        results = downloader.extract_info("ytsearch5:" + query, download=False)
+    videos = []
+    for entry in (results or {}).get("entries") or []:
+        if not entry or not re.fullmatch(r"[A-Za-z0-9_-]{11}", str(entry.get("id") or "")):
+            continue
+        length = entry.get("duration")
+        length = float(length) if isinstance(length, (int, float)) and math.isfinite(length) and length > 0 else None
+        videos.append({"url": "https://www.youtube.com/watch?v=" + entry["id"],
+                       "title": entry.get("title") or "Untitled video",
+                       "channel": entry.get("channel") or entry.get("uploader") or "",
+                       "duration": length,
+                       "duration_difference": round(abs(length - duration), 1) if length and duration else None})
+    videos.sort(key=lambda video: video["duration_difference"] if video["duration_difference"] is not None else math.inf)
+    return videos
+
+
 def create(payload):
     validate_url(payload.get("url"))
     offset = float(payload.get("offset") or 0)
@@ -177,6 +204,8 @@ def dispatch(request):
         return create(payload)
     if action == "preview":
         return preview(payload)
+    if action == "search":
+        return search_videos(payload)
     if action == "lyrics":
         return fetch_synced_lyrics(payload.get("artist", ""), payload.get("title", ""),
                                   payload.get("album", ""), payload.get("duration"),

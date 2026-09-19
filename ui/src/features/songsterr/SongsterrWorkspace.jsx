@@ -62,6 +62,9 @@ export default function SongsterrWorkspace({ outputDir: sharedOutputDir, setOutp
   const [audioPreview, setAudioPreview] = useState(null);
   const [measureIndex, setMeasureIndex] = useState(0);
   const audioRef = useRef(null);
+  const audioSectionRef = useRef(null);
+  const [videoChoices, setVideoChoices] = useState(null);
+  const [audioRecovery, setAudioRecovery] = useState(false);
   const [busy, setBusy] = useState("");
   const [notice, setNotice] = useState(null);
   const [batch, setBatch] = useState([]);
@@ -80,6 +83,8 @@ export default function SongsterrWorkspace({ outputDir: sharedOutputDir, setOutp
 
 
   function loadEditor(entry) {
+    setVideoChoices(null);
+    setAudioRecovery(false);
     setSong(entry.song);
     setForm(entry.form);
     setTracks(entry.tracks);
@@ -193,9 +198,22 @@ export default function SongsterrWorkspace({ outputDir: sharedOutputDir, setOutp
         audio_path: audioPath, video_url: videoUrl, timing_mode: timingMode });
       setAudioPreview(result);
       setMeasureIndex(0);
+      setAudioRecovery(false);
       setNotice(null);
     } catch (error) { setNotice({ type: "error", text: error.message }); }
     finally { setBusy(""); }
+  }
+
+  async function searchVideos() {
+    setBusy("search");
+    setVideoChoices(null);
+    try { setVideoChoices(await api.searchVideos({artist: form.artist, title: form.title, duration: song.duration})); }
+    catch (error) { setNotice({type: "error", text: `YouTube search failed. Paste a link or choose local audio. ${error.message}`}); }
+    finally { setBusy(""); }
+  }
+
+  function showAudioEditor() {
+    requestAnimationFrame(() => audioSectionRef.current?.scrollIntoView({behavior: "smooth", block: "start"}));
   }
 
   async function chooseOutput() {
@@ -206,16 +224,46 @@ export default function SongsterrWorkspace({ outputDir: sharedOutputDir, setOutp
   async function createFeedPak() {
     if (!selectedTracks.length) return setNotice({ type: "error", text: "Select at least one arrangement." });
     if (!outputDir) return setNotice({ type: "error", text: "Choose an output folder." });
-    const stemOptions = await requestConversion();
-    if (!stemOptions) return;
-    setBusy("create");
+    setBusy("preview");
     setStopping(false);
     setResults([]);
     setProgress(null);
     setNotice({ type: "info", text: "Preparing charts and audio…" });
     try {
       const live = currentEditor();
-      const jobs = batch.map((entry, index) => index === activeIndex ? live : entry);
+      const jobs = batch.map((entry, index) => ({...(index === activeIndex ? live : entry)}));
+      // Resolve audio before creating any files, so a failed source can be
+      // repaired without losing edits or repeating completed batch exports.
+      for (const [index, entry] of jobs.entries()) {
+        const parts = entry.tracks.filter(track => track.selected).map(track => track.partId);
+        if (!parts.length) throw new Error(`${entry.form.title} has no selected arrangements.`);
+        if (entry.audioPreview) continue;
+        try {
+          entry.audioPreview = await api.preview({url: entry.song.url, selected_parts: parts,
+            audio_path: entry.audioPath, video_url: entry.videoUrl || "", timing_mode: entry.timingMode || "songsterr"});
+        } catch (error) {
+          setBatch([...jobs]);
+          loadEditor(entry);
+          setActiveIndex(index);
+          setAudioRecovery(true);
+          setNotice({type: "error", text: `Couldn't prepare ${entry.form.title}. Your edits are kept; no FeedPaks were created. ${error.message}`});
+          showAudioEditor();
+          return;
+        }
+        if (index === activeIndex) setAudioPreview(entry.audioPreview);
+        if (entry.audioPath || entry.videoUrl) {
+          setBatch([...jobs]);
+          loadEditor(entry);
+          setActiveIndex(index);
+          setNotice({type: "info", text: `Replacement audio is ready for ${entry.form.title}. Check its sync, then select Create again.`});
+          showAudioEditor();
+          return;
+        }
+      }
+      setBatch([...jobs]);
+      const stemOptions = await requestConversion();
+      if (!stemOptions) return;
+      setBusy("create");
       const payloads = jobs.map((entry) => {
         const chosen = entry.tracks.filter((track) => track.selected);
         return {
@@ -287,7 +335,13 @@ export default function SongsterrWorkspace({ outputDir: sharedOutputDir, setOutp
       <fieldset className="song-editor" disabled={Boolean(busy)}>
         <section className="editor-section release-editor"><h2>Release & credits</h2><div className="release-fields"><div className="artwork-editor"><div className="artwork-preview">{coverPreview ? <img src={coverPreview} alt="Album artwork"/> : <ImageIcon size={32}/>}</div><div className="compact-actions"><button title="Replace artwork" aria-label="Replace artwork" onClick={() => guarded(replaceCover)}><Upload size={15}/></button><button title="Restore release artwork" aria-label="Restore release artwork" disabled={!fetchedCover?.url} onClick={() => setCover(fetchedCover)}><RefreshCw size={15}/></button><button title="Remove artwork" aria-label="Remove artwork" onClick={() => setCover({url:'',path:'',preview:'',source:'No cover'})}><Trash2 size={15}/></button></div><small>{cover.source}</small></div><div className="form-grid">{[['title','Song title'],['artist','Artist'],['album','Album'],['year','Year'],['author','Charter / author']].map(([key,label]) => <label key={key}>{label}<input value={form[key]} onChange={event => setForm({...form,[key]:event.target.value})}/></label>)}</div></div></section>
         <section className="editor-section"><div className="section-heading"><h2>Arrangements</h2><span>{selectedTracks.length} selected</span></div><div className="table-scroll"><table className="arrangement-table"><thead><tr><th>Include / source part</th><th>In-game name</th><th>Role</th></tr></thead><tbody>{tracks.map(track => <tr key={track.partId}><td><label className="check-row"><input type="checkbox" checked={Boolean(track.selected)} disabled={!track.supported} onChange={event => updateTrack(track.partId,{selected:event.target.checked})}/><span>{track.title || track.instrument}<small>{track.isDrums ? 'Drums' : track.isBassGuitar ? 'Bass' : track.isGuitar ? 'Guitar' : 'This instrument is not supported'}</small></span></label></td><td>{track.supported && <input aria-label={`Name for ${track.title || track.partId}`} value={track.name} disabled={!track.selected} onChange={event => updateTrack(track.partId,{name:event.target.value})}/>}</td><td>{track.supported && <select aria-label={`Role for ${track.title || track.partId}`} value={track.role} disabled={!track.selected} onChange={event => updateTrack(track.partId,{role:event.target.value})}>{roleOptions(track).map(role => <option key={role}>{role}</option>)}</select>}</td></tr>)}</tbody></table></div></section>
-        <section className="editor-section"><h2>Audio & output</h2>
+        <section className="editor-section" ref={audioSectionRef}><h2>Audio & output</h2>
+          {audioRecovery && <p className="workflow-notice">Retry the linked audio, search YouTube, or choose your own source below.</p>}
+          <div className="compact-actions"><button onClick={searchVideos}><Search size={15}/> Find replacement videos</button></div>
+          {videoChoices && <div className="video-choices" aria-label="Replacement videos">
+            <p className="muted">{videoChoices.length ? 'Compare the recording and check sync before exporting. Similar length does not guarantee a match.' : 'No videos found. Paste a link or choose local audio.'}</p>
+            {videoChoices.map(video => <div className="video-choice" key={video.url}><div><strong>{video.title}</strong><small>{video.channel || 'Unknown channel'} · {video.duration ? `${Math.floor(video.duration / 60)}:${String(Math.floor(video.duration % 60)).padStart(2,'0')}` : 'Length unavailable'}{video.duration_difference != null ? ` · ${video.duration_difference}s length difference` : ''}</small></div><button onClick={() => {setVideoUrl(video.url); setAudioPath(''); setAudioPreview(null); setOffset(0); setVideoChoices(null); setNotice({type:'info',text:'Replacement selected. Load its preview to check sync before creating the FeedPak.'});}}>Use this video</button></div>)}
+          </div>}
           <div className="form-grid">
             <div><label>Replacement YouTube video<input type="url" value={videoUrl} placeholder={song.video_url || "https://www.youtube.com/watch?v=…"} onChange={event => { setVideoUrl(event.target.value); setAudioPath(""); setAudioPreview(null); setOffset(0); }}/></label>
               <p className="file-value">{audioPath || (videoUrl ? "Using your replacement video" : song.video_url || "Choose a video or local audio")}</p>
