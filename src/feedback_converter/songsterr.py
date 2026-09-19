@@ -21,6 +21,7 @@ import urllib.request
 from fractions import Fraction
 from .package_io import write_manifest, write_archive
 from .feedpak_validator import require_valid_feedpak
+from .difficulty import ensure_difficulty
 from pathlib import Path
 
 
@@ -1198,6 +1199,12 @@ def write_feedpak(arrangements, timeline, audio_path, output_path, *, title, art
             for shape in wire["handshapes"]:
                 shape["start_time"] = round(shape["start_time"] + offset, 4)
                 shape["end_time"] = round(shape["end_time"] + offset, 4)
+            ensure_difficulty(
+                wire,
+                beats=[{**b, "time": float(b["time"]) + offset} for b in timeline["beats"]],
+                sections=[{**s, "time": float(s["time"]) + offset} for s in timeline["sections"]],
+                duration=float(timeline["duration"]) + offset,
+            )
             rel = f"arrangements/{aid}.json"
             (staging / rel).write_text(json.dumps(wire, separators=(",", ":")), encoding="utf-8")
             entries.append({

@@ -24,6 +24,7 @@ import soundfile as sf
 import yaml
 
 from .feedpak_validator import FeedpakValidationResult, require_valid_feedpak
+from .difficulty import ensure_difficulty
 from .output_naming import (
     arrangement_parts_code as naming_arrangement_parts_code,
     output_path as build_output_path,
@@ -1645,6 +1646,7 @@ def _song_to_arrangement(
         "beats": [_beat_to_feedpak(b) for b in song.beats],
         "sections": _sections_to_feedpak(song),
     }
+    ensure_difficulty(arrangement, duration=getattr(song.metadata, "songLength", 0))
     arrangement["stats"] = {
         "events": _arrangement_event_count(arrangement),
         "notes": _arrangement_note_count(arrangement),

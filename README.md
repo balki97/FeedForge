@@ -25,6 +25,15 @@ song libraries. It includes package details, metadata and stem tools, library
 auditing, duplicate checks, and optional local stem separation.
 
 Create FeedPaks from either **Songsterr** links or **Rocksmith / PSARC** files.
+
+Guitar and bass exports include phrase-based dynamic difficulty (DD). Existing
+PSARC difficulty levels are preserved; charts without them, including Songsterr
+imports, receive up to four progressively denser levels per phrase automatically.
+The highest level retains every original note and chord. Generated levels keep
+chords and techniques intact rather than rewriting fingerings. Use FeedBack's
+difficulty control during play to select a level; automatic performance-based
+adjustment depends on the game's difficulty features/plugins. Drum charts are
+unchanged. Previously exported packages need reconversion to receive generated DD.
 Both workflows feed the same Library & editor, package validator, and output folder.
 Home provides the source actions and files opened during the current session.
 
