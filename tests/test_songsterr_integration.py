@@ -204,3 +204,6 @@ def test_video_search_returns_candidates_without_claiming_accuracy(monkeypatch):
     assert all('accuracy' not in row for row in results)
     unknown = songsterr_cli.search_videos({'artist': 'Band', 'title': 'Song'})
     assert all(row['duration_difference'] is None for row in unknown)
+    monkeypatch.setattr(songsterr_cli, 'selected_song', lambda payload: (None, None, synthetic_song()))
+    chart = songsterr_cli.search_videos({'artist': 'Band', 'title': 'Song', 'url': 'chart', 'duration': 999})
+    assert chart[0]['duration_difference'] == 201  # Two-second score, not missing/replaced video metadata.

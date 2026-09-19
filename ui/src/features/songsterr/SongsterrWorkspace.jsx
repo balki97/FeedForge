@@ -63,6 +63,7 @@ export default function SongsterrWorkspace({ outputDir: sharedOutputDir, setOutp
   const [measureIndex, setMeasureIndex] = useState(0);
   const audioRef = useRef(null);
   const audioSectionRef = useRef(null);
+  const stopRequestedRef = useRef(false);
   const [videoChoices, setVideoChoices] = useState(null);
   const [audioRecovery, setAudioRecovery] = useState(false);
   const [busy, setBusy] = useState("");
@@ -207,7 +208,9 @@ export default function SongsterrWorkspace({ outputDir: sharedOutputDir, setOutp
   async function searchVideos() {
     setBusy("search");
     setVideoChoices(null);
-    try { setVideoChoices(await api.searchVideos({artist: form.artist, title: form.title, duration: song.duration})); }
+    try { setVideoChoices(await api.searchVideos({artist: form.artist, title: form.title,
+      url: song.url, timing_mode: timingMode,
+      selected_parts: (selectedTracks.length ? selectedTracks : tracks.filter(track => track.supported).slice(0, 1)).map(track => track.partId)})); }
     catch (error) { setNotice({type: "error", text: `YouTube search failed. Paste a link or choose local audio. ${error.message}`}); }
     finally { setBusy(""); }
   }
@@ -224,7 +227,8 @@ export default function SongsterrWorkspace({ outputDir: sharedOutputDir, setOutp
   async function createFeedPak() {
     if (!selectedTracks.length) return setNotice({ type: "error", text: "Select at least one arrangement." });
     if (!outputDir) return setNotice({ type: "error", text: "Choose an output folder." });
-    setBusy("preview");
+    setBusy("prepare");
+    stopRequestedRef.current = false;
     setStopping(false);
     setResults([]);
     setProgress(null);
@@ -235,6 +239,7 @@ export default function SongsterrWorkspace({ outputDir: sharedOutputDir, setOutp
       // Resolve audio before creating any files, so a failed source can be
       // repaired without losing edits or repeating completed batch exports.
       for (const [index, entry] of jobs.entries()) {
+        if (stopRequestedRef.current) break;
         const parts = entry.tracks.filter(track => track.selected).map(track => track.partId);
         if (!parts.length) throw new Error(`${entry.form.title} has no selected arrangements.`);
         if (entry.audioPreview) continue;
@@ -261,6 +266,10 @@ export default function SongsterrWorkspace({ outputDir: sharedOutputDir, setOutp
         }
       }
       setBatch([...jobs]);
+      if (stopRequestedRef.current) {
+        setNotice({type: "info", text: "Stopped before export. Your edits and prepared audio are kept."});
+        return;
+      }
       const stemOptions = await requestConversion();
       if (!stemOptions) return;
       setBusy("create");
@@ -329,7 +338,7 @@ export default function SongsterrWorkspace({ outputDir: sharedOutputDir, setOutp
       <button className="primary" onClick={analyze} disabled={Boolean(busy)}><Search size={16}/> {busy === 'analyze' ? 'Reading links…' : 'Read links'}</button>
     </div>
     {notice && <div role={notice.type === 'error' ? 'alert' : 'status'} className={`workflow-notice ${notice.type}`}>{notice.type === 'error' ? <XCircle size={17}/> : <InfoIcon/>}<span>{notice.text}</span></div>}
-    {busy && <div role="status" className="job-stage"><LoaderCircle size={16} className="spin"/><span>{progress?.stage || 'Working…'}{progress?.total > 1 ? ` · Song ${progress.index} of ${progress.total}` : ''}</span>{busy === 'create' && batch.length > 1 && <button disabled={stopping} onClick={() => guarded(async () => {await api.cancel(); setStopping(true);})}>{stopping ? 'Stopping after current song' : 'Stop after current song'}</button>}</div>}
+    {busy && <div role="status" className="job-stage"><LoaderCircle size={16} className="spin"/><span>{progress?.stage || 'Working…'}{progress?.total > 1 ? ` · Song ${progress.index} of ${progress.total}` : ''}</span>{['prepare', 'create'].includes(busy) && batch.length > 1 && <button disabled={stopping} onClick={() => guarded(async () => {stopRequestedRef.current = true; setStopping(true); await api.cancel();})}>{stopping ? 'Stopping after current song' : 'Stop after current song'}</button>}</div>}
     {!song ? <div className="workflow-empty"><Music2 size={30}/><p>Paste a Songsterr link to begin.</p></div> : <>
       {batch.length > 1 && <div className="song-batch" aria-label="Songs in this batch">{batch.map((entry,index) => <button key={entry.song.song_id || index} className={index === activeIndex ? 'active' : ''} disabled={Boolean(busy)} onClick={() => selectSong(index)}><span>{index + 1}</span><strong>{entry.form.title}</strong><small>{entry.form.artist}</small></button>)}</div>}
       <fieldset className="song-editor" disabled={Boolean(busy)}>
@@ -339,7 +348,7 @@ export default function SongsterrWorkspace({ outputDir: sharedOutputDir, setOutp
           {audioRecovery && <p className="workflow-notice">Retry the linked audio, search YouTube, or choose your own source below.</p>}
           <div className="compact-actions"><button onClick={searchVideos}><Search size={15}/> Find replacement videos</button></div>
           {videoChoices && <div className="video-choices" aria-label="Replacement videos">
-            <p className="muted">{videoChoices.length ? 'Compare the recording and check sync before exporting. Similar length does not guarantee a match.' : 'No videos found. Paste a link or choose local audio.'}</p>
+            <p className="muted">{videoChoices.length ? 'Lengths are compared with the chart. A similar length does not guarantee the same recording; check sync before exporting.' : 'No videos found. Paste a link or choose local audio.'}</p>
             {videoChoices.map(video => <div className="video-choice" key={video.url}><div><strong>{video.title}</strong><small>{video.channel || 'Unknown channel'} · {video.duration ? `${Math.floor(video.duration / 60)}:${String(Math.floor(video.duration % 60)).padStart(2,'0')}` : 'Length unavailable'}{video.duration_difference != null ? ` · ${video.duration_difference}s length difference` : ''}</small></div><button onClick={() => {setVideoUrl(video.url); setAudioPath(''); setAudioPreview(null); setOffset(0); setVideoChoices(null); setNotice({type:'info',text:'Replacement selected. Load its preview to check sync before creating the FeedPak.'});}}>Use this video</button></div>)}
           </div>}
           <div className="form-grid">

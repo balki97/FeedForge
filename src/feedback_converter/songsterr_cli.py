@@ -118,6 +118,10 @@ def search_videos(payload):
     if not query or len(query) > 300:
         raise ValueError("Enter an artist and song title before searching.")
     duration = float(payload.get("duration") or 0)
+    if payload.get("url"):
+        _, _, song = selected_song(payload)
+        _, timeline = songsterr_to_tracks(song)
+        duration = timeline["duration"]
     duration = duration if math.isfinite(duration) and duration > 0 else 0
     progress("Searching YouTube for replacement audio")
     with yt_dlp.YoutubeDL({"extract_flat": True, "quiet": True, "no_warnings": True,
