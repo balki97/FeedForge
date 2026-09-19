@@ -8,6 +8,7 @@ import shutil
 import sys
 import tempfile
 import math
+import re
 import urllib.parse
 from pathlib import Path
 from .feedpak import update_feedpak
@@ -68,15 +69,55 @@ def analyze(url):
     }
 
 
+def audio_source(payload, inspection):
+    video = str(payload.get("video_url") or "").strip()
+    if video:
+        parsed = urllib.parse.urlsplit(video)
+        video_id = (parsed.path.lstrip("/") if parsed.hostname == "youtu.be" else
+                    urllib.parse.parse_qs(parsed.query).get("v", [""])[0] if parsed.path == "/watch" else
+                    parsed.path.split("/")[-1] if parsed.path.startswith(("/shorts/", "/embed/", "/live/")) else "")
+        if (len(video) > 2048 or parsed.scheme != "https" or
+                parsed.hostname not in {"youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"} or
+                parsed.username or parsed.password or parsed.port not in (None, 443) or
+                not re.fullmatch(r"[A-Za-z0-9_-]{11}", video_id)):
+            raise ValueError("Paste an HTTPS YouTube video link.")
+        video = "https://www.youtube.com/watch?v=" + video_id
+    source = payload.get("audio_path") or video or inspection.get("video_url")
+    if not source:
+        raise ValueError("Choose a replacement YouTube video or a local audio file.")
+    return source
+
+
+def selected_song(payload):
+    validate_url(payload.get("url"))
+    inspection = inspect_songsterr(payload["url"], enrich=False)
+    selected = list(dict.fromkeys(int(value) for value in payload["selected_parts"]))
+    song = load_songsterr_selection(inspection, selected)
+    mode = payload.get("timing_mode", "songsterr")
+    if mode not in {"songsterr", "score"}:
+        raise ValueError("Choose Songsterr sync or score tempo.")
+    if mode == "score":
+        song = {**song, "video_points": []}
+    return inspection, selected, song
+
+
+def preview(payload):
+    progress("Preparing audio preview and measure timing")
+    inspection, _, song = selected_song(payload)
+    _, timeline = songsterr_to_tracks(song)
+    audio = prepare_audio(audio_source(payload, inspection), Path(payload["preview_dir"]))
+    return {"audio_path": str(audio), "measures": [
+        {"measure": index + 1, "time": info["start"]}
+        for index, info in enumerate(timeline["measure_info"])]}
+
+
 def create(payload):
     validate_url(payload.get("url"))
     offset = float(payload.get("offset") or 0)
     if not math.isfinite(offset):
         raise ValueError("Chart offset must be a finite number of seconds.")
     progress("Downloading selected arrangements", title=payload.get("title"))
-    inspection = inspect_songsterr(payload["url"], enrich=False)
-    selected = list(dict.fromkeys(int(value) for value in payload["selected_parts"]))
-    song = load_songsterr_selection(inspection, selected)
+    inspection, selected, song = selected_song(payload)
     arrangements, timeline = songsterr_to_tracks(song)
     roles = {int(key): value for key, value in (payload.get("roles") or {}).items()}
     names = {int(key): str(value).strip()
@@ -90,9 +131,7 @@ def create(payload):
     work = Path(tempfile.mkdtemp(prefix="feedforge-songsterr-audio-"))
     try:
         progress("Preparing audio", title=payload.get("title"))
-        if not (payload.get("audio_path") or inspection.get("video_url")):
-            raise ValueError("This song has no synchronized video. Choose a local audio file.")
-        audio = prepare_audio(payload.get("audio_path") or inspection.get("video_url"), work)
+        audio = prepare_audio(audio_source(payload, inspection), work)
         progress("Preparing artwork", title=payload.get("title"))
         cover = prepare_cover(payload.get("cover_path") or payload.get("cover_url"), work)
         author = str(payload.get("author") or "").strip()
@@ -136,6 +175,8 @@ def dispatch(request):
         return analyze(payload)
     if action == "create":
         return create(payload)
+    if action == "preview":
+        return preview(payload)
     if action == "lyrics":
         return fetch_synced_lyrics(payload.get("artist", ""), payload.get("title", ""),
                                   payload.get("album", ""), payload.get("duration"),

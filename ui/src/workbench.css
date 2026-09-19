@@ -97,6 +97,11 @@ h2 { font-size: 15px; font-weight: 600; }
 .advanced-options summary { cursor: pointer; color: var(--muted); }
 .advanced-options label { margin: 12px 0; max-width: 220px; }
 .advanced-options small, .muted { color: var(--muted); }
+.audio-sync { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line); }
+.audio-sync h3 { margin: 0; font-size: 14px; }
+.audio-sync audio { display: block; width: 100%; margin: 16px 0; height: 40px; color-scheme: dark; }
+.sync-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; margin-bottom: 12px; }
+.sync-controls label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; }
 .lyrics-table { max-height: 270px; overflow-y: auto; }
 .lyric-row, .lyric-labels { display: grid; grid-template-columns: 80px 1fr; gap: 8px; margin-bottom: 6px; }
 .lyric-row input { width: 100%; }

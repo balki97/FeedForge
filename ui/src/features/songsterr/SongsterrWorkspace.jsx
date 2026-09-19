@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, Download, FileAudio, FolderOpen, ImageIcon, LoaderCircle, Music2, RefreshCw, Search, Trash2, Upload, XCircle } from "lucide-react";
 import { exportLyricEvents, lyricRows } from "./lyrics.mjs";
 
@@ -57,6 +57,11 @@ export default function SongsterrWorkspace({ outputDir: sharedOutputDir, setOutp
   const [cover, setCover] = useState({ url: "", path: "", preview: "", source: "" });
   const [fetchedCover, setFetchedCover] = useState(null);
   const [audioPath, setAudioPath] = useState("");
+  const [videoUrl, setVideoUrl] = useState("");
+  const [timingMode, setTimingMode] = useState("songsterr");
+  const [audioPreview, setAudioPreview] = useState(null);
+  const [measureIndex, setMeasureIndex] = useState(0);
+  const audioRef = useRef(null);
   const [busy, setBusy] = useState("");
   const [notice, setNotice] = useState(null);
   const [batch, setBatch] = useState([]);
@@ -83,11 +88,15 @@ export default function SongsterrWorkspace({ outputDir: sharedOutputDir, setOutp
     setCover(entry.cover);
     setFetchedCover(entry.fetchedCover);
     setAudioPath(entry.audioPath);
+    setVideoUrl(entry.videoUrl || "");
+    setTimingMode(entry.timingMode || "songsterr");
+    setAudioPreview(entry.audioPreview || null);
+    setMeasureIndex(0);
     setOffset(entry.offset || 0);
   }
 
   function currentEditor() {
-    return { song, form, tracks, lyrics, lyricsEnabled, cover, fetchedCover, audioPath, offset };
+    return { song, form, tracks, lyrics, lyricsEnabled, cover, fetchedCover, audioPath, videoUrl, timingMode, audioPreview, offset };
   }
 
   function selectSong(index) {
@@ -136,6 +145,7 @@ export default function SongsterrWorkspace({ outputDir: sharedOutputDir, setOutp
   }
 
   function updateTrack(partId, values) {
+    setAudioPreview(null);
     setTracks((current) => current.map((track) => track.partId === partId ? { ...track, ...values } : track));
   }
 
@@ -149,7 +159,7 @@ export default function SongsterrWorkspace({ outputDir: sharedOutputDir, setOutp
     try {
       const result = await api.findLyrics({
         artist: form.artist, title: form.title, album: form.album,
-        duration: song.duration, video_url: song.video_url
+        duration: song.duration, video_url: videoUrl || song.video_url
       });
       setSong((current) => ({ ...current, lyrics: result }));
       const lines = lyricRows(result.events);
@@ -172,7 +182,20 @@ export default function SongsterrWorkspace({ outputDir: sharedOutputDir, setOutp
 
   async function chooseAudio() {
     const selected = await api.pickAudio();
-    if (selected) setAudioPath(selected);
+    if (selected) { setAudioPath(selected); setAudioPreview(null); setOffset(0); }
+  }
+
+  async function preparePreview() {
+    setBusy("preview");
+    setAudioPreview(null);
+    try {
+      const result = await api.preview({ url: song.url, selected_parts: selectedTracks.map(track => track.partId),
+        audio_path: audioPath, video_url: videoUrl, timing_mode: timingMode });
+      setAudioPreview(result);
+      setMeasureIndex(0);
+      setNotice(null);
+    } catch (error) { setNotice({ type: "error", text: error.message }); }
+    finally { setBusy(""); }
   }
 
   async function chooseOutput() {
@@ -199,6 +222,8 @@ export default function SongsterrWorkspace({ outputDir: sharedOutputDir, setOutp
           ...stemOptions,
           url: entry.song.url,
           offset: Number(entry.offset || 0),
+          video_url: entry.videoUrl || "",
+          timing_mode: entry.timingMode || "songsterr",
           title: entry.form.title,
           artist: entry.form.artist,
           album: entry.form.album,
@@ -211,7 +236,7 @@ export default function SongsterrWorkspace({ outputDir: sharedOutputDir, setOutp
           cover_url: entry.cover.url,
           cover_path: entry.cover.path,
           lyrics: entry.lyricsEnabled ? exportLyricEvents(entry.lyrics) : [],
-          audio_path: entry.audioPath,
+          audio_path: entry.audioPreview?.audio_path || entry.audioPath,
           output_dir: outputDir,
           output_name: outputName(entry.form)
         };
@@ -262,7 +287,33 @@ export default function SongsterrWorkspace({ outputDir: sharedOutputDir, setOutp
       <fieldset className="song-editor" disabled={Boolean(busy)}>
         <section className="editor-section release-editor"><h2>Release & credits</h2><div className="release-fields"><div className="artwork-editor"><div className="artwork-preview">{coverPreview ? <img src={coverPreview} alt="Album artwork"/> : <ImageIcon size={32}/>}</div><div className="compact-actions"><button title="Replace artwork" aria-label="Replace artwork" onClick={() => guarded(replaceCover)}><Upload size={15}/></button><button title="Restore release artwork" aria-label="Restore release artwork" disabled={!fetchedCover?.url} onClick={() => setCover(fetchedCover)}><RefreshCw size={15}/></button><button title="Remove artwork" aria-label="Remove artwork" onClick={() => setCover({url:'',path:'',preview:'',source:'No cover'})}><Trash2 size={15}/></button></div><small>{cover.source}</small></div><div className="form-grid">{[['title','Song title'],['artist','Artist'],['album','Album'],['year','Year'],['author','Charter / author']].map(([key,label]) => <label key={key}>{label}<input value={form[key]} onChange={event => setForm({...form,[key]:event.target.value})}/></label>)}</div></div></section>
         <section className="editor-section"><div className="section-heading"><h2>Arrangements</h2><span>{selectedTracks.length} selected</span></div><div className="table-scroll"><table className="arrangement-table"><thead><tr><th>Include / source part</th><th>In-game name</th><th>Role</th></tr></thead><tbody>{tracks.map(track => <tr key={track.partId}><td><label className="check-row"><input type="checkbox" checked={Boolean(track.selected)} disabled={!track.supported} onChange={event => updateTrack(track.partId,{selected:event.target.checked})}/><span>{track.title || track.instrument}<small>{track.isDrums ? 'Drums' : track.isBassGuitar ? 'Bass' : track.isGuitar ? 'Guitar' : 'This instrument is not supported'}</small></span></label></td><td>{track.supported && <input aria-label={`Name for ${track.title || track.partId}`} value={track.name} disabled={!track.selected} onChange={event => updateTrack(track.partId,{name:event.target.value})}/>}</td><td>{track.supported && <select aria-label={`Role for ${track.title || track.partId}`} value={track.role} disabled={!track.selected} onChange={event => updateTrack(track.partId,{role:event.target.value})}>{roleOptions(track).map(role => <option key={role}>{role}</option>)}</select>}</td></tr>)}</tbody></table></div></section>
-        <section className="editor-section"><h2>Audio & output</h2><div className="form-grid"><div><span className="field-label">Audio source</span><p className="file-value">{audioPath || song.video_url || 'No synchronized video — choose local audio'}</p><div className="compact-actions"><button onClick={() => guarded(chooseAudio)}><FileAudio size={15}/> Choose audio</button>{audioPath && <button onClick={() => setAudioPath('')}>Use video</button>}</div></div><div><span className="field-label">Output folder</span><p className="file-value">{outputDir || 'Choose a folder'}</p><button onClick={() => guarded(chooseOutput)}><FolderOpen size={15}/> Choose folder</button></div></div><details className="advanced-options"><summary>Advanced timing</summary><label>Chart offset (seconds)<input type="number" step="0.01" value={offset} onChange={event => setOffset(event.target.value)}/></label><small>Moves chart events and the song timeline relative to audio. Lyrics keep their authored timestamps.</small></details></section>
+        <section className="editor-section"><h2>Audio & output</h2>
+          <div className="form-grid">
+            <div><label>Replacement YouTube video<input type="url" value={videoUrl} placeholder={song.video_url || "https://www.youtube.com/watch?v=…"} onChange={event => { setVideoUrl(event.target.value); setAudioPath(""); setAudioPreview(null); setOffset(0); }}/></label>
+              <p className="file-value">{audioPath || (videoUrl ? "Using your replacement video" : song.video_url || "Choose a video or local audio")}</p>
+              <div className="compact-actions"><button onClick={() => guarded(chooseAudio)}><FileAudio size={15}/> Choose audio</button>{(audioPath || videoUrl) && <button onClick={() => {setAudioPath(''); setVideoUrl(''); setAudioPreview(null); setOffset(0);}}>Restore Songsterr audio</button>}</div>
+            </div>
+            <div><span className="field-label">Output folder</span><p className="file-value">{outputDir || 'Choose a folder'}</p><button onClick={() => guarded(chooseOutput)}><FolderOpen size={15}/> Choose folder</button></div>
+          </div>
+          <div className="audio-sync">
+            <div className="section-heading"><h3>Audio sync</h3><button disabled={!selectedTracks.length} onClick={preparePreview}>Load audio preview</button></div>
+            <div className="form-grid">
+              <label>Chart timing<select value={timingMode} onChange={event => {setTimingMode(event.target.value); setAudioPreview(null); setOffset(0);}}><option value="songsterr">Songsterr sync</option><option value="score">Score tempo</option></select></label>
+              <label>Chart offset (seconds)<input type="number" step="0.01" value={offset} onChange={event => setOffset(event.target.value)}/></label>
+            </div>
+            <p className="muted">Positive offsets move notes later; negative offsets move them earlier. Use score tempo if the original video timing is unsuitable. Lyrics keep their own timestamps.</p>
+            {audioPreview && <>
+              <audio ref={audioRef} key={audioPreview.audio_url} src={audioPreview.audio_url} controls preload="metadata" aria-label="Song audio preview" onError={() => setNotice({type:'error',text:'Audio preview could not be played. Try loading it again or choose local audio.'})}/>
+              <div className="sync-controls">
+                <label>Measure<select value={measureIndex} onChange={event => setMeasureIndex(Number(event.target.value))}>{audioPreview.measures.map((measure,index) => <option value={index} key={measure.measure}>Measure {measure.measure} · {measure.time.toFixed(2)}s</option>)}</select></label>
+                <button disabled={!audioPreview.measures.length} onClick={() => {const player=audioRef.current; if (player && Number.isFinite(player.duration)) setOffset(Number((player.currentTime-audioPreview.measures[measureIndex].time).toFixed(3)));}}>Align measure here</button>
+                <button disabled={!audioPreview.measures.length} onClick={() => {if(audioRef.current) audioRef.current.currentTime=Math.max(0,audioPreview.measures[measureIndex].time+Number(offset || 0));}}>Go to aligned measure</button>
+                <button onClick={() => setOffset(0)}>Reset offset</button>
+              </div>
+              <small className="muted">Pause at the start of a measure, select that measure, then align it. This shifts the whole chart; it does not correct tempo drift in a different performance.</small>
+            </>}
+          </div>
+        </section>
         <section className="editor-section lyrics-editor"><div className="section-heading"><h2>Synchronized lyrics</h2><div className="compact-actions"><button onClick={() => guarded(importLyrics)}><Upload size={15}/> Import LRC</button><button onClick={retryLyrics}><RefreshCw size={15}/> Search again</button></div></div><label className="check-row"><input type="checkbox" checked={lyricsEnabled} disabled={!lyrics.length} onChange={event => setLyricsEnabled(event.target.checked)}/> Include {lyrics.length} timed lines</label><p className="muted">{song.lyrics?.provider || song.lyrics?.message || 'No lyrics found. Import an LRC file or retry the search.'}</p>{lyrics.length > 0 && <div className="lyrics-table"><div className="lyric-labels"><span>Seconds</span><span>Lyric line</span></div>{lyrics.map((line,index) => <div className="lyric-row" key={index}><input aria-label={`Time for lyric ${index+1}`} type="number" min="0" step="0.01" value={line.t} onChange={event => updateLyric(index,{t:event.target.value})}/><input aria-label={`Lyric ${index+1}`} value={line.text} onChange={event => updateLyric(index,{text:event.target.value})}/></div>)}</div>}</section>
       </fieldset>
       <footer className="creation-footer"><div><strong>{outputName(form)}</strong><small>Existing files are kept.</small></div><button className="primary" onClick={createFeedPak} disabled={Boolean(busy) || !selectedTracks.length}><Download size={17}/> {batch.length > 1 ? `Create ${batch.length} FeedPaks` : 'Create FeedPak'}</button></footer>

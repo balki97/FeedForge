@@ -126,3 +126,50 @@ def test_songsterr_creation_uses_shared_stem_editor_and_returns_warnings(tmp_pat
     assert calls[0]['separate_stems'] is True
     assert calls[0]['demucs_stems'] == ['guitar']
     assert calls[0]['demucs_model'] == 'htdemucs_6s'
+
+
+@pytest.mark.parametrize('url', [
+    'http://youtu.be/abcdefghijk', 'https://youtube.com.evil.test/watch?v=abcdefghijk',
+    'https://user:pass@youtube.com/watch?v=abcdefghijk', 'https://youtu.be:444/abcdefghijk',
+    'file:///audio.mp3', 'https://youtube.com/playlist?list=test', 'https://youtu.be/short',
+])
+def test_replacement_video_rejects_non_video_links(url):
+    with pytest.raises(ValueError):
+        songsterr_cli.audio_source({'video_url': url}, {})
+
+
+@pytest.mark.parametrize('url', ['https://youtu.be/abcdefghijk?t=20',
+                               'https://www.youtube.com/watch?v=abcdefghijk&list=ignored',
+                               'https://www.youtube.com/shorts/abcdefghijk'])
+def test_replacement_video_is_normalized_without_seek_or_playlist(url):
+    assert songsterr_cli.audio_source({'video_url': url}, {'video_url': 'removed'}) == (
+        'https://www.youtube.com/watch?v=abcdefghijk')
+
+
+def test_replacement_preview_and_export_share_audio_and_timing(tmp_path, monkeypatch):
+    inspection = {'meta': {'title': 'Test', 'artist': 'Test'}, 'video_url': 'removed'}
+    monkeypatch.setattr(songsterr_cli, 'inspect_songsterr', lambda *a, **kw: inspection)
+    monkeypatch.setattr(songsterr_cli, 'load_songsterr_selection',
+                        lambda *a: {**synthetic_song(), 'video_points': [4, 6]})
+    sources = []
+    def audio(source, work):
+        sources.append(source)
+        result = work / 'full.ogg'
+        result.write_bytes(b'OggS-fixture')
+        return result
+    monkeypatch.setattr(songsterr_cli, 'prepare_audio', audio)
+    monkeypatch.setattr(songsterr_cli, 'prepare_cover', lambda *a: None)
+    payload = dict(url='https://www.songsterr.com/a/wsa/test-s1', selected_parts=[0, 1],
+                   video_url='https://youtu.be/abcdefghijk', timing_mode='score',
+                   preview_dir=str(tmp_path), output_path=str(tmp_path / 'custom.feedpak'), offset=1.25)
+    preview = songsterr_cli.dispatch({'action': 'preview', 'payload': payload})
+    assert preview['measures'] == [{'measure': 1, 'time': 0}]
+    assert sources == ['https://www.youtube.com/watch?v=abcdefghijk']
+    payload['audio_path'] = preview['audio_path']
+    songsterr_cli.create(payload)
+    assert sources[-1] == preview['audio_path']
+    with zipfile.ZipFile(payload['output_path']) as archive:
+        assert json.loads(archive.read('arrangements/lead.json'))['notes'][0]['t'] == 1.25
+        assert json.loads(archive.read('drum_tab_drums.json'))['hits'][0]['t'] == 1.25
+    payload['timing_mode'] = 'songsterr'
+    assert songsterr_cli.preview(payload)['measures'][0]['time'] == 4

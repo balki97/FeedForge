@@ -1,5 +1,6 @@
 const fs = require("node:fs");
 const path = require("node:path");
+const { pathToFileURL } = require("node:url");
 const { parseCoreResponse } = require("./core-response.cjs");
 
 function validateUrl(value) {
@@ -31,6 +32,7 @@ function outputPayload(payload) {
 
 function registerSongsterr({ app, ipcMain, dialog, window, runConverter, terminateChildProcessTree, logDebug, removeTemporaryDirectory }) {
   let active = null;
+  const previews = new Set();
   app.whenReady?.().then(() => {
     const root = app.getPath("temp");
     for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
@@ -43,6 +45,7 @@ function registerSongsterr({ app, ipcMain, dialog, window, runConverter, termina
   });
   app.on?.("before-quit", () => {
     if (active) { active.cancelled = true; terminateChildProcessTree(active.child); }
+    for (const directory of previews) removeTemporaryDirectory(directory);
   });
   const send = (event, progress) => { if (!event.sender.isDestroyed()) event.sender.send("songsterr:progress", progress); };
   async function invoke(event, action, payload) {
@@ -63,6 +66,7 @@ function registerSongsterr({ app, ipcMain, dialog, window, runConverter, termina
           const value = operation === "create" ? outputPayload(payloads[index]) : payloads[index];
           if (operation === "analyze") validateUrl(value);
           directory = fs.mkdtempSync(path.join(app.getPath("temp"), "feedforge-songsterr-job-"));
+          if (operation === "preview") value.preview_dir = directory;
           const request = path.join(directory, "request.json");
           fs.writeFileSync(request, JSON.stringify({ action: operation, payload: value }));
           send(event, { stage: "Starting", title, index: index + 1, total: payloads.length });
@@ -84,6 +88,10 @@ function registerSongsterr({ app, ipcMain, dialog, window, runConverter, termina
           let response;
           try { response = parseCoreResponse(result.stdout); } catch { response = null; }
           if (!response?.ok || result.code !== 0) throw new Error(response?.error || "Songsterr operation failed. Open Settings → Diagnostics for the log.");
+          if (operation === "preview") {
+            response.result.audio_url = pathToFileURL(response.result.audio_path).href;
+            previews.add(directory);
+          }
           results.push({ ok: true, ...response.result });
           if (action !== "batch") return response.result;
         } catch (error) {
@@ -93,13 +101,13 @@ function registerSongsterr({ app, ipcMain, dialog, window, runConverter, termina
         } finally {
           clearTimeout(timer);
           state.child = null;
-          if (directory) removeTemporaryDirectory(directory);
+          if (directory && !previews.has(directory)) removeTemporaryDirectory(directory);
         }
       }
       return { results, created: results.filter(r => r.ok).length, failed: results.filter(r => !r.ok).length, cancelled: state.cancelled, skipped: payloads.length - results.length };
     } finally { active = null; }
   }
-  for (const action of ["analyze", "create", "batch", "lyrics"]) {
+  for (const action of ["analyze", "create", "batch", "lyrics", "preview"]) {
     ipcMain.handle(`songsterr:${action}`, (event, payload) => invoke(event, action, payload));
   }
   ipcMain.handle("songsterr:cancel", () => { if (active) active.cancelled = true; return { stopping: Boolean(active) }; });

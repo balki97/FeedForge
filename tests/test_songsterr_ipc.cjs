@@ -4,6 +4,30 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { outputPayload, validateUrl, registerSongsterr } = require('../electron/services/songsterr.cjs');
+
+test('preview audio survives request cleanup and is removed on app exit', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'feedforge-test-'));
+  const handlers = new Map(); const lifecycle = new Map();
+  try {
+    registerSongsterr({app:{getPath:()=>root,on:(name,fn)=>lifecycle.set(name,fn)},
+      ipcMain:{handle:(name,fn)=>handlers.set(name,fn)},dialog:{},window:()=>null,
+      terminateChildProcessTree:()=>{},logDebug:()=>{},removeTemporaryDirectory:dir=>fs.rmSync(dir,{recursive:true,force:true}),
+      runConverter:async args=>{
+        const request=JSON.parse(fs.readFileSync(args[1]));
+        assert.equal(request.action,'preview');
+        assert.notEqual(request.payload.preview_dir,'untrusted');
+        const audio=path.join(request.payload.preview_dir,'full.ogg');
+        fs.writeFileSync(audio,'fixture');
+        return {code:0,stdout:JSON.stringify({ok:true,result:{audio_path:audio,measures:[]}})};
+      }});
+    const event={sender:{isDestroyed:()=>false,send:()=>{}}};
+    const result=await handlers.get('songsterr:preview')(event,{preview_dir:'untrusted'});
+    assert.ok(fs.existsSync(result.audio_path));
+    assert.ok(result.audio_url.startsWith('file:///'));
+    lifecycle.get('before-quit')();
+    assert.deepEqual(fs.readdirSync(root),[]);
+  } finally {fs.rmSync(root,{recursive:true,force:true});}
+});
 test('Songsterr output names stay in selected directory and preserve collisions', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'feedforge-test-'));
   try {

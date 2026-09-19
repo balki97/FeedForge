@@ -39,6 +39,7 @@ window.addEventListener("unhandledrejection", (event) => {
 contextBridge.exposeInMainWorld("feedbackConverter", {
   songsterr: {
     analyze: url => ipcRenderer.invoke("songsterr:analyze", url),
+    preview: payload => ipcRenderer.invoke("songsterr:preview", payload),
     create: payload => ipcRenderer.invoke("songsterr:create", payload),
     createBatch: payloads => ipcRenderer.invoke("songsterr:batch", payloads),
     findLyrics: payload => ipcRenderer.invoke("songsterr:lyrics", payload),
