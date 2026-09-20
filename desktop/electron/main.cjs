@@ -1297,7 +1297,7 @@ function stemServerLauncherPath() {
   if (app.isPackaged) {
     return path.join(process.resourcesPath, "demucs-server", name);
   }
-  return path.join(app.getAppPath(), "tools", name);
+  return path.join(app.getAppPath(), "..", "tools", name);
 }
 
 function defaultDemucsInstallRoot() {
@@ -1630,8 +1630,8 @@ function converterCommand() {
   const executable = process.platform === "win32" ? "psarc2feedpak.exe" : "psarc2feedpak";
   const packaged = path.join(process.resourcesPath || "", "bin", "psarc2feedpak", executable);
   const packagedLegacy = path.join(process.resourcesPath || "", "bin", executable);
-  const localDirExe = path.join(app.getAppPath(), "dist", "psarc2feedpak", executable);
-  const localExe = path.join(app.getAppPath(), "dist", executable);
+  const localDirExe = path.join(app.getAppPath(), "..", "converter", "dist", "psarc2feedpak", executable);
+  const localExe = path.join(app.getAppPath(), "..", "converter", "dist", executable);
   if (app.isPackaged && fs.existsSync(packaged)) {
     return { command: packaged, prefix: [], cwd: path.dirname(packaged) };
   }
@@ -1646,8 +1646,8 @@ function converterCommand() {
   }
   return {
     command: process.platform === "win32"
-      ? path.join(app.getAppPath(), ".venv", "Scripts", "python.exe")
-      : path.join(app.getAppPath(), ".venv", "bin", "python"),
+      ? path.join(app.getAppPath(), "..", "converter", ".venv", "Scripts", "python.exe")
+      : path.join(app.getAppPath(), "..", "converter", ".venv", "bin", "python"),
     prefix: ["-m", "feedback_converter.cli"],
     cwd: app.getAppPath()
   };
@@ -1705,7 +1705,7 @@ function runConverter(args, options = {}) {
     const child = spawn(command, [...prefix, ...args], {
       cwd,
       windowsHide: true,
-      env: { ...process.env, PYTHONPATH: path.join(app.getAppPath(), "src"), ...options.env }
+      env: { ...process.env, PYTHONPATH: path.join(app.getAppPath(), "..", "converter", "src"), ...options.env }
     });
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
@@ -2148,8 +2148,8 @@ function loadToneAssetCatalog() {
     path.join(process.resourcesPath || "", "tone-equipment")
   ];
   const dataFiles = [
-    path.join(app.getAppPath(), "src", "feedback_converter", "data", "equipment.json"),
-    path.join(app.getAppPath(), "src", "feedback_converter", "data", "feedback_equipment.json"),
+    path.join(app.getAppPath(), "..", "converter", "src", "feedback_converter", "data", "equipment.json"),
+    path.join(app.getAppPath(), "..", "converter", "src", "feedback_converter", "data", "feedback_equipment.json"),
     path.join(process.resourcesPath || "", "tone-equipment", "equipment.json"),
     path.join(process.resourcesPath || "", "tone-equipment", "feedback_equipment.json")
   ];

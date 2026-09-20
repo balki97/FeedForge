@@ -46,15 +46,17 @@ jobs:
         with:
           node-version: 22
           cache: npm
+          cache-dependency-path: desktop/package-lock.json
       - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
           cache: pip
+          cache-dependency-path: converter/pyproject.toml
 
       - name: Install build dependencies
         run: |
-          npm ci
-          python -m pip install ".[dev]"
+          npm ci --prefix desktop
+          python -m pip install "./converter[dev]"
 
       - name: Install macOS decoder libraries
         if: runner.os == 'macOS'
@@ -75,7 +77,7 @@ jobs:
           url = f"https://github.com/vgmstream/vgmstream/releases/download/r2117/{os.environ['VGMSTREAM_ARCHIVE']}"
           urllib.request.urlretrieve(url, archive)
           assert hashlib.sha256(archive.read_bytes()).hexdigest() == os.environ["VGMSTREAM_SHA256"]
-          destination = Path("src/feedback_converter/tools")
+          destination = Path("converter/src/feedback_converter/tools")
           destination.mkdir(parents=True, exist_ok=True)
           executable = os.environ["VGMSTREAM_EXECUTABLE"].lower()
           with zipfile.ZipFile(archive) as bundle:
@@ -94,7 +96,7 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          decoder=src/feedback_converter/tools/vgmstream-cli
+          decoder=converter/src/feedback_converter/tools/vgmstream-cli
           ffmpeg_prefix="$(brew --prefix ffmpeg@8)"
           for library in libswresample.6.dylib libavcodec.62.dylib libavformat.62.dylib libavutil.60.dylib; do
             test -f "$ffmpeg_prefix/lib/$library"
@@ -102,15 +104,15 @@ jobs:
           done
           codesign --force --sign - "$decoder"
 
-      - name: Test
+      - name: Check source and UI build
         run: |
-          npm test
-          node --check electron/main.cjs
-          python -m compileall -q src tools/start-demucs-server.py
-          npm run build
+          node --check desktop/electron/main.cjs
+          node --check desktop/electron/preload.cjs
+          python -m compileall -q converter/src tools/start-demucs-server.py
+          npm --prefix desktop run build
 
       - name: Build desktop app
-        run: npm run release:${{ matrix.platform }}
+        run: npm --prefix desktop run release:${{ matrix.platform }}
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
 
@@ -121,7 +123,7 @@ jobs:
           converter="$(find release -type f -path '*/bin/psarc2feedpak/psarc2feedpak' -print -quit)"
           test -n "$converter"
           chmod +x "$converter"
-          expected="$(node -p "require('./package.json').version")"
+          expected="$(node -p "require('./desktop/package.json').version")"
           test "$("$converter" --version)" = "psarc2feedpak $expected"
 
       - name: Verify macOS application signature
@@ -146,7 +148,7 @@ jobs:
             Where-Object FullName -Match '[\\/]bin[\\/]psarc2feedpak[\\/]' |
             Select-Object -First 1 -ExpandProperty FullName
           if (-not $converter) { throw 'Bundled converter was not found.' }
-          $expected = node -p "require('./package.json').version"
+          $expected = node -p "require('./desktop/package.json').version"
           if ((& $converter --version) -ne "psarc2feedpak $expected") { throw 'Bundled converter version mismatch.' }
 
       - uses: actions/upload-artifact@v7

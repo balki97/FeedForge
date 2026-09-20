@@ -114,7 +114,7 @@ def sync_install_source(source_root: Path, install_root: Path) -> Path:
 
 def main() -> int:
     script_dir = Path(__file__).resolve().parent
-    source_root = script_dir if (script_dir / "pyproject.toml").is_file() else script_dir.parent
+    source_root = script_dir if (script_dir / "pyproject.toml").is_file() else script_dir.parent / "converter"
     install_root = Path(os.environ.get("FEEDFORGE_DEMUCS_HOME") or source_root).resolve()
     model = os.environ.get("FEEDFORGE_DEMUCS_MODEL") or "htdemucs_6s"
     device = os.environ.get("FEEDFORGE_DEMUCS_DEVICE") or "auto"

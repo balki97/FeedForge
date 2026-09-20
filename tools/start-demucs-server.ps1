@@ -57,7 +57,7 @@ function Get-FeedForgeTorchIndex {
 $SourceRoot = if (Test-Path (Join-Path $PSScriptRoot "pyproject.toml")) {
     $PSScriptRoot
 } else {
-    Split-Path -Parent $PSScriptRoot
+    Join-Path (Split-Path -Parent $PSScriptRoot) "converter"
 }
 $InstallRoot = if ($env:FEEDFORGE_DEMUCS_HOME) {
     $env:FEEDFORGE_DEMUCS_HOME

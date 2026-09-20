@@ -54,8 +54,6 @@ Online metadata, artwork, lyrics, and video downloads depend on their providers.
 Local audio is available when video downloading fails. Only chartable instrument
 types can be selected. Songsterr drafts survive navigation within the session.
 
-See [integration and feature parity](docs/songsterr-integration.md) and
-[desktop design](docs/ui-redesign.md) for architecture, verification, and known limits.
 
 ## Windows, macOS, and Linux
 
@@ -90,22 +88,25 @@ Linux:   ~/.config/FeedForge/logs/feedforge-debug.log
 
 ## Development and packaging
 
-Source lives in `src/` (converter), `electron/` (desktop shell), and `ui/`.
-Regression tests live in `tests/`; maintenance and launch scripts live in `tools/`.
+- `desktop/` contains the interface, Electron shell, artwork, and desktop build configuration.
+- `converter/` contains the Python converter and its packaging configuration.
+- `tools/` contains maintenance and stem-server launch scripts.
 
-Install dependencies with `python -m pip install -e ".[dev]"` and `npm ci`.
-Run `npm test` and `npm run build` before packaging.
-Use `npm run release:win`, `release:mac`, or `release:linux` for a local release.
-Finished downloads are written to `release/`. Successful packaging removes
-superseded FeedForge downloads of the same artifact type; failed builds retain
-the previous release. `build/`, `dist/`, `desktop-dist/`, and `release/` are
-generated and ignored by Git. Keep conversion results in `outputs/` or outside
-the repository.
+From the repository root:
 
-Run `npm run clean -- --dry-run` to preview cleanup, then `npm run clean`
-to remove generated build folders, unpacked releases, and Python caches.
-Release downloads and `SHA256SUMS.txt` are retained, as are source files,
-dependencies, local decoder tools, and conversion outputs.
+```sh
+python -m pip install -e "./converter[dev]"
+npm ci --prefix desktop
+npm --prefix desktop run dev
+```
+
+Build with `npm --prefix desktop run release:win`, `release:mac`, or
+`release:linux`. Finished downloads go to `release/`. GitHub's workflow checks
+source syntax, builds the UI and desktop packages, and verifies bundled binaries
+on Windows, macOS, and Linux.
+
+Use `npm --prefix desktop run clean -- --dry-run` to preview generated-file
+cleanup. Conversion outputs and release downloads are retained.
 
 ## License
 

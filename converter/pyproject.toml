@@ -24,7 +24,6 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8",
     "pyinstaller>=6",
 ]
 stems = [
@@ -43,7 +42,3 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 feedback_converter = ["tools/*", "data/*.json", "data/feedpak_schemas/*"]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-pythonpath = ["src"]

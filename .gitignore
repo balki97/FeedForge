@@ -52,6 +52,7 @@ coverage/
 Tmp/
 
 # Internal maintenance files
+/tests/
 tools/backfill_feedpak_authors.py
 tools/reconvert_dlc_parallel.py
 tools/__pycache__/

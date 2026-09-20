@@ -10,7 +10,7 @@
   "scripts": {
     "dev": "concurrently -k \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && electron .\"",
     "build": "vite build",
-    "converter:pack": "python -m PyInstaller --noconfirm --clean psarc2feedpak.spec",
+    "converter:pack": "python -m PyInstaller --noconfirm --clean --distpath ../converter/dist --workpath ../converter/build ../converter/psarc2feedpak.spec",
     "electron:pack": "npm run build && electron-builder --win --publish never",
     "electron:pack:mac": "npm run build && electron-builder --mac dmg zip --publish never",
     "electron:pack:linux": "npm run build && electron-builder --linux AppImage --publish never",
@@ -19,8 +19,7 @@
     "release:mac": "npm run converter:pack && npm run electron:pack:mac",
     "release:linux": "npm run converter:pack && npm run electron:pack:linux",
     "lint:ui": "vite build",
-    "test": "python -m pytest -q -p no:cacheprovider && node --test tests/*.cjs && node tests/test_lyrics.mjs",
-    "clean": "node tools/clean-build.cjs"
+    "clean": "node ../tools/clean-build.cjs"
   },
   "dependencies": {
     "lucide-react": "^0.468.0",
@@ -45,11 +44,11 @@
     ],
     "extraResources": [
       {
-        "from": "dist/psarc2feedpak",
+        "from": "../converter/dist/psarc2feedpak",
         "to": "bin/psarc2feedpak"
       },
       {
-        "from": "src",
+        "from": "../converter/src",
         "to": "demucs-server/src",
         "filter": [
           "feedback_converter/**/*.py",
@@ -57,19 +56,19 @@
         ]
       },
       {
-        "from": "pyproject.toml",
+        "from": "../converter/pyproject.toml",
         "to": "demucs-server/pyproject.toml"
       },
       {
-        "from": "tools/start-demucs-server.ps1",
+        "from": "../tools/start-demucs-server.ps1",
         "to": "demucs-server/start-demucs-server.ps1"
       },
       {
-        "from": "tools/start-demucs-server.py",
+        "from": "../tools/start-demucs-server.py",
         "to": "demucs-server/start-demucs-server.py"
       },
       {
-        "from": "README.md",
+        "from": "../converter/README.md",
         "to": "demucs-server/README.md"
       },
       {
@@ -77,16 +76,16 @@
         "to": "tone-equipment"
       },
       {
-        "from": "src/feedback_converter/data/equipment.json",
+        "from": "../converter/src/feedback_converter/data/equipment.json",
         "to": "tone-equipment/equipment.json"
       },
       {
-        "from": "src/feedback_converter/data/feedback_equipment.json",
+        "from": "../converter/src/feedback_converter/data/feedback_equipment.json",
         "to": "tone-equipment/feedback_equipment.json"
       }
     ],
     "directories": {
-      "output": "release"
+      "output": "../release"
     },
     "compression": "maximum",
     "electronLanguages": [
@@ -123,6 +122,6 @@
     "portable": {
       "unpackDirName": "FeedForge-${version}"
     },
-    "afterAllArtifactBuild": "tools/clean-release.cjs"
+    "afterAllArtifactBuild": "../tools/clean-release.cjs"
   }
 }

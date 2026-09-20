@@ -8,7 +8,7 @@ media_datas, media_binaries, media_imports = collect_all('imageio_ffmpeg')
 ejs_datas, ejs_binaries, ejs_imports = collect_all('yt_dlp_ejs')
 
 
-root = Path.cwd()
+root = Path(SPECPATH).resolve()
 tools = root / 'src' / 'feedback_converter' / 'tools'
 windows_tools = [
     'ww2ogg.exe', 'vgmstream-cli.exe', 'oggenc.exe', 'topng.exe',
