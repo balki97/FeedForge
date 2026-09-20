@@ -1,12 +1,10 @@
 <p align="center">
-  <img src="assets/feedforge.png" alt="FeedForge" width="96" />
+  <img src="desktop/assets/feedforge.png" alt="FeedForge" width="96" />
 </p>
 
 <h1 align="center">FeedForge</h1>
 
-<p align="center">
-  A desktop toolkit for FeedPak files for the FeedBack game.
-</p>
+<p align="center">Create and edit songs for FeedBack.</p>
 
 <p align="center">
   <a href="https://github.com/balki97/FeedForge/releases/latest"><strong>Download</strong></a>
@@ -16,98 +14,36 @@
   <a href="https://discord.gg/9cUe6cacQN">Discord</a>
 </p>
 
----
+## What it does
 
-## FeedPak toolkit
+- Convert PSARC files into FeedPaks.
+- Create songs from Songsterr links, with guitar, bass, and drum parts.
+- Add difficulty levels to guitar and bass charts that don't have them. Existing DD is preserved.
+- Split audio into instrument stems.
+- Edit song details, artwork, and lyrics. Check your library for issues and duplicates.
 
-FeedForge helps you inspect, validate, edit, organize, and maintain FeedPak
-song libraries. It includes package details, metadata and stem tools, library
-auditing, duplicate checks, and optional local stem separation.
+## Getting started
 
-Create FeedPaks from either **Songsterr** links or **Rocksmith / PSARC** files.
-
-Guitar and bass exports include phrase-based dynamic difficulty (DD). Existing
-PSARC difficulty levels are preserved; charts without them, including Songsterr
-imports, receive up to four progressively denser levels per phrase automatically.
-The highest level retains every original note and chord. Generated levels keep
-chords and techniques intact rather than rewriting fingerings. Use FeedBack's
-difficulty control during play to select a level; automatic performance-based
-adjustment depends on the game's difficulty features/plugins. Drum charts are
-unchanged. Previously exported packages need reconversion to receive generated DD.
-Both workflows feed the same Library & editor, package validator, and output folder.
-Home provides the source actions and files opened during the current session.
-
-### Songsterr creation
-
-1. Open **From Songsterr**, paste one or more HTTPS tab links, and choose **Read links**.
-   Links for different parts of the same song are grouped together.
-2. Select guitar, bass, or drum arrangements; edit their names and roles, release
-   details, cover art, and synchronized lyrics. You can import an LRC file or use
-   **Search again** to retry lyric providers. Advanced options include chart offset.
-3. Choose local audio or use the linked video, select an output folder, then create
-   one package or the batch. Existing filenames receive a numbered suffix.
-   Confirm whether to include separated stems before conversion starts.
-4. Review per-song results or open the new packages in **Library & editor** to
-   inspect, edit, organize, or manage stems. Batch stop finishes the current song.
-
-Online metadata, artwork, lyrics, and video downloads depend on their providers.
-Local audio is available when video downloading fails. Only chartable instrument
-types can be selected. Songsterr drafts survive navigation within the session.
-
-
-## Windows, macOS, and Linux
-
-Download the latest Windows x64 portable app, macOS Apple Silicon DMG/ZIP, or
-Linux x64 AppImage from the [latest release](https://github.com/balki97/FeedForge/releases/latest).
+Download your version from [Releases](https://github.com/balki97/FeedForge/releases/latest):
 
 - **Windows:** Run the portable EXE.
-- **macOS:** Open the DMG or ZIP. If macOS blocks the first launch, try opening
-  FeedForge once, then use **System Settings → Privacy & Security → Open Anyway**.
-  For an official FeedForge download that still reports damage, run
-  `xattr -dr com.apple.quarantine "/Applications/FeedForge.app"`.
-- **Linux:** Make the AppImage executable with `chmod +x FeedForge-*.AppImage`,
-  then run it.
+- **macOS (Apple Silicon):** Open the DMG and drag FeedForge into Applications.
+- **Linux:** Make the AppImage executable, then open it.
 
-Optional local stem separation requires Python 3.11 or newer.
+Open a PSARC file or paste a Songsterr link, choose an output folder, and convert.
+You can also open existing FeedPaks in **Library & editor**.
 
-Before PSARC or Songsterr conversion, FeedForge checks the selected stem server.
-You can continue with the full mix only, enable splitting in Settings, or open
-Tools · stems to install/start the local server. Both sources use the same model
-and stem selection. If separation fails during conversion, the result shows the
-warning and retains the full mix.
+For separate instrument stems, set up the local server in **Tools > Stems**, then
+turn on stem splitting in **Settings**. Local stem splitting requires Python 3.11
+or newer. You can convert without it using the full mix.
 
-## Support
+## Help
 
-For bug reports, include the debug log:
-
-```text
-Windows: %APPDATA%\FeedForge\logs\feedforge-debug.log
-macOS:   ~/Library/Application Support/FeedForge/logs/feedforge-debug.log
-Linux:   ~/.config/FeedForge/logs/feedforge-debug.log
-```
-
-## Development and packaging
-
-- `desktop/` contains the interface, Electron shell, artwork, and desktop build configuration.
-- `converter/` contains the Python converter and its packaging configuration.
-- `tools/` contains maintenance and stem-server launch scripts.
-
-From the repository root:
-
-```sh
-python -m pip install -e "./converter[dev]"
-npm ci --prefix desktop
-npm --prefix desktop run dev
-```
-
-Build with `npm --prefix desktop run release:win`, `release:mac`, or
-`release:linux`. Finished downloads go to `release/`. GitHub's workflow checks
-source syntax, builds the UI and desktop packages, and verifies bundled binaries
-on Windows, macOS, and Linux.
-
-Use `npm --prefix desktop run clean -- --dry-run` to preview generated-file
-cleanup. Conversion outputs and release downloads are retained.
+Join [Discord](https://discord.gg/9cUe6cacQN) or
+[report an issue](https://github.com/balki97/FeedForge/issues).
+Include your FeedForge version, operating system, and the error message.
+Debug logs are available from **Diagnostics** in the app.
 
 ## License
 
-FeedForge is available under the [MIT License](LICENSE).
+[MIT](LICENSE)
