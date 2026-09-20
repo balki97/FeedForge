@@ -122,6 +122,6 @@
     "portable": {
       "unpackDirName": "FeedForge-${version}"
     },
-    "afterAllArtifactBuild": "../tools/clean-release.cjs"
+    "afterAllArtifactBuild": "tools/clean-release.cjs"
   }
 }
