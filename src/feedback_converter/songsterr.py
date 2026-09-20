@@ -12,6 +12,7 @@ import math
 import os
 import re
 import shutil
+import ssl
 import subprocess
 import tempfile
 import time
@@ -23,6 +24,7 @@ from .package_io import write_manifest, write_archive
 from .feedpak_validator import require_valid_feedpak
 from .difficulty import ensure_difficulty
 from pathlib import Path
+import certifi
 
 
 FEEDPAK_VERSION = "1.19.0"
@@ -32,13 +34,36 @@ _STATE_RE = re.compile(r'<script[^>]+id=["\']state["\'][^>]*>(.*?)</script>', re
 _PART_RE = re.compile(r"s\d+t(\d+)(?:\D|$)", re.I)
 
 
+def _verified_urlopen(request):
+    try:
+        return urllib.request.urlopen(request, timeout=30)
+    except urllib.error.URLError as exc:
+        if not isinstance(exc.reason, ssl.SSLCertVerificationError):
+            raise
+    # A packaged Python can inherit a stale/missing system CA store. Retry
+    # with Mozilla roots, still checking the hostname and certificate validity.
+    context = ssl.create_default_context(cafile=certifi.where())
+    try:
+        return urllib.request.urlopen(request, timeout=30, context=context)
+    except urllib.error.URLError as exc:
+        if not isinstance(exc.reason, ssl.SSLCertVerificationError):
+            raise
+        host = urllib.parse.urlsplit(request.full_url).hostname
+        raise ValueError(
+            f"Could not verify the HTTPS certificate for {host}. "
+            "Check your computer's date/time and system updates. If those are correct, "
+            "the website or your network's HTTPS certificate may need updating. "
+            f"Certificate verification remains enabled. Details: {exc.reason}"
+        ) from exc
+
+
 def _get_bytes(url):
     request = urllib.request.Request(str(url), headers={
         "User-Agent": USER_AGENT,
         "Accept": "application/json,text/html,*/*",
     })
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:
+        with _verified_urlopen(request) as response:
             data = response.read()
     except urllib.error.HTTPError as exc:
         if not 100 <= exc.code < 200:
