@@ -407,7 +407,7 @@ ipcMain.handle("feedpak:organize", async (_event, payload = {}) => {
   };
 });
 
-ipcMain.handle("audit:feedpakLibrary", async (_event, payload = {}) => {
+ipcMain.handle("audit:feedpakLibrary", async (event, payload = {}) => {
   const root = String(payload.root || "");
   const criteria = normalizeAuditCriteria(payload.criteria || {});
   if (!root || !fs.existsSync(root)) {
@@ -415,7 +415,12 @@ ipcMain.handle("audit:feedpakLibrary", async (_event, payload = {}) => {
   }
   logDebug("audit.feedpakLibrary.start", { root, criteria });
   const startedAt = Date.now();
+  const progress = (value) => {
+    if (!event.sender.isDestroyed()) event.sender.send("audit:progress", value);
+  };
+  progress({ phase: "discovering", completed: 0, total: null });
   const files = await findFeedpakFiles(root);
+  progress({ phase: "checking", completed: 0, total: files.length });
   const rows = [];
   const workerCount = Math.min(3, Math.max(1, Number(payload.workers || 2) || 2));
   let index = 0;
@@ -425,10 +430,12 @@ ipcMain.handle("audit:feedpakLibrary", async (_event, payload = {}) => {
     index += 1;
     if (!filePath) return;
     rows.push(await inspectFeedpakForAudit(root, filePath, criteria));
+    progress({ phase: "checking", completed: rows.length, total: files.length, file: path.relative(root, filePath) });
     await next();
   }
 
   await Promise.all(Array.from({ length: workerCount }, () => next()));
+  progress({ phase: "report", completed: files.length, total: files.length });
   rows.sort((left, right) => left.relativePath.localeCompare(right.relativePath, undefined, { sensitivity: "base" }));
   const duplicates = criteria.checkDuplicates ? duplicateGroupsFromAuditRows(rows) : [];
   const duplicatePaths = new Set(duplicates.flatMap((group) => group.files.map((file) => file.filePath)));

@@ -234,7 +234,7 @@ export function Metric({ label, value, tone = "" }) {
   );
 }
 
-export function LibraryAuditPanel({ folder, criteria, report, busy, onChooseFolder, onRun, onChangeCriterion }) {
+export function LibraryAuditPanel({ folder, criteria, report, progress, busy, onChooseFolder, onRun, onChangeCriterion }) {
   const [selectedDuplicatePaths, setSelectedDuplicatePaths] = useState([]);
   const [deleteMessage, setDeleteMessage] = useState("");
   const [isDeletingDuplicates, setIsDeletingDuplicates] = useState(false);
@@ -291,6 +291,19 @@ export function LibraryAuditPanel({ folder, criteria, report, busy, onChooseFold
       </div>
 
       <div className="audit-body">
+        {busy && <div className="audit-progress">
+          <div role="status">
+            {progress?.phase === "report" ? "Writing audit report…" : progress?.total == null
+              ? "Finding FeedPak files…"
+              : `${progress.completed.toLocaleString()} / ${progress.total.toLocaleString()} packages checked`}
+          </div>
+          <div className="progress-track" role="progressbar" aria-label="Library audit"
+            aria-valuemin={0} aria-valuemax={progress?.total || 1}
+            aria-valuenow={progress?.total == null ? undefined : progress.completed}>
+            <span style={{ width: `${progress?.total ? Math.min(100, progress.completed / progress.total * 100) : 0}%` }} />
+          </div>
+          {progress?.file && <small title={progress.file}>{progress.file}</small>}
+        </div>}
         <div className="audit-criteria">
           {AUDIT_CRITERIA_OPTIONS.map((option) => (
             <label key={option.key} className={`audit-criterion ${criteria[option.key] ? "active" : ""}`}>
@@ -982,7 +995,7 @@ export function Inspector({
     setStemMessage("Reprocessing stems...");
     const result = await onReprocessFeedpakStems(item, { overwriteOriginal });
     setStemMessage(result?.ok
-      ? overwriteOriginal ? "Reprocessed original stems" : `Saved reprocessed copy: ${basename(result.outputPath || "")}`
+      ? overwriteOriginal ? "Reprocessed original stems" : `Saved reprocessed copy: ${result.outputPath || ""}`
       : result?.error || "Stem reprocess failed");
   }
 

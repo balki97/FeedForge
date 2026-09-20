@@ -95,6 +95,7 @@ function App() {
   const [auditFolder, setAuditFolder] = useState(() => initialSettingsRef.current.auditFolder || "");
   const [auditCriteria, setAuditCriteria] = useState(() => normalizeAuditCriteria(initialSettingsRef.current.auditCriteria));
   const [auditReport, setAuditReport] = useState(null);
+  const [auditProgress, setAuditProgress] = useState(null);
   const [isAuditingLibrary, setIsAuditingLibrary] = useState(false);
   const [conversionWorkers, setConversionWorkers] = useState(() => normalizeAutoNumberSetting(initialSettingsRef.current.conversionWorkers, DEFAULT_CONVERSION_WORKERS));
   const [query, setQuery] = useState("");
@@ -552,12 +553,15 @@ function App() {
     if (!auditFolder || isAuditingLibrary) return;
     setIsAuditingLibrary(true);
     setAuditReport(null);
+    setAuditProgress({ phase: "discovering", completed: 0, total: null });
+    const unsubscribe = api.onAuditProgress?.(setAuditProgress);
     try {
       const report = await api.auditFeedpakLibrary({ root: auditFolder, criteria: auditCriteria, workers: 3 });
       setAuditReport(report);
     } catch (error) {
       setAuditReport({ ok: false, error: error?.message || "Library audit failed." });
     } finally {
+      unsubscribe?.();
       setIsAuditingLibrary(false);
     }
   }
@@ -1497,6 +1501,7 @@ function App() {
                   folder={auditFolder}
                   criteria={auditCriteria}
                   report={auditReport}
+                  progress={auditProgress}
                   busy={isAuditingLibrary}
                   onChooseFolder={chooseAuditFolder}
                   onRun={runLibraryAudit}

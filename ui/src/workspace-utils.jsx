@@ -1,6 +1,8 @@
 
 import { AlertTriangle, Check, Play, RotateCw, XCircle } from "lucide-react";
 import { SETTINGS_KEY, DEFAULT_AUDIT_CRITERIA } from "./settings.mjs";
+import { joinPath } from "./output-path.mjs";
+export { joinPath } from "./output-path.mjs";
 export function parseAuthors(value) {
   return String(value || "")
     .split(/\r?\n/)
@@ -240,18 +242,8 @@ export function commonAncestorDir(paths) {
     }
   }
   if (!parts.length) return null;
-  return parts.join("\\");
-}
-
-export function joinPath(...parts) {
-  return parts
-    .filter((part) => part !== null && part !== undefined && String(part).length > 0)
-    .map((part, index) => {
-      const value = String(part);
-      if (index === 0) return value.replace(/[\\/]+$/, "");
-      return value.replace(/^[\\/]+|[\\/]+$/g, "");
-    })
-    .join("\\");
+  if (String(paths[0]).startsWith("/")) return "/" + parts.join("/");
+  return (String(paths[0]).startsWith("\\\\") ? "\\\\" : "") + parts.join("\\");
 }
 
 export function normalizePath(filePath) {
@@ -299,5 +291,7 @@ export function parentDir(filePath) {
   if (!filePath || typeof filePath !== "string") return null;
   const normalized = filePath.replace(/[\\/]+$/, "");
   const index = Math.max(normalized.lastIndexOf("\\"), normalized.lastIndexOf("/"));
+  if (index === 0) return normalized[0];
+  if (index === 2 && /^[a-z]:/i.test(normalized)) return normalized.slice(0, 3);
   return index > 0 ? normalized.slice(0, index) : normalized;
 }

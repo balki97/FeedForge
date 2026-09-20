@@ -1498,6 +1498,10 @@ button:disabled {
   padding: 12px;
 }
 
+.audit-progress { display: grid; gap: 9px; margin-bottom: 18px; }
+.audit-progress .progress-track span { min-width: 0; }
+.audit-progress small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+
 .audit-criteria {
   display: flex;
   flex-wrap: wrap;

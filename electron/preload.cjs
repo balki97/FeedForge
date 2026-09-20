@@ -85,6 +85,11 @@ contextBridge.exposeInMainWorld("feedbackConverter", {
   updateFeedpak: (payload) => ipcRenderer.invoke("feedpak:update", payload),
   organizeFeedpaks: (payload) => ipcRenderer.invoke("feedpak:organize", payload),
   auditFeedpakLibrary: (payload) => ipcRenderer.invoke("audit:feedpakLibrary", payload),
+  onAuditProgress: (callback) => {
+    const listener = (_event, progress) => callback(progress);
+    ipcRenderer.on("audit:progress", listener);
+    return () => ipcRenderer.removeListener("audit:progress", listener);
+  },
   openAuditReport: (filePath) => ipcRenderer.invoke("audit:openReport", filePath),
   showFileInFolder: (filePath) => ipcRenderer.invoke("files:showInFolder", filePath),
   deleteFiles: (filePaths) => ipcRenderer.invoke("files:delete", filePaths),
