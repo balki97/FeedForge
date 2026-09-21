@@ -390,6 +390,17 @@ function App() {
     }
   }
 
+  function clearFeedpakLibrary() {
+    if (isConvertingRef.current || itemsRef.current.some(item => item.status === "converting")) return;
+    const remaining = itemsRef.current.filter(item => item.sourceType !== "feedpak");
+    const retainedIds = new Set(remaining.map(item => item.id));
+    inspectionQueueRef.current = inspectionQueueRef.current.filter(id => retainedIds.has(id));
+    itemsRef.current = remaining;
+    setItems(remaining);
+    if (!retainedIds.has(selectedId)) setSelectedId(remaining[0]?.id || null);
+    setQuery("");
+  }
+
   function pumpInspectionQueue() {
     if (isConvertingRef.current) return;
     while (activeInspectionsRef.current < INSPECTION_WORKERS && inspectionQueueRef.current.length > 0) {
@@ -1546,6 +1557,9 @@ function App() {
             onOrganizeByArtist={organizeLoadedFeedpaksByArtist}
             onChooseOutput={chooseOutput}
             onRemoveItem={removeItem}
+            onClearLibrary={clearFeedpakLibrary}
+            libraryCount={feedpakItems.length}
+            libraryBusy={isConverting || items.some(item => item.status === "converting")}
             outputDir={outputDir}
             overwrite={overwrite}
             separateStems={separateStems}

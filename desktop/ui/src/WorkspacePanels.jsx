@@ -778,6 +778,9 @@ export function FeedPakTools({
   onOrganizeByArtist,
   onChooseOutput,
   onRemoveItem,
+  onClearLibrary,
+  libraryBusy,
+  libraryCount,
   outputDir,
   overwrite,
   separateStems,
@@ -785,25 +788,32 @@ export function FeedPakTools({
 }) {
   const [organizeMessage, setOrganizeMessage] = useState("");
   const [batchStemMessage, setBatchStemMessage] = useState("");
+  const [working, setWorking] = useState(false);
 
   async function organizeByArtist() {
-    setOrganizeMessage("Organizing...");
-    const result = await onOrganizeByArtist();
-    if (result?.cancelled) {
-      setOrganizeMessage("");
-      return;
-    }
-    setOrganizeMessage(result?.ok
-      ? `Copied ${result.copied || 0} FeedPak${result.copied === 1 ? "" : "s"}`
-      : result?.error || "Organize failed");
+    setWorking(true);
+    try {
+      setOrganizeMessage("Organizing...");
+      const result = await onOrganizeByArtist();
+      if (result?.cancelled) {
+        setOrganizeMessage("");
+        return;
+      }
+      setOrganizeMessage(result?.ok
+        ? `Copied ${result.copied || 0} FeedPak${result.copied === 1 ? "" : "s"}`
+        : result?.error || "Organize failed");
+    } finally { setWorking(false); }
   }
 
   async function batchReprocessStems() {
-    setBatchStemMessage("Reprocessing...");
-    const result = await onBatchReprocessFeedpakStems();
-    setBatchStemMessage(result?.ok
-      ? `Reprocessed ${result.total || 0} FeedPak${result.total === 1 ? "" : "s"}`
-      : result?.error || `Reprocessed with ${result?.failed || 0} failure${result?.failed === 1 ? "" : "s"}`);
+    setWorking(true);
+    try {
+      setBatchStemMessage("Reprocessing...");
+      const result = await onBatchReprocessFeedpakStems();
+      setBatchStemMessage(result?.ok
+        ? `Reprocessed ${result.total || 0} FeedPak${result.total === 1 ? "" : "s"}`
+        : result?.error || `Reprocessed with ${result?.failed || 0} failure${result?.failed === 1 ? "" : "s"}`);
+    } finally { setWorking(false); }
   }
 
   return (
@@ -815,11 +825,16 @@ export function FeedPakTools({
         </div>
         <div className="tools-actions">
           <button onClick={onAddFiles}><Plus size={17} /> Add FeedPaks</button>
+          <button className="ghost" disabled={!libraryCount || libraryBusy || working}
+            title="Remove all loaded FeedPaks from this session. Files stay on disk."
+            onClick={() => { onClearLibrary(); setBatchStemMessage(""); setOrganizeMessage(""); }}>
+            <XCircle size={17} /> Clear library
+          </button>
           <button className="ghost" onClick={onChooseOutput}><FolderOpen size={17} /> Output</button>
-          <button onClick={organizeByArtist} disabled={!feedpakItems.length}>
+          <button onClick={organizeByArtist} disabled={!feedpakItems.length || working || libraryBusy}>
             <FolderOpen size={17} /> Artist folders
           </button>
-          <button onClick={batchReprocessStems} disabled={!feedpakItems.length || !separateStems}>
+          <button onClick={batchReprocessStems} disabled={!feedpakItems.length || !separateStems || working || libraryBusy}>
             <RotateCw size={17} /> Reprocess all
           </button>
         </div>

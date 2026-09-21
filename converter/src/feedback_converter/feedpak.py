@@ -55,7 +55,7 @@ def inspect_feedpak(input_path: Path, *, cover_dir: Path | None = None) -> dict[
         rigs = _read_json(package_dir / str(manifest.get("rigs") or "rigs.json"))
         arrangement_payloads = _arrangement_payloads(package_dir, manifest)
         arrangements = _arrangement_previews(arrangement_payloads)
-        tones = _arrangement_tone_previews(arrangement_payloads)
+        tones = _arrangement_tone_previews(arrangement_payloads, rigs)
         if not tones:
             tones = _rig_previews(rigs)
         stems = _stem_previews(package_dir, manifest)
@@ -88,7 +88,7 @@ def _inspect_feedpak_zip(input_path: Path, *, cover_dir: Path | None) -> dict[st
         rigs = _read_json_from_zip(zf, str(manifest.get("rigs") or "rigs.json"))
         arrangement_payloads = _arrangement_payloads_from_zip(zf, manifest)
         arrangements = _arrangement_previews(arrangement_payloads)
-        tones = _arrangement_tone_previews(arrangement_payloads)
+        tones = _arrangement_tone_previews(arrangement_payloads, rigs)
         if not tones:
             tones = _rig_previews(rigs)
         stems = _stem_previews_from_zip(zf, manifest)
@@ -385,12 +385,21 @@ def _arrangement_previews(payloads: list[tuple[dict[str, Any], Any]]) -> list[di
     return rows
 
 
-def _arrangement_tone_previews(payloads: list[tuple[dict[str, Any], Any]]) -> list[dict[str, Any]]:
+def _arrangement_tone_previews(payloads: list[tuple[dict[str, Any], Any]], rigs: Any = None) -> list[dict[str, Any]]:
+    rig_definitions = {
+        row["base_rig"]: row["definitions"][0]
+        for row in _rig_previews(rigs) if row["base_rig"] and row["blocks"]
+    }
     rows = []
     for entry, data in payloads:
         if not isinstance(data, dict) or not isinstance(data.get("tones"), dict):
             continue
         tones = data["tones"]
+        definitions = [_tone_definition_preview(definition) for definition in tones.get("definitions") or []]
+        if not definitions:
+            referenced = dict.fromkeys([tones.get("base_rig"),
+                                       *(change.get("rig") for change in tones.get("changes") or [] if isinstance(change, dict))])
+            definitions = [rig_definitions[key] for key in referenced if key in rig_definitions]
         arr_id = str(entry.get("id") or entry.get("name") or "")
         rows.append(
             {
@@ -398,7 +407,7 @@ def _arrangement_tone_previews(payloads: list[tuple[dict[str, Any], Any]]) -> li
                 "arrangement_name": str(entry.get("name") or arr_id or "Arrangement"),
                 "base": str(tones.get("base") or ""),
                 "base_rig": str(tones.get("base_rig") or ""),
-                "definitions": [_tone_definition_preview(definition) for definition in tones.get("definitions") or []],
+                "definitions": definitions,
                 "changes": [_tone_change_preview(change) for change in tones.get("changes") or []],
             }
         )

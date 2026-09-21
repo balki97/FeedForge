@@ -1942,7 +1942,7 @@ async function inspectFeedpakForAudit(root, filePath, criteria) {
     addMissing("Author credit", "Edit FeedPak metadata and add the original charter/creator credit.");
   }
   if (criteria.requireTones && countAuditToneDefinitions(preview.tones) === 0) {
-    addMissing("Tone data", "Reconvert from a package with tone definitions or manage tones separately.");
+    addMissing("Tone presets", "No amp/effect presets were found. These are separate from audio stems and are optional for playback. Disable the Tones check if you use your own tones. Reconvert only if the source PSARC includes tone definitions that were not imported.");
   }
 
   return {
