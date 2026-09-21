@@ -14,6 +14,7 @@ import re
 import shutil
 import ssl
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.error
@@ -71,9 +72,17 @@ def _get_bytes(url):
         curl = shutil.which("curl.exe") or shutil.which("curl")
         if not curl:
             raise
+        curl_env = os.environ.copy()
+        if sys.platform.startswith("linux") and getattr(sys, "frozen", False):
+            # PyInstaller's bundled libraries are for Python, not system curl.
+            original_path = curl_env.get("LD_LIBRARY_PATH_ORIG")
+            if original_path is not None:
+                curl_env["LD_LIBRARY_PATH"] = original_path
+            else:
+                curl_env.pop("LD_LIBRARY_PATH", None)
         result = subprocess.run(
             [curl, "-L", "--fail", "--silent", "--show-error", str(url)],
-            capture_output=True, timeout=30,
+            capture_output=True, timeout=30, env=curl_env,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         if result.returncode:
