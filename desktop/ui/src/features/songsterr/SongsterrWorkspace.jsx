@@ -28,12 +28,24 @@ function SyncTimeline({ preview, lyrics, offset, currentTime, currentMeasure, on
   const measures = preview.measures || [];
   const peaks = preview.waveform || [];
   const duration = Number(preview.duration) || Math.max(1, measures.at(-1)?.time + 8 || 1);
-  const x = (time) => Math.max(0, Math.min(1000, (Number(time) || 0) / duration * 1000));
-  const measureStep = Math.max(1, Math.ceil(measures.length / 28));
-  const lyricStep = Math.max(1, Math.ceil(lyrics.length / 80));
+  const windowDuration = Math.min(duration, 40);
+  const windowStart = Math.max(0, Math.min(duration - windowDuration, currentTime - windowDuration / 2));
+  const windowEnd = windowStart + windowDuration;
+  const x = (time) => ((Number(time) || 0) - windowStart) / windowDuration * 1000;
+  const visibleMeasures = measures.filter(measure => {
+    const time = measure.time + Number(offset || 0);
+    return time >= windowStart && time <= windowEnd;
+  });
+  const visibleLyrics = lyrics.filter(line => {
+    const time = Number(line.t) + Number(offset || 0);
+    return time >= windowStart && time <= windowEnd;
+  });
+  const visiblePeaks = peaks.map((peak, index) => ({
+    peak, time: (index + .5) / peaks.length * duration
+  })).filter(item => item.time >= windowStart && item.time <= windowEnd);
   const seek = (event) => {
     const box = event.currentTarget.getBoundingClientRect();
-    onSeek((event.clientX - box.left) / box.width * duration);
+    onSeek(windowStart + (event.clientX - box.left) / box.width * windowDuration);
   };
   return <>
     <div className="sync-timeline" role="slider" tabIndex="0" aria-label="Audio sync timeline"
@@ -42,22 +54,22 @@ function SyncTimeline({ preview, lyrics, offset, currentTime, currentMeasure, on
         if (event.key === 'ArrowLeft') { event.preventDefault(); onSeek(Math.max(0, currentTime - 1)); }
         if (event.key === 'ArrowRight') { event.preventDefault(); onSeek(Math.min(duration, currentTime + 1)); }
       }}>
-      <svg viewBox="0 0 1000 126" preserveAspectRatio="none" aria-hidden="true">
-        {peaks.map((peak, index) => <line className="waveform-bar" key={index}
-          x1={(index + .5) / peaks.length * 1000} x2={(index + .5) / peaks.length * 1000}
-          y1={54 - peak * 44} y2={54 + peak * 44}/>) }
-        {measures.filter((_, index) => index % measureStep === 0).map(measure => <g key={measure.measure}>
+      <svg viewBox="0 0 1000 184" preserveAspectRatio="none" aria-hidden="true">
+        <line className="waveform-center" x1="0" x2="1000" y1="86" y2="86"/>
+        {visiblePeaks.map(({ peak, time }, index) => <line className="waveform-bar" key={index}
+          x1={x(time)} x2={x(time)} y1={86 - peak * 70} y2={86 + peak * 70}/>) }
+        {visibleMeasures.map(measure => <g key={measure.measure}>
           <line className={measure.measure === currentMeasure ? 'measure-marker active' : 'measure-marker'}
-            x1={x(measure.time + Number(offset || 0))} x2={x(measure.time + Number(offset || 0))} y1="4" y2="105"/>
-          <text x={x(measure.time + Number(offset || 0)) + 3} y="12">{measure.measure}</text>
+            x1={x(measure.time + Number(offset || 0))} x2={x(measure.time + Number(offset || 0))} y1="4" y2="164"/>
+          <text x={x(measure.time + Number(offset || 0)) + 5} y="17">M{measure.measure}</text>
         </g>)}
-        {lyrics.filter((_, index) => index % lyricStep === 0).map((line, index) =>
-          <circle className="lyric-marker" key={index} cx={x(Number(line.t) + Number(offset || 0))} cy="112" r="3"/>)}
-        <line className="sync-playhead" x1={x(currentTime)} x2={x(currentTime)} y1="0" y2="122"/>
+        {visibleLyrics.map((line, index) => <line className="lyric-marker" key={index}
+          x1={x(Number(line.t) + Number(offset || 0))} x2={x(Number(line.t) + Number(offset || 0))} y1="154" y2="177"/>)}
+        <line className="sync-playhead" x1={x(currentTime)} x2={x(currentTime)} y1="0" y2="180"/>
       </svg>
-      <span className="timeline-start">0:00</span><span className="timeline-end">{formatTime(duration)}</span>
+      <span className="timeline-start">{formatTime(windowStart)}</span><span className="timeline-current">{formatTime(currentTime)}</span><span className="timeline-end">{formatTime(windowEnd)}</span>
     </div>
-    <div className="timeline-legend"><span><i className="measure-key"/>Measures</span><span><i className="lyric-key"/>LRC lines</span><small>Click the waveform to seek</small></div>
+    <div className="timeline-legend"><span><i className="measure-key"/>Measures</span><span><i className="lyric-key"/>LRC lines</span><small>40-second view · click to seek · arrow keys move one second</small></div>
   </>;
 }
 

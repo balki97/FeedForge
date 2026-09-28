@@ -116,7 +116,7 @@ def preview(payload):
         for index, info in enumerate(timeline["measure_info"])]}
 
 
-def audio_waveform(path, bins=240):
+def audio_waveform(path, bins=1200):
     """Return normalized peaks for the visual sync editor."""
     try:
         import soundfile as sf
