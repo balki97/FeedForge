@@ -300,7 +300,7 @@ def _lyric_result(record, method, confidence=1.0):
 def _lyric_name(value):
     value = re.sub(r"\([^)]*(?:official|video|audio|live|remaster|feat)[^)]*\)", " ",
                    str(value or ""), flags=re.I)
-    return re.sub(r"[^a-z0-9]+", " ", value.casefold()).strip()
+    return re.sub(r"[^\w]+", " ", value.casefold()).replace("_", " ").strip()
 
 
 def _lyric_score(record, artist, title, album, duration):
@@ -313,53 +313,6 @@ def _lyric_score(record, artist, title, album, duration):
                       if record_duration and duration else 1.0)
     total = title_score * .55 + artist_score * .25 + album_score * .1 + duration_score * .1
     return total if title_score >= .62 and artist_score >= .5 else 0.0
-
-
-def _youtube_caption_lyrics(video_url):
-    if not video_url:
-        return {}
-    try:
-        import yt_dlp
-        with yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True,
-                               "skip_download": True, "noplaylist": True}) as downloader:
-            info = downloader.extract_info(video_url, download=False)
-        groups = [("authored", info.get("subtitles") or {}),
-                  ("automatic", info.get("automatic_captions") or {})]
-        for kind, tracks in groups:
-            ordered = sorted(tracks, key=lambda language: (
-                not language.endswith("-orig"), not language.startswith("en"), language))
-            if kind == "automatic":
-                ordered = [language for language in ordered
-                           if language.endswith("-orig") or language.startswith("en")]
-            for language in ordered:
-                formats = tracks.get(language) or []
-                selected = next((item for item in formats if item.get("ext") == "json3"), None)
-                if not selected or not selected.get("url"):
-                    continue
-                payload = json.loads(_get_bytes(selected["url"]))
-                events = []
-                for event in payload.get("events") or []:
-                    words = "".join(segment.get("utf8") or "" for segment in event.get("segs") or [])
-                    words = re.sub(r"\s+", " ", words).strip(" ♪\n\t")
-                    if not words or re.fullmatch(r"\[[^]]+\]", words):
-                        continue
-                    start = round(float(event.get("tStartMs", 0)) / 1000, 3)
-                    length = round(max(.05, float(event.get("dDurationMs", 2000)) / 1000), 3)
-                    if events and events[-1]["w"] == words + "+":
-                        continue
-                    events.append({"t": start, "d": length, "w": words + "+"})
-                if len(events) >= 3:
-                    return {
-                        "provider": f"YouTube {kind} captions", "match_method": "captions",
-                        "confidence": .6 if kind == "authored" else .45,
-                        "events": _timed_lyric_lines(events),
-                        "matched_title": info.get("title") or "", "matched_artist": "",
-                        "matched_album": "", "duration": info.get("duration"),
-                        "language": language,
-                    }
-    except Exception:
-        pass
-    return {}
 
 
 def _netease_lyrics(artist, title, album, duration):
@@ -402,8 +355,8 @@ def _netease_lyrics(artist, title, album, duration):
         return {}
 
 
-def fetch_synced_lyrics(artist, title, album="", duration=None, video_url=""):
-    """Find timed lyrics through exact, tolerant-search, captions, then catalog."""
+def fetch_synced_lyrics(artist, title, album="", duration=None):
+    """Find synchronized LRC lyrics through exact and catalog matches."""
     if album and duration:
         url = "https://lrclib.net/api/get?" + urllib.parse.urlencode({
             "artist_name": artist, "track_name": title, "album_name": album,
@@ -438,15 +391,12 @@ def fetch_synced_lyrics(artist, title, album="", duration=None, video_url=""):
             if result:
                 return result
 
-    captions = _youtube_caption_lyrics(video_url)
-    if captions:
-        return captions
     catalog = _netease_lyrics(artist, title, album, duration)
     if catalog:
         return catalog
     return {
         "provider": "", "events": [], "match_method": "none",
-        "message": "No reliable timed lyrics were found in the available catalogs or Songsterr video captions.",
+        "message": "No reliable synchronized LRC lyrics were found. Import an .lrc file to add them manually.",
     }
 
 

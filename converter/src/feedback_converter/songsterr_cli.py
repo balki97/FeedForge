@@ -46,10 +46,10 @@ def analyze(url):
     progress("Reading song, arrangements and release artwork")
     song = inspect_songsterr(url)
     meta = song["meta"]
-    progress("Finding synchronized lyrics")
+    progress("Finding synchronized LRC lyrics")
     lyrics = fetch_synced_lyrics(
         meta.get("artist") or "", meta.get("title") or "",
-        song.get("album") or "", song.get("duration"), song.get("video_url") or "",
+        song.get("album") or "", song.get("duration"),
     )
     tracks = [{key: track.get(key) for key in (
         "partId", "title", "instrument", "supported", "role",
@@ -109,9 +109,31 @@ def preview(payload):
     if sync_points is not None and payload.get("timing_mode", "songsterr") == "songsterr":
         song = {**song, "video_points": sync_points}
     _, timeline = songsterr_to_tracks(song)
-    return {"audio_path": str(audio), "audio_sync_points": sync_points, "source_url": source_url, "measures": [
+    waveform = audio_waveform(audio)
+    return {"audio_path": str(audio), "audio_sync_points": sync_points, "source_url": source_url,
+            "duration": waveform["duration"], "waveform": waveform["peaks"], "measures": [
         {"measure": index + 1, "time": info["start"]}
         for index, info in enumerate(timeline["measure_info"])]}
+
+
+def audio_waveform(path, bins=240):
+    """Return normalized peaks for the visual sync editor."""
+    try:
+        import soundfile as sf
+        with sf.SoundFile(path) as audio:
+            duration = audio.frames / audio.samplerate if audio.samplerate else 0
+            block = max(1, math.ceil(audio.frames / bins))
+            peaks = []
+            while len(peaks) < bins:
+                samples = audio.read(block, dtype="float32", always_2d=True)
+                if not len(samples):
+                    break
+                peaks.append(float(abs(samples).max()))
+        maximum = max(peaks, default=0) or 1
+        return {"duration": round(duration, 3),
+                "peaks": [round(peak / maximum, 4) for peak in peaks]}
+    except Exception:
+        return {"duration": 0, "peaks": []}
 
 
 def prepare_song_audio(payload, inspection, work):
@@ -240,8 +262,7 @@ def dispatch(request):
         return search_videos(payload)
     if action == "lyrics":
         return fetch_synced_lyrics(payload.get("artist", ""), payload.get("title", ""),
-                                  payload.get("album", ""), payload.get("duration"),
-                                  payload.get("video_url", ""))
+                                  payload.get("album", ""), payload.get("duration"))
     if action == "lrc":
         return parse_lrc(payload)
     raise ValueError("Unknown Songsterr operation")
@@ -280,7 +301,6 @@ def main(argv=None):
     lyrics_parser.add_argument("--title", required=True)
     lyrics_parser.add_argument("--album", default="")
     lyrics_parser.add_argument("--duration", type=float)
-    lyrics_parser.add_argument("--video-url", default="")
     args = parser.parse_args(argv)
     if args.command == "analyze":
         result = analyze(args.url)
@@ -290,7 +310,7 @@ def main(argv=None):
         result = create_batch(json.loads(args.payload.read_text(encoding="utf-8")))
     else:
         result = fetch_synced_lyrics(
-            args.artist, args.title, args.album, args.duration, args.video_url)
+            args.artist, args.title, args.album, args.duration)
     print(json.dumps(result, ensure_ascii=False))
 
 
