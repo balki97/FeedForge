@@ -24,7 +24,8 @@ function formatTime(value) {
   return `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
 }
 
-function SyncTimeline({ preview, lyrics, offset, currentTime, currentMeasure, onSeek }) {
+function SyncTimeline({ preview, lyrics, offset, currentTime, currentMeasure, onSeek, onSelectLyric }) {
+  const dragWindow = useRef(null);
   const measures = preview.measures || [];
   const peaks = preview.waveform || [];
   const duration = Number(preview.duration) || Math.max(1, measures.at(-1)?.time + 8 || 1);
@@ -36,21 +37,27 @@ function SyncTimeline({ preview, lyrics, offset, currentTime, currentMeasure, on
     const time = measure.time + Number(offset || 0);
     return time >= windowStart && time <= windowEnd;
   });
-  const visibleLyrics = lyrics.filter(line => {
-    const time = Number(line.t) + Number(offset || 0);
-    return time >= windowStart && time <= windowEnd;
-  });
+  const visibleLyrics = lyrics.map((line, index) => ({
+    line, index, time: Number(line.t) + Number(offset || 0)
+  })).filter(item => item.time >= windowStart && item.time <= windowEnd);
   const visiblePeaks = peaks.map((peak, index) => ({
     peak, time: (index + .5) / peaks.length * duration
   })).filter(item => item.time >= windowStart && item.time <= windowEnd);
-  const seek = (event) => {
+  const seek = (event, range = dragWindow.current || { start: windowStart, duration: windowDuration }) => {
     const box = event.currentTarget.getBoundingClientRect();
-    onSeek(windowStart + (event.clientX - box.left) / box.width * windowDuration);
+    onSeek(range.start + (event.clientX - box.left) / box.width * range.duration);
   };
   return <>
     <div className="sync-timeline" role="slider" tabIndex="0" aria-label="Audio sync timeline"
       aria-valuemin="0" aria-valuemax={Math.round(duration)} aria-valuenow={Math.round(currentTime)}
-      onPointerDown={seek} onKeyDown={event => {
+      onPointerDown={event => {
+        dragWindow.current = { start: windowStart, duration: windowDuration };
+        event.currentTarget.setPointerCapture(event.pointerId);
+        seek(event, dragWindow.current);
+      }}
+      onPointerMove={event => { if (event.buttons === 1 && dragWindow.current) seek(event); }}
+      onPointerUp={event => { event.currentTarget.releasePointerCapture(event.pointerId); dragWindow.current = null; }}
+      onKeyDown={event => {
         if (event.key === 'ArrowLeft') { event.preventDefault(); onSeek(Math.max(0, currentTime - 1)); }
         if (event.key === 'ArrowRight') { event.preventDefault(); onSeek(Math.min(duration, currentTime + 1)); }
       }}>
@@ -63,13 +70,17 @@ function SyncTimeline({ preview, lyrics, offset, currentTime, currentMeasure, on
             x1={x(measure.time + Number(offset || 0))} x2={x(measure.time + Number(offset || 0))} y1="4" y2="164"/>
           <text x={x(measure.time + Number(offset || 0)) + 5} y="17">M{measure.measure}</text>
         </g>)}
-        {visibleLyrics.map((line, index) => <line className="lyric-marker" key={index}
-          x1={x(Number(line.t) + Number(offset || 0))} x2={x(Number(line.t) + Number(offset || 0))} y1="154" y2="177"/>)}
+        {visibleLyrics.map(({ line, index, time }) => <g className="lyric-hit" key={index}
+          onPointerDown={event => { event.stopPropagation(); onSelectLyric(index, time); }}>
+          <line className="lyric-marker-hitbox" x1={x(time)} x2={x(time)} y1="142" y2="180"/>
+          <line className="lyric-marker" x1={x(time)} x2={x(time)} y1="154" y2="177"/>
+          <title>{line.text}</title>
+        </g>)}
         <line className="sync-playhead" x1={x(currentTime)} x2={x(currentTime)} y1="0" y2="180"/>
       </svg>
       <span className="timeline-start">{formatTime(windowStart)}</span><span className="timeline-current">{formatTime(currentTime)}</span><span className="timeline-end">{formatTime(windowEnd)}</span>
     </div>
-    <div className="timeline-legend"><span><i className="measure-key"/>Measures</span><span><i className="lyric-key"/>LRC lines</span><small>40-second view · click to seek · arrow keys move one second</small></div>
+    <div className="timeline-legend"><span><i className="measure-key"/>Measures</span><span><i className="lyric-key"/>LRC lines</span><small>Drag to seek · click an LRC marker to edit · arrow keys move one second</small></div>
   </>;
 }
 
@@ -115,9 +126,11 @@ export default function SongsterrWorkspace({ outputDir: sharedOutputDir, setOutp
   const [timingMode, setTimingMode] = useState("songsterr");
   const [audioPreview, setAudioPreview] = useState(null);
   const [previewTime, setPreviewTime] = useState(0);
+  const [selectedLyric, setSelectedLyric] = useState(null);
   const [measureIndex, setMeasureIndex] = useState(0);
   const audioRef = useRef(null);
   const audioSectionRef = useRef(null);
+  const lyricInputRefs = useRef([]);
   const stopRequestedRef = useRef(false);
   const [videoChoices, setVideoChoices] = useState(null);
   const [audioRecovery, setAudioRecovery] = useState(false);
@@ -140,6 +153,7 @@ export default function SongsterrWorkspace({ outputDir: sharedOutputDir, setOutp
   const latestPreviewLyric = lyrics.findLast((line) => Number(line.t) <= chartTime);
   const previewLyric = latestPreviewLyric && chartTime <= Number(latestPreviewLyric.t) + Number(latestPreviewLyric.d || 3)
     ? latestPreviewLyric : null;
+  const previewLyricIndex = previewLyric ? lyrics.indexOf(previewLyric) : -1;
 
 
 
@@ -158,6 +172,7 @@ export default function SongsterrWorkspace({ outputDir: sharedOutputDir, setOutp
     setTimingMode(entry.timingMode || "songsterr");
     setAudioPreview(entry.audioPreview || null);
     setPreviewTime(0);
+    setSelectedLyric(null);
     setMeasureIndex(0);
     setOffset(entry.offset || 0);
   }
@@ -395,6 +410,20 @@ export default function SongsterrWorkspace({ outputDir: sharedOutputDir, setOutp
     setLyricsEnabled(Boolean(events.length));
     setSong(current => ({...current, lyrics: {provider: "LRC file", events}}));
   }
+  function seekPreview(time) {
+    const duration = Number(audioPreview?.duration) || Number(audioRef.current?.duration) || 0;
+    const next = Math.max(0, Math.min(duration || Infinity, Number(time) || 0));
+    if (audioRef.current) audioRef.current.currentTime = next;
+    setPreviewTime(next);
+  }
+  function editLyric(index, time = Number(lyrics[index]?.t) + Number(offset || 0)) {
+    setSelectedLyric(index);
+    seekPreview(time);
+    requestAnimationFrame(() => {
+      lyricInputRefs.current[index]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      lyricInputRefs.current[index]?.focus();
+    });
+  }
   return <section className="songsterr-workspace" aria-label="Create from Songsterr">
     <div className="source-entry">
       <label>Songsterr tab links<textarea aria-label="Songsterr tab links" value={url} disabled={Boolean(busy)} onChange={event => setUrl(event.target.value)} onKeyDown={event => {if (event.ctrlKey && event.key === 'Enter' && !busy) analyze();}} placeholder="Paste one or more Songsterr tab links, one per line" /></label>
@@ -407,7 +436,7 @@ export default function SongsterrWorkspace({ outputDir: sharedOutputDir, setOutp
       <fieldset className="song-editor" disabled={Boolean(busy)}>
         <section className="editor-section release-editor"><h2>Release & credits</h2><div className="release-fields"><div className="artwork-editor"><div className="artwork-preview">{coverPreview ? <img src={coverPreview} alt="Album artwork"/> : <ImageIcon size={32}/>}</div><div className="compact-actions"><button title="Replace artwork" aria-label="Replace artwork" onClick={() => guarded(replaceCover)}><Upload size={15}/></button><button title="Restore release artwork" aria-label="Restore release artwork" disabled={!fetchedCover?.url} onClick={() => setCover(fetchedCover)}><RefreshCw size={15}/></button><button title="Remove artwork" aria-label="Remove artwork" onClick={() => setCover({url:'',path:'',preview:'',source:'No cover'})}><Trash2 size={15}/></button></div><small>{cover.source}</small></div><div className="form-grid">{[['title','Song title'],['artist','Artist'],['album','Album'],['year','Year'],['author','Charter / author']].map(([key,label]) => <label key={key}>{label}<input value={form[key]} onChange={event => setForm({...form,[key]:event.target.value})}/></label>)}</div></div></section>
         <section className="editor-section"><div className="section-heading"><h2>Arrangements</h2><span>{selectedTracks.length} selected</span></div><div className="table-scroll"><table className="arrangement-table"><thead><tr><th>Include / source part</th><th>In-game name</th><th>Role</th></tr></thead><tbody>{tracks.map(track => <tr key={track.partId}><td><label className="check-row"><input type="checkbox" checked={Boolean(track.selected)} disabled={!track.supported} onChange={event => updateTrack(track.partId,{selected:event.target.checked})}/><span>{track.title || track.instrument}<small>{track.isDrums ? 'Drums' : track.isBassGuitar ? 'Bass' : track.isGuitar ? 'Guitar' : 'This instrument is not supported'}</small></span></label></td><td>{track.supported && <input aria-label={`Name for ${track.title || track.partId}`} value={track.name} disabled={!track.selected} onChange={event => updateTrack(track.partId,{name:event.target.value})}/>}</td><td>{track.supported && <select aria-label={`Role for ${track.title || track.partId}`} value={track.role} disabled={!track.selected} onChange={event => updateTrack(track.partId,{role:event.target.value})}>{roleOptions(track).map(role => <option key={role}>{role}</option>)}</select>}</td></tr>)}</tbody></table></div></section>
-        <section className="editor-section" ref={audioSectionRef}><h2>Audio & output</h2>
+        <section className="editor-section audio-editor" ref={audioSectionRef}><h2>Audio & output</h2>
           {audioRecovery && <p className="workflow-notice">Retry the linked audio, search YouTube, or choose your own source below.</p>}
           <div className="compact-actions"><button onClick={searchVideos}><Search size={15}/> Find replacement videos</button></div>
           {videoChoices && <div className="video-choices" aria-label="Replacement videos">
@@ -433,8 +462,9 @@ export default function SongsterrWorkspace({ outputDir: sharedOutputDir, setOutp
               <audio ref={audioRef} key={audioPreview.audio_url} src={audioPreview.audio_url} controls preload="metadata" aria-label="Song audio preview" onTimeUpdate={event => setPreviewTime(event.currentTarget.currentTime)} onError={() => setNotice({type:'error',text:'Audio preview could not be played. Try loading it again or choose local audio.'})}/>
               <SyncTimeline preview={audioPreview} lyrics={lyricsEnabled ? lyrics : []} offset={offset}
                 currentTime={previewTime} currentMeasure={previewMeasure?.measure}
-                onSeek={time => {if (audioRef.current) audioRef.current.currentTime=time; setPreviewTime(time);}}/>
-              <div className="sync-readout"><span>{previewMeasure ? `Measure ${previewMeasure.measure}` : 'Before first measure'}</span><strong>{previewLyric?.text || 'No lyric at this point'}</strong></div>
+                onSeek={seekPreview} onSelectLyric={editLyric}/>
+              <div className="transport-controls"><button onClick={() => seekPreview(previewTime - 5)}>−5 seconds</button><button onClick={() => audioRef.current?.paused ? audioRef.current.play() : audioRef.current?.pause()}>Play / pause</button><button onClick={() => seekPreview(previewTime + 5)}>+5 seconds</button></div>
+              <button className="sync-readout" disabled={!previewLyric} onClick={() => editLyric(previewLyricIndex)}><span>{previewMeasure ? `Measure ${previewMeasure.measure}` : 'Before first measure'}</span><strong>{previewLyric?.text || 'No LRC line at this point'}</strong>{previewLyric && <small>Click to edit</small>}</button>
               <div className="sync-controls">
                 <label>Measure<select value={measureIndex} onChange={event => setMeasureIndex(Number(event.target.value))}>{audioPreview.measures.map((measure,index) => <option value={index} key={measure.measure}>Measure {measure.measure} · {measure.time.toFixed(2)}s</option>)}</select></label>
                 <button disabled={!audioPreview.measures.length} onClick={() => {const player=audioRef.current; if (player && Number.isFinite(player.duration)) setOffset(Number((player.currentTime-audioPreview.measures[measureIndex].time).toFixed(3)));}}>Align measure here</button>
@@ -445,7 +475,7 @@ export default function SongsterrWorkspace({ outputDir: sharedOutputDir, setOutp
             </>}
           </div>
         </section>
-        <section className="editor-section lyrics-editor"><div className="section-heading"><h2>LRC lyrics</h2><div className="compact-actions"><button onClick={() => guarded(importLyrics)}><Upload size={15}/> Import LRC</button><button onClick={retryLyrics}><RefreshCw size={15}/> Find LRC</button></div></div><label className="check-row"><input type="checkbox" checked={lyricsEnabled} disabled={!lyrics.length} onChange={event => setLyricsEnabled(event.target.checked)}/> Include {lyrics.length} timed lines</label><p className="muted">{song.lyrics?.provider || song.lyrics?.message || 'No synchronized LRC lyrics found. Import an .lrc file or search again.'}</p>{lyrics.length > 0 && <div className="lyrics-table"><div className="lyric-labels"><span>Seconds</span><span>Lyric line</span></div>{lyrics.map((line,index) => <div className="lyric-row" key={index}><input aria-label={`Time for lyric ${index+1}`} type="number" min="0" step="0.01" value={line.t} onChange={event => updateLyric(index,{t:event.target.value})}/><input aria-label={`Lyric ${index+1}`} value={line.text} onChange={event => updateLyric(index,{text:event.target.value})}/></div>)}</div>}</section>
+        <section className="editor-section lyrics-editor"><div className="section-heading"><h2>LRC lyrics</h2><div className="compact-actions"><button onClick={() => guarded(importLyrics)}><Upload size={15}/> Import LRC</button><button onClick={retryLyrics}><RefreshCw size={15}/> Find LRC</button></div></div><label className="check-row"><input type="checkbox" checked={lyricsEnabled} disabled={!lyrics.length} onChange={event => setLyricsEnabled(event.target.checked)}/> Include {lyrics.length} timed lines</label><p className="muted">{song.lyrics?.provider || song.lyrics?.message || 'No synchronized LRC lyrics found. Import an .lrc file or search again.'}</p>{lyrics.length > 0 && <div className="lyrics-table"><div className="lyric-labels"><span>Seconds</span><span>Lyric line</span></div>{lyrics.map((line,index) => <div className={index === selectedLyric ? 'lyric-row active' : 'lyric-row'} key={index}><input aria-label={`Time for lyric ${index+1}`} type="number" min="0" step="0.01" value={line.t} onFocus={() => setSelectedLyric(index)} onChange={event => updateLyric(index,{t:event.target.value})}/><input ref={element => { lyricInputRefs.current[index] = element; }} aria-label={`Lyric ${index+1}`} value={line.text} onFocus={() => setSelectedLyric(index)} onChange={event => updateLyric(index,{text:event.target.value})}/></div>)}</div>}</section>
       </fieldset>
       <footer className="creation-footer"><div><strong>{outputName(form)}</strong><small>Existing files are kept.</small></div><button className="primary" onClick={createFeedPak} disabled={Boolean(busy) || !selectedTracks.length}><Download size={17}/> {batch.length > 1 ? `Create ${batch.length} FeedPaks` : 'Create FeedPak'}</button></footer>
       {results.length > 0 && <section className="creation-results" aria-label="Creation results"><h2>Results</h2>{results.map((row,index) => <div key={index} className={row.ok ? 'result-ok' : 'result-failed'}>{row.ok ? <Check size={16}/> : <XCircle size={16}/>}<span>{row.output_path || row.title}{row.error && <small>{row.error}</small>}{row.warnings?.map(warning => <small key={warning}>{warning}</small>)}</span>{row.ok && <button onClick={() => api.reveal(row.output_path)}>Show in folder</button>}</div>)}</section>}

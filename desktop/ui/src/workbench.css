@@ -72,6 +72,7 @@ h2 { font-size: 15px; font-weight: 600; }
 .song-batch button.active { box-shadow: inset 0 -2px var(--blue) !important; background: var(--panel) !important; }
 .song-editor { border: 0; margin: 16px 0 0; padding: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 0 24px; min-width: 0; }
 .editor-section { padding: 18px 0; border-top: 1px solid var(--line); min-width: 0; }
+.audio-editor, .lyrics-editor { grid-column: 1 / -1; }
 .editor-section h2 { margin: 0 0 14px; }
 .editor-section .section-heading h2 { margin: 0; }
 .release-fields { display: grid; grid-template-columns: 104px 1fr; gap: 16px; }
@@ -102,8 +103,11 @@ h2 { font-size: 15px; font-weight: 600; }
 .audio-sync audio { display: block; width: 100%; margin: 16px 0; height: 40px; color-scheme: dark; }
 .sync-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; margin-bottom: 12px; }
 .sync-controls label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; }
-.sync-readout { display: flex; justify-content: space-between; gap: 16px; margin: -6px 0 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); }
+.sync-readout { display: grid; grid-template-columns: auto 1fr auto; width: 100%; align-items: center; text-align: left; gap: 16px; margin: 0 0 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-2); }
 .sync-readout span { color: var(--muted); }
+.sync-readout strong { text-align: center; }
+.sync-readout small { color: var(--blue); }
+.transport-controls { display: flex; justify-content: center; gap: 8px; margin: 0 0 10px; }
 .sync-timeline { position: relative; height: 204px; margin: 0 0 8px; overflow: hidden; cursor: crosshair; background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--radius); }
 .sync-timeline:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 .sync-timeline svg { display: block; width: 100%; height: 184px; }
@@ -113,6 +117,8 @@ h2 { font-size: 15px; font-weight: 600; }
 .measure-marker.active { stroke: var(--yellow); stroke-width: 2; opacity: 1; }
 .sync-timeline text { fill: #c5d0d6; font-size: 13px; font-weight: 600; }
 .lyric-marker { stroke: var(--yellow); stroke-width: 5; }
+.lyric-marker-hitbox { stroke: transparent; stroke-width: 18; cursor: pointer; }
+.lyric-hit:hover .lyric-marker { stroke: #ffd77f; stroke-width: 8; }
 .sync-playhead { stroke: var(--blue); stroke-width: 3; }
 .timeline-start, .timeline-current, .timeline-end { position: absolute; bottom: 3px; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 .timeline-start { left: 7px; }
@@ -133,6 +139,7 @@ h2 { font-size: 15px; font-weight: 600; }
 .lyrics-table { max-height: 270px; overflow-y: auto; }
 .lyric-row, .lyric-labels { display: grid; grid-template-columns: 80px 1fr; gap: 8px; margin-bottom: 6px; }
 .lyric-row input { width: 100%; }
+.lyric-row.active input { border-color: var(--blue); background: #203038; }
 .lyric-labels { font-size: 11px; color: var(--muted); }
 .creation-footer { border-top: 1px solid var(--line); padding: 16px 0; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .creation-footer strong, .creation-footer small { display: block; }
