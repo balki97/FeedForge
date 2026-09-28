@@ -60,6 +60,7 @@ export default function SongsterrWorkspace({ outputDir: sharedOutputDir, setOutp
   const [videoUrl, setVideoUrl] = useState("");
   const [timingMode, setTimingMode] = useState("songsterr");
   const [audioPreview, setAudioPreview] = useState(null);
+  const [previewTime, setPreviewTime] = useState(0);
   const [measureIndex, setMeasureIndex] = useState(0);
   const audioRef = useRef(null);
   const audioSectionRef = useRef(null);
@@ -80,6 +81,11 @@ export default function SongsterrWorkspace({ outputDir: sharedOutputDir, setOutp
 
   const selectedTracks = useMemo(() => tracks.filter((track) => track.selected), [tracks]);
   const coverPreview = cover.preview || cover.url;
+  const chartTime = previewTime - Number(offset || 0);
+  const previewMeasure = audioPreview?.measures?.findLast((measure) => measure.time <= chartTime);
+  const latestPreviewLyric = lyrics.findLast((line) => Number(line.t) <= chartTime);
+  const previewLyric = latestPreviewLyric && chartTime <= Number(latestPreviewLyric.t) + Number(latestPreviewLyric.d || 3)
+    ? latestPreviewLyric : null;
 
 
 
@@ -139,7 +145,7 @@ export default function SongsterrWorkspace({ outputDir: sharedOutputDir, setOutp
       setNotice({
         type: "success",
         text: editors.length === 1
-          ? `Found ${editors[0].tracks.filter((item) => item.supported).length} chartable arrangements and ${editors[0].lyrics.length} timed lyric lines.`
+          ? `Found ${editors[0].tracks.filter((item) => item.supported).length} chartable arrangements and ${editors[0].lyrics.length} timed lyric lines. Use Preview & sync before creating the FeedPak.`
           : `Sorted ${urls.length} links into ${editors.length} songs. Review each song, then export them together.`
       });
     } catch (error) {
@@ -198,6 +204,7 @@ export default function SongsterrWorkspace({ outputDir: sharedOutputDir, setOutp
       const result = await api.preview({ url: song.url, selected_parts: selectedTracks.map(track => track.partId),
         audio_path: audioPath, video_url: videoUrl, timing_mode: timingMode });
       setAudioPreview(result);
+      setPreviewTime(0);
       setMeasureIndex(0);
       setAudioRecovery(false);
       setNotice(null);
@@ -360,15 +367,16 @@ export default function SongsterrWorkspace({ outputDir: sharedOutputDir, setOutp
             <div><span className="field-label">Output folder</span><p className="file-value">{outputDir || 'Choose a folder'}</p><button onClick={() => guarded(chooseOutput)}><FolderOpen size={15}/> Choose folder</button></div>
           </div>
           <div className="audio-sync">
-            <div className="section-heading"><h3>Audio sync</h3><button disabled={!selectedTracks.length} onClick={preparePreview}>Load audio preview</button></div>
+            <div className="section-heading"><h3>Preview & sync</h3><button disabled={!selectedTracks.length} onClick={preparePreview}>Prepare preview</button></div>
             <div className="form-grid">
               <label>Chart timing<select value={timingMode} onChange={event => {setTimingMode(event.target.value); setAudioPreview(null); setOffset(0);}}><option value="songsterr">Songsterr sync</option><option value="score">Score tempo</option></select></label>
               <label>Chart offset (seconds)<input type="number" step="0.01" value={offset} onChange={event => setOffset(event.target.value)}/></label>
             </div>
-            <p className="muted">Positive offsets move notes later; negative offsets move them earlier. Use score tempo if the original video timing is unsuitable. Lyrics keep their own timestamps.</p>
+            <p className="muted">Listen before exporting. Positive offsets move the chart and lyrics later; negative offsets move both earlier. Use score tempo if the recording drifts out of sync over time.</p>
             {audioPreview && <>
               {audioPreview.source_url && <p className="file-value">Preview source: {audioPreview.source_url}</p>}
-              <audio ref={audioRef} key={audioPreview.audio_url} src={audioPreview.audio_url} controls preload="metadata" aria-label="Song audio preview" onError={() => setNotice({type:'error',text:'Audio preview could not be played. Try loading it again or choose local audio.'})}/>
+              <audio ref={audioRef} key={audioPreview.audio_url} src={audioPreview.audio_url} controls preload="metadata" aria-label="Song audio preview" onTimeUpdate={event => setPreviewTime(event.currentTarget.currentTime)} onError={() => setNotice({type:'error',text:'Audio preview could not be played. Try loading it again or choose local audio.'})}/>
+              <div className="sync-readout"><span>{previewMeasure ? `Measure ${previewMeasure.measure}` : 'Before first measure'}</span><strong>{previewLyric?.text || 'No lyric at this point'}</strong></div>
               <div className="sync-controls">
                 <label>Measure<select value={measureIndex} onChange={event => setMeasureIndex(Number(event.target.value))}>{audioPreview.measures.map((measure,index) => <option value={index} key={measure.measure}>Measure {measure.measure} · {measure.time.toFixed(2)}s</option>)}</select></label>
                 <button disabled={!audioPreview.measures.length} onClick={() => {const player=audioRef.current; if (player && Number.isFinite(player.duration)) setOffset(Number((player.currentTime-audioPreview.measures[measureIndex].time).toFixed(3)));}}>Align measure here</button>

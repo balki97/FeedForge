@@ -1,6 +1,7 @@
 const { app, BrowserWindow, Menu, dialog, ipcMain, shell } = require("electron");
 const { spawn, execFileSync } = require("child_process");
 const fs = require("fs");
+const crypto = require("crypto");
 const http = require("http");
 const https = require("https");
 const path = require("path");
@@ -1001,9 +1002,7 @@ async function startStemServer(options = {}) {
   stemServerLog = [];
   fs.mkdirSync(installRoot, { recursive: true });
   const runtimeRoot = path.join(installRoot, "runtime");
-  const tempRoot = path.join(runtimeRoot, "temp");
   const storageRoot = path.join(runtimeRoot, "jobs");
-  fs.mkdirSync(tempRoot, { recursive: true });
   fs.mkdirSync(storageRoot, { recursive: true });
   logDebug("stemServer.start", { scriptPath, installRoot, model, device, concurrency, torchIndex, hasPythonOverride: Boolean(pythonExe) });
   appendStemServerLog(`FeedForge: preparing local stem setup`);
@@ -1029,9 +1028,7 @@ async function startStemServer(options = {}) {
       TORCH_HOME: path.join(installRoot, "model-cache", "torch"),
       XDG_CACHE_HOME: path.join(installRoot, "model-cache"),
       HF_HOME: path.join(installRoot, "model-cache", "huggingface"),
-      PIP_CACHE_DIR: path.join(installRoot, "pip-cache"),
-      TEMP: tempRoot,
-      TMP: tempRoot
+      PIP_CACHE_DIR: path.join(installRoot, "pip-cache")
     },
     windowsHide: true
   });
@@ -2411,9 +2408,15 @@ function pythonExecutablePath(value) {
 }
 
 function venvPythonPath(installRoot) {
+  let root = path.join(installRoot, ".demucs-venv");
+  if (/[{}]/.test(root)) {
+    let parent = path.dirname(installRoot);
+    while (path.dirname(parent) !== parent && /[{}]/.test(parent)) parent = path.dirname(parent);
+    const key = crypto.createHash("sha256").update(String(installRoot)).digest("hex").slice(0, 12);
+    root = path.join(parent, ".feedforge-demucs", key);
+  }
   return path.join(
-    installRoot,
-    ".demucs-venv",
+    root,
     process.platform === "win32" ? "Scripts" : "bin",
     process.platform === "win32" ? "python.exe" : "python"
   );

@@ -112,6 +112,17 @@ def sync_install_source(source_root: Path, install_root: Path) -> Path:
     return target
 
 
+def local_venv_path(install_root: Path) -> Path:
+    preferred = install_root / ".demucs-venv"
+    if not any(character in str(preferred) for character in "{}"):
+        return preferred
+    parent = install_root.parent
+    while parent != parent.parent and any(character in str(parent) for character in "{}"):
+        parent = parent.parent
+    key = hashlib.sha256(str(install_root).encode()).hexdigest()[:12]
+    return parent / ".feedforge-demucs" / key
+
+
 def main() -> int:
     script_dir = Path(__file__).resolve().parent
     source_root = script_dir if (script_dir / "pyproject.toml").is_file() else script_dir.parent / "converter"
@@ -123,20 +134,17 @@ def main() -> int:
 
     cache_root = install_root / "model-cache"
     runtime_root = install_root / "runtime"
-    temp_root = runtime_root / "temp"
     storage_root = runtime_root / "jobs"
-    for folder in (cache_root, temp_root, storage_root):
+    for folder in (cache_root, storage_root):
         folder.mkdir(parents=True, exist_ok=True)
     os.environ.update({
         "TORCH_HOME": str(cache_root / "torch"),
         "XDG_CACHE_HOME": str(cache_root),
         "PIP_CACHE_DIR": str(install_root / "pip-cache"),
         "HF_HOME": str(cache_root / "huggingface"),
-        "TEMP": str(temp_root),
-        "TMP": str(temp_root),
     })
 
-    venv = install_root / ".demucs-venv"
+    venv = local_venv_path(install_root)
     python = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
     marker = install_root / ".feedforge-stems-source"
     pyproject = source_root / "pyproject.toml"
@@ -158,7 +166,7 @@ def main() -> int:
         print("FeedForge: installing FeedForge stem dependencies", flush=True)
         install_source = sync_install_source(source_root, install_root)
         run(str(python), "-m", "pip", "install", "--upgrade", "pip")
-        run(str(python), "-m", "pip", "install", "-e", f"{install_source}[stems]")
+        run(str(python), "-m", "pip", "install", f"{install_source}[stems]")
         if torch_index:
             ready = cuda_ready(python)
             if not ready:
@@ -190,7 +198,7 @@ def main() -> int:
     if run(*verify, check=False).returncode:
         print("FeedForge: repairing missing stem dependencies", flush=True)
         install_source = sync_install_source(source_root, install_root)
-        run(str(python), "-m", "pip", "install", "-e", f"{install_source}[stems]")
+        run(str(python), "-m", "pip", "install", f"{install_source}[stems]")
         run(*verify)
         marker.write_text(stamp, encoding="utf-8")
 

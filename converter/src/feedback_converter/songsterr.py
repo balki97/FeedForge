@@ -1279,6 +1279,10 @@ def write_feedpak(arrangements, timeline, audio_path, output_path, *, title, art
         if cover_name:
             manifest["cover"] = cover_name
         if lyrics:
+            lyrics = [
+                {**event, "t": round(float(event.get("t") or 0) + offset, 6)}
+                for event in lyrics
+            ]
             (staging / "lyrics.json").write_text(
                 json.dumps(list(lyrics), ensure_ascii=False, separators=(",", ":")),
                 encoding="utf-8")

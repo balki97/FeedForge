@@ -81,15 +81,12 @@ $Concurrency = if ($env:FEEDFORGE_DEMUCS_CONCURRENCY) {
 }
 $CacheRoot = Join-Path $InstallRoot "model-cache"
 $RuntimeRoot = Join-Path $InstallRoot "runtime"
-$TempRoot = Join-Path $RuntimeRoot "temp"
 $StorageRoot = Join-Path $RuntimeRoot "jobs"
-New-Item -ItemType Directory -Force -Path $CacheRoot, $TempRoot, $StorageRoot | Out-Null
+New-Item -ItemType Directory -Force -Path $CacheRoot, $StorageRoot | Out-Null
 $env:TORCH_HOME = Join-Path $CacheRoot "torch"
 $env:XDG_CACHE_HOME = $CacheRoot
 $env:PIP_CACHE_DIR = Join-Path $InstallRoot "pip-cache"
 $env:HF_HOME = Join-Path $CacheRoot "huggingface"
-$env:TEMP = $TempRoot
-$env:TMP = $TempRoot
 $TorchIndex = if ($env:FEEDFORGE_TORCH_INDEX) {
     $env:FEEDFORGE_TORCH_INDEX
 } else {
@@ -97,6 +94,22 @@ $TorchIndex = if ($env:FEEDFORGE_TORCH_INDEX) {
 }
 $TorchIndex = Get-FeedForgeTorchIndex $TorchIndex
 $Venv = Join-Path $InstallRoot ".demucs-venv"
+if ($Venv -match '[{}]') {
+    $SafeParent = Split-Path -Parent $InstallRoot
+    while ($SafeParent -and $SafeParent -match '[{}]') {
+        $NextParent = Split-Path -Parent $SafeParent
+        if ($NextParent -eq $SafeParent) { break }
+        $SafeParent = $NextParent
+    }
+    $Sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $Bytes = $Sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($InstallRoot))
+        $Key = -join ($Bytes[0..5] | ForEach-Object { $_.ToString('x2') })
+    } finally {
+        $Sha.Dispose()
+    }
+    $Venv = Join-Path $SafeParent ".feedforge-demucs\$Key"
+}
 $Python = Join-Path $Venv "Scripts\python.exe"
 $SystemPython = $null
 if ($env:FEEDFORGE_PYTHON_EXE -and (Test-Path $env:FEEDFORGE_PYTHON_EXE)) {
@@ -148,7 +161,7 @@ $InstalledStamp = if (Test-Path $Marker) { (Get-Content $Marker -Raw -ErrorActio
 if ($InstalledStamp -ne $SourceStamp) {
     Write-Host "FeedForge: installing FeedForge stem dependencies"
     Invoke-FeedForgeNative $Python @("-m", "pip", "install", "--upgrade", "pip")
-    Invoke-FeedForgeNative $Python @("-m", "pip", "install", "-e", "$SourceRoot[stems]")
+    Invoke-FeedForgeNative $Python @("-m", "pip", "install", "$SourceRoot[stems]")
     if ($TorchIndex) {
         $TorchReady = Test-FeedForgeCuda $Python
         if ($TorchReady) {
@@ -177,7 +190,7 @@ try {
     Invoke-FeedForgeNative $Python @("-c", "import demucs, fastapi, soundfile, torch")
 } catch {
     Write-Host "FeedForge: repairing missing stem dependencies"
-    Invoke-FeedForgeNative $Python @("-m", "pip", "install", "-e", "$SourceRoot[stems]")
+    Invoke-FeedForgeNative $Python @("-m", "pip", "install", "$SourceRoot[stems]")
     Invoke-FeedForgeNative $Python @("-c", "import demucs, fastapi, soundfile, torch")
     Set-Content -Encoding UTF8 -Path $Marker -Value $SourceStamp
 }
