@@ -421,6 +421,18 @@ def _arrangement_roles(tracks):
     return roles
 
 
+def _uses_guitar_tuning(track):
+    if track.get("isVocalTrack"):
+        return False
+    try:
+        tuning = [int(value) for value in track.get("tuning") or []]
+    except (TypeError, ValueError):
+        return False
+    return 6 <= len(tuning) <= 8 and all(
+        high - low == interval
+        for high, low, interval in zip(tuning, tuning[1:], (5, 4, 5, 5, 5, 5, 5)))
+
+
 def inspect_songsterr(url, enrich=True):
     """Return the song, supported arrangements, and Songsterr's main video sync."""
     url = str(url).strip()
@@ -437,15 +449,18 @@ def inspect_songsterr(url, enrich=True):
         current.get("artist") or "", current.get("title") or "",
         current.get("album") or "", current.get("year"),
     ) if enrich else {}
-    roles = _arrangement_roles(current.get("tracks") or [])
     tracks = []
     for index, track in enumerate(current.get("tracks") or []):
         item = dict(track)
         item["partId"] = int(item.get("partId", index))
+        if not (item.get("isGuitar") or item.get("isBassGuitar") or item.get("isDrums")):
+            item["isGuitar"] = _uses_guitar_tuning(item)
         item["supported"] = bool(item.get("isGuitar") or item.get("isBassGuitar")
                                  or item.get("isDrums"))
-        item["role"] = roles.get(item["partId"], "")
         tracks.append(item)
+    roles = _arrangement_roles(tracks)
+    for item in tracks:
+        item["role"] = roles.get(item["partId"], "")
     author = current.get("author") or {}
     return {
         "meta": current, "tracks": tracks, "urls": [url],
