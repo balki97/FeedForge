@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "feedforge"
-version = "2.0.5"
+version = "2.0.6"
 description = "Desktop toolkit for FeedPak files for the FeedBack game."
 readme = "README.md"
 license = "MIT"
@@ -16,6 +16,7 @@ dependencies = [
     "jsonschema>=4",
     "Pillow>=10",
     "PyYAML>=6",
+    "PyGuitarPro==0.11",
     "soundfile>=0.12",
     "yt-dlp[default]>=2026.7.4",
     "yt-dlp-getpot-wpc==1.1.2",
@@ -25,6 +26,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pyinstaller>=6",
+    "pytest>=8",
 ]
 stems = [
     "fastapi>=0.115",

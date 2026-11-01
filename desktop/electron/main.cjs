@@ -696,6 +696,28 @@ ipcMain.handle("converter:exportAudio", async (_event, payload) => {
   };
 });
 
+ipcMain.handle("feedpak:exportGp5", async (_event, payload) => {
+  const defaultPath = path.join(payload.outputDir || path.dirname(payload.inputPath),
+    `${path.basename(payload.inputPath, path.extname(payload.inputPath))}.gp5`);
+  const selected = await dialog.showSaveDialog(mainWindow, {
+    title: "Export all parts to Guitar Pro 5",
+    defaultPath,
+    filters: [{ name: "Guitar Pro 5", extensions: ["gp5"] }]
+  });
+  if (selected.canceled || !selected.filePath) return { ok: false, cancelled: true };
+  const outputPath = selected.filePath.toLowerCase().endsWith(".gp5") ? selected.filePath : `${selected.filePath}.gp5`;
+  const args = [payload.inputPath, "--export-gp5", "-o", outputPath];
+  // Only the exact path returned by the native dialog has passed its overwrite prompt.
+  if (outputPath === selected.filePath) args.push("--overwrite");
+  const result = await runConverter(args);
+  const warnings = [...`${result.stdout}\n${result.stderr}`.matchAll(/^warning:\s+(.+)$/gim)].map(match => match[1].trim());
+  logDebug(result.code === 0 ? "feedpak.exportGp5.ok" : "feedpak.exportGp5.failed", {
+    inputPath: payload.inputPath, outputPath, code: result.code, warnings, diagnostics: result.diagnostics
+  });
+  return { ok: result.code === 0, outputPath: result.code === 0 ? outputPath : null, warnings,
+    error: result.code === 0 ? null : result.stderr || result.stdout || "GP5 export failed" };
+});
+
 ipcMain.handle("dialog:pickCoverImage", async (_event, options = {}) => {
   const result = await dialog.showOpenDialog(mainWindow, {
     title: "Choose cover image",

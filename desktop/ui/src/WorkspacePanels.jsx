@@ -764,6 +764,7 @@ export function Queue({ items, selectedId, onSelect, onRemove, onExportAudio, on
 
 export function FeedPakTools({
   item,
+  onExportGp5,
   feedpakItems,
   selectedId,
   onSelect,
@@ -883,6 +884,8 @@ export function FeedPakTools({
         <div className="feedpak-tools-grid">
           <Inspector
             item={item}
+            onExportGp5={onExportGp5}
+            exportBusy={libraryBusy || working}
             onSaveFeedpakMetadata={onSaveFeedpakMetadata}
             onReplaceFeedpakCover={onReplaceFeedpakCover}
             onRemoveFeedpakCover={onRemoveFeedpakCover}
@@ -909,6 +912,8 @@ export function FeedPakMetric({ label, value }) {
 
 export function Inspector({
   item,
+  onExportGp5,
+  exportBusy = false,
   onSaveFeedpakMetadata,
   onReplaceFeedpakCover,
   onRemoveFeedpakCover,
@@ -919,6 +924,9 @@ export function Inspector({
   demucsStems = []
 }) {
   const [tab, setTab] = useState("overview");
+  const [gp5Result, setGp5Result] = useState(null);
+  const [exportingGp5, setExportingGp5] = useState(false);
+  useEffect(() => { setGp5Result(null); }, [item?.id]);
   useEffect(() => setTab("overview"), [item?.id]);
   const [editMetadata, setEditMetadata] = useState(null);
   const [authorsText, setAuthorsText] = useState("");
@@ -971,6 +979,18 @@ export function Inspector({
     setSaveMessage(result.ok
       ? overwriteOriginal ? "Saved original" : `Saved copy: ${basename(result.outputPath || "")}`
       : result.error || "Save failed");
+  }
+
+  async function exportGp5() {
+    const itemId = item.id;
+    setExportingGp5(true);
+    setGp5Result(null);
+    try {
+      const result = await onExportGp5(item);
+      setGp5Result({ ...result, itemId });
+    } finally {
+      setExportingGp5(false);
+    }
   }
 
   async function replaceStem(stemId) {
@@ -1114,8 +1134,22 @@ export function Inspector({
           <section className="panel">
             <div className="panel-title">
               <h2>{isMultiSong ? "First-song arrangements" : "Arrangements"}</h2>
-              <Guitar size={18} />
+              {isFeedpak && onExportGp5 ? (
+                <button className="compact-action" onClick={exportGp5}
+                  disabled={exportBusy || exportingGp5 || !arrangements.length}
+                  title="Save guitar, bass and drum parts as separate tracks in one Guitar Pro 5 file">
+                  <FileMusic size={16} /> {exportingGp5 ? "Exporting..." : "Export all parts to GP5"}
+                </button>
+              ) : <Guitar size={18} />}
             </div>
+            {gp5Result?.itemId === item.id && !gp5Result.cancelled && (
+              <div role="status" className={gp5Result.ok ? "info-box success" : "error-box"}>
+                <span>{gp5Result.ok ? `Saved ${gp5Result.outputPath}` : gp5Result.error}</span>
+              </div>
+            )}
+            {gp5Result?.itemId === item.id && gp5Result.ok && gp5Result.warnings?.length > 0 && (
+              <div className="warning-box"><span>{gp5Result.warnings.join("\n")}</span></div>
+            )}
             <div className="arrangements">
               {arrangements.length === 0 && <div className="empty compact">No arrangements inspected yet.</div>}
               {arrangements.map((arrangement) => (

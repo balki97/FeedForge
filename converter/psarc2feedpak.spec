@@ -2,7 +2,7 @@
 
 import os
 from pathlib import Path
-from PyInstaller.utils.hooks import collect_all
+from PyInstaller.utils.hooks import collect_all, copy_metadata
 
 media_datas, media_binaries, media_imports = collect_all('imageio_ffmpeg')
 ejs_datas, ejs_binaries, ejs_imports = collect_all('yt_dlp_ejs')
@@ -31,7 +31,10 @@ a = Analysis(
         (str(root / 'src' / 'feedback_converter' / 'data' / 'equipment.json'), 'feedback_converter/data'),
         (str(root / 'src' / 'feedback_converter' / 'data' / 'feedback_equipment.json'), 'feedback_converter/data'),
         (str(root / 'src' / 'feedback_converter' / 'data' / 'feedpak_schemas'), 'feedback_converter/data/feedpak_schemas'),
-    ] + media_datas + ejs_datas,
+        (str(root / 'THIRD_PARTY_NOTICES.md'), '.'),
+        (str(root / 'licenses'), 'licenses'),
+    ] + media_datas + ejs_datas + copy_metadata('PyGuitarPro'),
+    module_collection_mode={'guitarpro': 'py'},
     hiddenimports=media_imports + ejs_imports + ['yt_dlp_plugins.extractor.getpot_wpc'],
     hookspath=[],
     hooksconfig={},

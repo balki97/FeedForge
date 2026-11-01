@@ -17,6 +17,7 @@ from feedback_converter.converter import convert_psarc, convert_psarc_songs, exp
 from feedback_converter.feedpak import export_feedpak_audio, inspect_feedpak, update_feedpak
 from feedback_converter.feedpak_validator import validate_feedpak
 from feedback_converter.inspector import inspect_psarc
+from feedback_converter.gp5 import export_feedpak_gp5
 
 PLAN_PROGRESS_PREFIX = "FEEDFORGE_PROGRESS "
 
@@ -99,6 +100,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--overwrite",
         action="store_true",
         help="Overwrite an existing output path.",
+    )
+    parser.add_argument(
+        "--export-gp5",
+        action="store_true",
+        help="Export all guitar, bass and drum parts of a FeedPak into one multi-track GP5 file.",
     )
     parser.add_argument(
         "--export-audio",
@@ -282,6 +288,23 @@ def main(argv: list[str] | None = None) -> int:
     output_arg = Path(args.output) if args.output else None
     if len(input_paths) > 1 and output_arg is not None and output_arg.suffix:
         parser.error("--output must be a folder when converting multiple inputs")
+
+    if args.export_gp5:
+        if args.export_audio:
+            parser.error("choose either --export-gp5 or --export-audio")
+        ok = True
+        for input_path in input_paths:
+            try:
+                if input_path.suffix.lower() != ".feedpak" and not input_path.is_dir():
+                    raise ValueError("GP5 export requires a FeedPak; convert the PSARC to a FeedPak first")
+                result = export_feedpak_gp5(input_path, output_arg, overwrite=args.overwrite)
+                _print(f"wrote {result.output_path}")
+                for warning in result.warnings:
+                    _print(f"warning: {warning.message}", stream=sys.stderr)
+            except Exception as exc:  # noqa: BLE001
+                _print(f"error exporting GP5 {input_path}: {exc}", stream=sys.stderr)
+                ok = False
+        return 0 if ok else 1
 
     if args.export_audio:
         ok = True

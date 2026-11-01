@@ -108,6 +108,8 @@ jobs:
         run: |
           node --check desktop/electron/main.cjs
           node --check desktop/electron/preload.cjs
+          python -m pytest tests/test_gp5.py -q
+          node --test tests/test_gp5_ipc.cjs
           python -m compileall -q converter/src tools/start-demucs-server.py
           npm --prefix desktop run build
 
@@ -150,6 +152,10 @@ jobs:
           if (-not $converter) { throw 'Bundled converter was not found.' }
           $expected = node -p "require('./desktop/package.json').version"
           if ((& $converter --version) -ne "psarc2feedpak $expected") { throw 'Bundled converter version mismatch.' }
+
+      - name: Smoke-test bundled GP5 export
+        shell: bash
+        run: python tools/smoke-gp5.py
 
       - uses: actions/upload-artifact@v7
         with:

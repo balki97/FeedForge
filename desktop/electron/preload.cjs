@@ -82,6 +82,7 @@ contextBridge.exposeInMainWorld("feedbackConverter", {
   },
   convert: (payload) => ipcRenderer.invoke("converter:convert", payload),
   exportAudio: (payload) => ipcRenderer.invoke("converter:exportAudio", payload),
+  exportGp5: (payload) => ipcRenderer.invoke("feedpak:exportGp5", payload),
   updateFeedpak: (payload) => ipcRenderer.invoke("feedpak:update", payload),
   organizeFeedpaks: (payload) => ipcRenderer.invoke("feedpak:organize", payload),
   auditFeedpakLibrary: (payload) => ipcRenderer.invoke("audit:feedpakLibrary", payload),

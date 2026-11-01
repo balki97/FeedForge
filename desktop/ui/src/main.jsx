@@ -938,6 +938,21 @@ function App() {
     }
   }
 
+  async function exportGp5Item(item) {
+    if (!item || isConvertingRef.current) return { ok: false, error: "Wait for the current job to finish." };
+    isConvertingRef.current = true;
+    setIsConverting(true);
+    try {
+      return await api.exportGp5({ inputPath: item.path, outputDir });
+    } catch (error) {
+      return { ok: false, error: error?.message || "GP5 export failed." };
+    } finally {
+      isConvertingRef.current = false;
+      setIsConverting(false);
+      pumpInspectionQueue();
+    }
+  }
+
   async function saveFeedpakMetadata(item, metadata, authors, options = {}) {
     if (!item || item.sourceType !== "feedpak") return { ok: false, error: "Select a FeedPak first." };
     updateItem(item.id, { status: "converting", warnings: [], error: null });
@@ -1543,6 +1558,7 @@ function App() {
         ) : activeView === "feedpak" ? (
           <FeedPakTools
             item={feedpakSelected}
+            onExportGp5={exportGp5Item}
             feedpakItems={feedpakItems.filter(item => `${item.preview?.title || ""} ${item.preview?.artist || ""} ${item.preview?.album || ""} ${item.name}`.toLowerCase().includes(query.toLowerCase()))}
             selectedId={selectedId}
             onSelect={setSelectedId}
@@ -1613,6 +1629,8 @@ function App() {
               </div>
               <Inspector
                 item={workspaceSelected}
+                onExportGp5={exportGp5Item}
+                exportBusy={isConverting}
                 onSaveFeedpakMetadata={saveFeedpakMetadata}
                 onReplaceFeedpakCover={replaceFeedpakCover}
                 onRemoveFeedpakCover={removeFeedpakCover}
