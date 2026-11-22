@@ -34,16 +34,6 @@ Download your version from [Releases](https://github.com/balki97/FeedForge/relea
 Open a PSARC file or paste a Songsterr link, choose an output folder, and convert.
 You can also open existing FeedPaks in **Library & editor**.
 
-Songsterr imports use a curl fallback when the server sends an HTTP interim
-response that Python cannot handle. Both request paths send the same FeedForge
-headers. If a request still fails, FeedForge reports the HTTP error.
-
-Enable **Settings → Conversion → Skip songs already in the output folder** to
-leave existing FeedPaks untouched when converting PSARCs or creating from
-Songsterr. Matching uses the output folder and filename, including the selected
-naming template and folder layout for PSARCs. Missing songs in multi-song PSARCs
-still convert. Turn this off to create numbered copies or use overwrite.
-
 To save all parts in one `.gp5`, select a FeedPak in **Library & editor**, then
 choose **Export all parts to GP5** under **Arrangements**. Each part becomes a
 separate track using the same tempo map. For a PSARC, convert it to a FeedPak first.
