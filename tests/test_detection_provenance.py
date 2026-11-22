@@ -59,19 +59,45 @@ def original_song():
               phraseIterations=[], vocals=[], tones=[])
 
 
+@pytest.fixture
+def original_sng(original_song):
+    data = {key: [] for key in (
+        'beats', 'phrases', 'chordTemplates', 'chordNotes', 'vocals', 'phraseIterations',
+        'phraseExtraInfos', 'newLinkedDiffs', 'actions', 'events', 'tones', 'dna', 'sections', 'levels',
+    )}
+    data['symbols'] = None
+    data['chordTemplates'] = [vars(template) for template in original_song.chordTemplates]
+    data['chordNotes'] = [{
+        **vars(child),
+        'bends': [dict(count=0, bendValues=[dict(time=0., step=0., UNK=0)] * 32) for _ in range(6)],
+    } for child in original_song.chordNotes]
+    notes = [{**vars(unit), 'bends': [{**vars(point), 'UNK': 0} for point in unit.bends]}
+             for unit in original_song.levels[0].notes]
+    data['levels'] = [dict(
+        difficulty=0, anchors=[], anchor_extensions=[], fingerprints=[[], []], notes=notes,
+        averageNotesPerIter=[], notesInIterCountNoIgnored=[], notesInIterCount=[],
+    )]
+    data['metadata'] = dict(
+        maxScores=100., maxNotes=3., maxNotesNoIgnored=3., pointsPerNote=100 / 3,
+        firstBeatLength=.5, startTime=0., capo=0, lastConversionDateTime='owned synthetic',
+        part=1, songLength=2., tuning=[0] * 6, firstNoteTime=1.1234568357467651,
+        firstNoteTime2=1.1234568357467651, maxDifficulty=0,
+    )
+    return converter.Song.build(data)
+
+
 @pytest.mark.parametrize('preserve', [False, True])
 def test_normal_conversion_keeps_legacy_chord_count_until_exact_scoring_is_requested(
-        tmp_path, monkeypatch, original_song, preserve):
+        tmp_path, monkeypatch, original_sng, preserve):
     source = tmp_path / 'owned.psarc'
     source.write_bytes(b'owned archive fixture')
-    decoded_sng = b'owned decoded SNG fixture'
+    decoded_sng = original_sng
     audio = BytesIO()
     with wave.open(audio, 'wb') as output:
         output.setnchannels(1)
         output.setsampwidth(2)
         output.setframerate(8000)
         output.writeframes(b'\0\0' * 16000)
-    monkeypatch.setattr(converter.Song, 'parse', lambda data: original_song)
     monkeypatch.setattr(converter, '_copy_preview_audio', lambda *args: None)
     output = tmp_path / ('exact.feedpak' if preserve else 'legacy.feedpak')
     result = converter.convert_psarc(source, output, archive=False, include_tones=False,
