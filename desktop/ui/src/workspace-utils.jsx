@@ -53,7 +53,7 @@ export function ReadyLine({ ok, text, muted = false }) {
 }
 
 export function StatusIcon({ status }) {
-  if (status === "converted") return <Check className="status-ok" size={18} />;
+  if (status === "converted" || status === "skipped") return <Check className="status-ok" size={18} />;
   if (status === "failed" || status === "needs-review") return <AlertTriangle className="status-warn" size={18} />;
   if (status === "converting" || status === "inspecting") return <RotateCw className="spin status-blue" size={18} />;
   return <Play className="status-blue" size={18} />;
@@ -67,6 +67,7 @@ export function statusText(status) {
     "needs-review": "Review",
     converting: "Converting",
     converted: "Converted",
+    skipped: "Skipped",
     failed: "Failed"
   }[status] || "Waiting";
 }

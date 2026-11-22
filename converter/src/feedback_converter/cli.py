@@ -96,6 +96,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Write an unpacked .feedpak directory instead of a zip archive.",
     )
+    parser.add_argument("--skip-existing", action="store_true", help="Skip PSARC songs whose planned output already exists; takes priority over overwrite.")
     parser.add_argument(
         "--overwrite",
         action="store_true",
@@ -400,12 +401,16 @@ def main(argv: list[str] | None = None) -> int:
                 source_root=Path(args.source_root) if args.source_root else None,
                 name_template=args.name_template,
                 output_plan=output_plan,
+                skip_existing=args.skip_existing,
             )
         except Exception as exc:  # noqa: BLE001
             _print(f"error: {exc}", stream=sys.stderr)
             return 1
 
         for result in results:
+            if result.skipped:
+                _print(f"skipped {result.output_path}")
+                continue
             _print(f"wrote {result.output_path}")
             if result.validation and result.validation.ok:
                 _print(f"validated {result.output_path}")
@@ -416,6 +421,7 @@ def main(argv: list[str] | None = None) -> int:
     batch = convert_many(
         input_paths,
         output_arg,
+        skip_existing=args.skip_existing,
         output_layout=args.output_layout,
         name_template=args.name_template,
         source_root=Path(args.source_root) if args.source_root else None,
@@ -434,6 +440,9 @@ def main(argv: list[str] | None = None) -> int:
     for item in batch.items:
         if item.succeeded:
             for result in item.results or ([item.result] if item.result is not None else []):
+                if result.skipped:
+                    _print(f"skipped {result.output_path}")
+                    continue
                 _print(f"wrote {result.output_path}")
                 if result.validation and result.validation.ok:
                     _print(f"validated {result.output_path}")

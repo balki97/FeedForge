@@ -87,6 +87,7 @@ class ConversionResult:
     manifest: dict[str, Any]
     warnings: list[ConversionWarning] = field(default_factory=list)
     validation: FeedpakValidationResult | None = None
+    skipped: bool = False
 
 
 @dataclass
@@ -290,6 +291,7 @@ def convert_psarc_songs(
     source_root: Path | None = None,
     name_template: str = "{source}",
     output_plan: dict[str, Any] | None = None,
+    skip_existing: bool = False,
 ) -> list[ConversionResult]:
     """Convert a PSARC, splitting multi-song containers into one FeedPak per song."""
     input_psarc = Path(input_psarc)
@@ -310,18 +312,21 @@ def convert_psarc_songs(
         output_layout=output_layout,
         source_root=Path(source_root) if source_root is not None else None,
         name_template=name_template,
-        overwrite=overwrite,
+        overwrite=overwrite or skip_existing,
         output_plan=output_plan,
         source_stat=final_stat,
     )
     results: list[ConversionResult] = []
     for (_key, song_content), target in zip(entries, targets, strict=True):
+        if skip_existing and target.exists():
+            results.append(ConversionResult(target, target, {}, skipped=True))
+            continue
         try:
             result = convert_psarc(
                 input_psarc,
                 target,
                 archive=archive,
-                overwrite=overwrite,
+                overwrite=overwrite and not skip_existing,
                 keep_workdir=keep_workdir,
                 include_tones=include_tones,
                 b_standard_to_7_string=b_standard_to_7_string,

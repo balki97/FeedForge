@@ -97,7 +97,9 @@ def _get_bytes(url):
             else:
                 curl_env.pop("LD_LIBRARY_PATH", None)
         result = subprocess.run(
-            [curl, "-L", "--fail", "--silent", "--show-error", "--write-out", "\n%{http_code}", str(url)],
+            [curl, "-L", "--fail", "--silent", "--show-error",
+             "--user-agent", USER_AGENT, "--header", "Accept: application/json,text/html,*/*",
+             "--write-out", "\n%{http_code}", str(url)],
             capture_output=True, timeout=30, env=curl_env,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )

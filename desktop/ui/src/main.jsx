@@ -71,6 +71,7 @@ function App() {
   const [outputNameTemplate, setOutputNameTemplate] = useState(() => initialSettingsRef.current.outputNameTemplate || "{artist} - {title}");
   const [lastSourcePath, setLastSourcePath] = useState(() => initialSettingsRef.current.lastSourcePath || null);
   const [overwrite, setOverwrite] = useState(false);
+  const [skipExisting, setSkipExisting] = useState(() => initialSettingsRef.current.skipExisting === true);
   const [separateStems, setSeparateStems] = useState(() => initialSettingsRef.current.separateStems === true);
   const [demucsUrl, setDemucsUrl] = useState(() => initialSettingsRef.current.demucsUrl || "");
   const [demucsApiKey, setDemucsApiKey] = useState("");
@@ -131,8 +132,8 @@ function App() {
   }, [items]);
 
   useEffect(() => {
-    writeSettings({ bStandardTo7String: false, outputDir, outputLayout, outputNameFormat, outputNameTemplate, lastSourcePath, separateStems, conversionWorkers, demucsUrl, demucsInstallDir, pythonPath, demucsModel, demucsDevice, demucsStemJobs, demucsStems, auditFolder, auditCriteria, performanceSettingsVersion: 2 });
-  }, [outputDir, outputLayout, outputNameFormat, outputNameTemplate, lastSourcePath, separateStems, conversionWorkers, demucsUrl, demucsInstallDir, pythonPath, demucsModel, demucsDevice, demucsStemJobs, demucsStems, auditFolder, auditCriteria]);
+    writeSettings({ skipExisting, bStandardTo7String: false, outputDir, outputLayout, outputNameFormat, outputNameTemplate, lastSourcePath, separateStems, conversionWorkers, demucsUrl, demucsInstallDir, pythonPath, demucsModel, demucsDevice, demucsStemJobs, demucsStems, auditFolder, auditCriteria, performanceSettingsVersion: 2 });
+  }, [skipExisting, outputDir, outputLayout, outputNameFormat, outputNameTemplate, lastSourcePath, separateStems, conversionWorkers, demucsUrl, demucsInstallDir, pythonPath, demucsModel, demucsDevice, demucsStemJobs, demucsStems, auditFolder, auditCriteria]);
 
   useEffect(() => {
     let cancelled = false;
@@ -636,6 +637,7 @@ function App() {
             outputLayout,
             nameTemplate,
             overwrite,
+            skipExisting,
             rs1SongsPsarc: rs1SongsPsarc || "",
             workers: effectiveConversionWorkers
           });
@@ -725,6 +727,7 @@ function App() {
           outputPath,
           outputPlan,
           overwrite,
+          skipExisting,
           ...stemOptions
         };
         if (rs1SongsPsarc && usesSharedRs1SongsAudio(item.path) && !isRs1SongsArchive(item.path)) {
@@ -744,11 +747,13 @@ function App() {
             const outputCount = outputPaths.length || (result.outputPath ? 1 : 0);
             const outputFolder = outputPaths.length ? parentDir(outputPaths[0]) : "";
             updateItem(item.id, {
-              status: "converted",
+              status: result.skipped ? "skipped" : "converted",
               outputPath: result.outputPath || outputPath || plannedFirst?.path || null,
               outputPaths,
               validation: result.validation || null,
-              message: outputCount > 1
+              message: result.skippedPaths?.length
+                ? `Skipped ${result.skippedPaths.length} existing FeedPak(s); created ${outputCount}.`
+                : outputCount > 1
                 ? `Created ${outputCount} FeedPaks${outputFolder ? ` in ${outputFolder}` : ""}.`
                 : null,
               warnings,
@@ -1256,7 +1261,7 @@ function App() {
         )}
 
         <div hidden={activeView !== "songsterr"}>
-          <SongsterrWorkspace requestConversion={requestConversion} outputDir={outputDir} setOutputDir={setOutputDir} onCreated={paths => addFiles(paths, null, false)} />
+          <SongsterrWorkspace skipExisting={skipExisting} requestConversion={requestConversion} outputDir={outputDir} setOutputDir={setOutputDir} onCreated={paths => addFiles(paths, null, false)} />
         </div>
         {activeView === "home" ? <Home navigate={setActiveView} chooseFiles={chooseFiles} chooseFolder={() => chooseFolder("feedpak")} items={items} selectItem={item => {setSelectedId(item.id); setActiveView(item.sourceType === "feedpak" ? "feedpak" : "workspace");}} /> : activeView === "songsterr" ? null : activeView === "settings" || activeView === "stems" ? (
           <section className={`settings-page ${activeView === "stems" ? "settings-page-full" : ""}`}>
@@ -1320,9 +1325,11 @@ function App() {
                   </label>
                 )}
                 <div className="option-grid">
-                  <label className="toggle"><input type="checkbox" checked={overwrite} onChange={(event) => setOverwrite(event.target.checked)} /> Overwrite existing output</label>
+                  <label className="toggle"><input type="checkbox" checked={skipExisting} onChange={event => setSkipExisting(event.target.checked)} disabled={isConverting} /> Skip songs already in the output folder</label>
+                  <label className="toggle"><input type="checkbox" checked={overwrite} disabled={skipExisting || isConverting} onChange={(event) => setOverwrite(event.target.checked)} /> Overwrite existing output</label>
                   <label className="toggle"><input type="checkbox" checked={separateStems} onChange={(event) => setSeparateStems(event.target.checked)} disabled={isConverting} /> Separate stems</label>
                 </div>
+                <small className="muted">Skip matches the output filename and folder. Existing files are kept, even when overwrite is on.</small>
               </div>
             </div>
             )}

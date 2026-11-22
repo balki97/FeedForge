@@ -110,7 +110,7 @@ function songEditor(result, selectedParts = [result.selected_part_id]) {
   };
 }
 
-export default function SongsterrWorkspace({ outputDir: sharedOutputDir, setOutputDir, onCreated, requestConversion }) {
+export default function SongsterrWorkspace({ outputDir: sharedOutputDir, setOutputDir, onCreated, requestConversion, skipExisting = false }) {
   const [defaultOutput, setDefaultOutput] = useState("");
   const outputDir = sharedOutputDir || defaultOutput;
   const [url, setUrl] = useState("");
@@ -319,6 +319,13 @@ export default function SongsterrWorkspace({ outputDir: sharedOutputDir, setOutp
         if (stopRequestedRef.current) break;
         const parts = entry.tracks.filter(track => track.selected).map(track => track.partId);
         if (!parts.length) throw new Error(`${entry.form.title} has no selected arrangements.`);
+        entry.skipExisting = false;
+        if (skipExisting) {
+          const existing = await api.checkOutput({url: entry.song.url, selected_parts: parts,
+            output_dir: outputDir, output_name: outputName(entry.form)});
+          entry.skipExisting = existing.skipped;
+          if (existing.skipped) continue;
+        }
         if (entry.audioPreview) continue;
         try {
           entry.audioPreview = await api.preview({url: entry.song.url, selected_parts: parts,
@@ -347,7 +354,7 @@ export default function SongsterrWorkspace({ outputDir: sharedOutputDir, setOutp
         setNotice({type: "info", text: "Stopped before export. Your edits and prepared audio are kept."});
         return;
       }
-      const stemOptions = await requestConversion();
+      const stemOptions = jobs.every(entry => entry.skipExisting) ? {} : await requestConversion();
       if (!stemOptions) return;
       setBusy("create");
       const payloads = jobs.map((entry) => {
@@ -372,6 +379,7 @@ export default function SongsterrWorkspace({ outputDir: sharedOutputDir, setOutp
           lyrics: entry.lyricsEnabled ? exportLyricEvents(entry.lyrics) : [],
           audio_path: entry.audioPreview?.audio_path || entry.audioPath,
           audio_sync_points: entry.audioPreview?.audio_sync_points,
+          skip_existing: skipExisting,
           output_dir: outputDir,
           output_name: outputName(entry.form)
         };
@@ -384,14 +392,14 @@ export default function SongsterrWorkspace({ outputDir: sharedOutputDir, setOutp
       setBatch(jobs);
       const completed = payloads.length === 1 ? [{ok: true, ...result}] : result.results;
       setResults(completed);
-      onCreated(completed.filter(row => row.ok).map(row => row.output_path));
+      onCreated(completed.filter(row => row.ok && !row.skipped).map(row => row.output_path));
       if (payloads.length === 1) {
-        setNotice({ type: "success", text: `FeedPak created with ${result.arrangements} arrangements and ${result.lyrics} timed lyric lines.` });
+        setNotice({ type: "success", text: result.skipped ? "Skipped: this FeedPak already exists in the output folder." : `FeedPak created with ${result.arrangements} arrangements and ${result.lyrics} timed lyric lines.` });
       } else {
         const failures = result.results.filter((item) => !item.ok);
         setNotice(failures.length
           ? { type: "error", text: `Created ${result.created} of ${payloads.length} FeedPaks. ${failures.map((item) => `${item.title}: ${item.error}`).join(" · ")}` }
-          : { type: "success", text: `Created ${result.created} FeedPaks${result.skipped ? `; ${result.skipped} stopped before starting` : ""} in ${outputDir}.` });
+          : { type: "success", text: `Created ${result.created} FeedPaks${result.existing ? `; skipped ${result.existing} existing` : ""}${result.skipped ? `; ${result.skipped} stopped before starting` : ""} in ${outputDir}.` });
       }
     } catch (error) {
       setNotice({ type: "error", text: error.message });
@@ -477,8 +485,8 @@ export default function SongsterrWorkspace({ outputDir: sharedOutputDir, setOutp
         </section>
         <section className="editor-section lyrics-editor"><div className="section-heading"><h2>LRC lyrics</h2><div className="compact-actions"><button onClick={() => guarded(importLyrics)}><Upload size={15}/> Import LRC</button><button onClick={retryLyrics}><RefreshCw size={15}/> Find LRC</button></div></div><label className="check-row"><input type="checkbox" checked={lyricsEnabled} disabled={!lyrics.length} onChange={event => setLyricsEnabled(event.target.checked)}/> Include {lyrics.length} timed lines</label><p className="muted">{song.lyrics?.provider || song.lyrics?.message || 'No synchronized LRC lyrics found. Import an .lrc file or search again.'}</p>{lyrics.length > 0 && <div className="lyrics-table"><div className="lyric-labels"><span>Seconds</span><span>Lyric line</span></div>{lyrics.map((line,index) => <div className={index === selectedLyric ? 'lyric-row active' : 'lyric-row'} key={index}><input aria-label={`Time for lyric ${index+1}`} type="number" min="0" step="0.01" value={line.t} onFocus={() => setSelectedLyric(index)} onChange={event => updateLyric(index,{t:event.target.value})}/><input ref={element => { lyricInputRefs.current[index] = element; }} aria-label={`Lyric ${index+1}`} value={line.text} onFocus={() => setSelectedLyric(index)} onChange={event => updateLyric(index,{text:event.target.value})}/></div>)}</div>}</section>
       </fieldset>
-      <footer className="creation-footer"><div><strong>{outputName(form)}</strong><small>Existing files are kept.</small></div><button className="primary" onClick={createFeedPak} disabled={Boolean(busy) || !selectedTracks.length}><Download size={17}/> {batch.length > 1 ? `Create ${batch.length} FeedPaks` : 'Create FeedPak'}</button></footer>
-      {results.length > 0 && <section className="creation-results" aria-label="Creation results"><h2>Results</h2>{results.map((row,index) => <div key={index} className={row.ok ? 'result-ok' : 'result-failed'}>{row.ok ? <Check size={16}/> : <XCircle size={16}/>}<span>{row.output_path || row.title}{row.error && <small>{row.error}</small>}{row.warnings?.map(warning => <small key={warning}>{warning}</small>)}</span>{row.ok && <button onClick={() => api.reveal(row.output_path)}>Show in folder</button>}</div>)}</section>}
+      <footer className="creation-footer"><div><strong>{outputName(form)}</strong><small>{skipExisting ? "Existing output files are skipped." : "Existing files are kept; duplicates get a numbered filename."}</small></div><button className="primary" onClick={createFeedPak} disabled={Boolean(busy) || !selectedTracks.length}><Download size={17}/> {batch.length > 1 ? `Create ${batch.length} FeedPaks` : 'Create FeedPak'}</button></footer>
+      {results.length > 0 && <section className="creation-results" aria-label="Creation results"><h2>Results</h2>{results.map((row,index) => <div key={index} className={row.ok ? 'result-ok' : 'result-failed'}>{row.ok ? <Check size={16}/> : <XCircle size={16}/>}<span>{row.skipped ? "Skipped existing: " : ""}{row.output_path || row.title}{row.error && <small>{row.error}</small>}{row.warnings?.map(warning => <small key={warning}>{warning}</small>)}</span>{row.ok && <button onClick={() => api.reveal(row.output_path)}>Show in folder</button>}</div>)}</section>}
     </>}
   </section>;
 }

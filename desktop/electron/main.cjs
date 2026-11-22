@@ -536,6 +536,7 @@ ipcMain.handle("converter:planConversions", async (event, payload = {}) => {
     outputLayout: String(payload.outputLayout || "flat"),
     nameTemplate: String(payload.nameTemplate || "{source}"),
     overwrite: payload.overwrite === true,
+    skipExisting: payload.skipExisting === true,
     rs1SongsPsarc: String(payload.rs1SongsPsarc || ""),
     workers: Math.max(1, Math.min(8, Number(payload.workers) || 4)),
     cachePath: path.join(app.getPath("userData"), "cache", "psarc-output-metadata-v1.sqlite3")
@@ -606,6 +607,7 @@ ipcMain.handle("converter:convert", async (_event, payload) => {
     hasRs1SongsPsarc: Boolean(payload.rs1SongsPsarc)
   });
   const args = [payload.inputPath];
+  if (payload.skipExisting === true) args.push("--skip-existing");
   if (payload.outputPath) args.push("-o", payload.outputPath);
   if (payload.overwrite) args.push("--overwrite");
   if (payload.bStandardTo7String) args.push("--b-standard-to-7-string");
@@ -629,6 +631,7 @@ ipcMain.handle("converter:convert", async (_event, payload) => {
     if (temporaryPlan) removeTemporaryDirectory(temporaryPlan.directory);
   }
   const outputPaths = [...result.stdout.matchAll(/^wrote\s+(.+)$/gim)].map((match) => match[1].trim()).filter(Boolean);
+  const skippedPaths = [...result.stdout.matchAll(/^skipped\s+(.+)$/gim)].map(match => match[1].trim()).filter(Boolean);
   const validatedPaths = [...result.stdout.matchAll(/^validated\s+(.+)$/gim)].map((match) => match[1].trim()).filter(Boolean);
   const warnings = [...`${result.stdout}\n${result.stderr}`.matchAll(/^warning:\s+(.+)$/gim)].map((match) => match[1].trim()).filter(Boolean);
   const outputMatch = outputPaths[0] || null;
@@ -646,6 +649,8 @@ ipcMain.handle("converter:convert", async (_event, payload) => {
     ok: result.code === 0,
     outputPath: outputMatch,
     outputPaths,
+    skippedPaths,
+    skipped: result.code === 0 && skippedPaths.length > 0 && outputPaths.length === 0,
     validation: { ok: result.code === 0 && validatedPaths.length === outputPaths.length && outputPaths.length > 0 },
     warnings,
     stdout: result.stdout,

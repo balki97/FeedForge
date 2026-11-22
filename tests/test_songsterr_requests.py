@@ -37,6 +37,8 @@ def early_hints(monkeypatch, result):
         calls.append(command)
         assert command[command.index("--write-out") + 1] == "\n%{http_code}"
         assert options["timeout"] == 30
+        assert command[command.index("--user-agent") + 1] == songsterr.USER_AGENT
+        assert command[command.index("--header") + 1] == "Accept: application/json,text/html,*/*"
         assert "--insecure" not in command and "-k" not in command
         return result
 

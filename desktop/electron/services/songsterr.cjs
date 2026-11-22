@@ -25,9 +25,10 @@ function outputPayload(payload) {
   if (typeof payload.output_dir !== "string" || !path.isAbsolute(payload.output_dir) ||
       !fs.statSync(payload.output_dir).isDirectory()) throw new Error("Choose an existing output folder.");
   let output = path.join(payload.output_dir, name);
+  if (payload.skip_existing === true && fs.existsSync(output)) return { ...payload, output_path: output, skipped: true };
   const stem = name.slice(0, -8);
   for (let index = 2; fs.existsSync(output); index++) output = path.join(payload.output_dir, `${stem} (${index}).feedpak`);
-  return { ...payload, output_path: output };
+  return { ...payload, output_path: output, skipped: false };
 }
 
 function registerSongsterr({ app, ipcMain, dialog, window, runConverter, terminateChildProcessTree, logDebug, removeTemporaryDirectory }) {
@@ -65,6 +66,12 @@ function registerSongsterr({ app, ipcMain, dialog, window, runConverter, termina
         try {
           const value = operation === "create" ? outputPayload(payloads[index]) : payloads[index];
           if (operation === "analyze") validateUrl(value);
+          if (operation === "create" && value.skipped) {
+            const skipped = { ok: true, skipped: true, title, output_path: value.output_path };
+            results.push(skipped);
+            if (action !== "batch") return skipped;
+            continue;
+          }
           directory = fs.mkdtempSync(path.join(app.getPath("temp"), "feedforge-songsterr-job-"));
           if (operation === "preview") value.preview_dir = directory;
           const request = path.join(directory, "request.json");
@@ -104,12 +111,16 @@ function registerSongsterr({ app, ipcMain, dialog, window, runConverter, termina
           if (directory && !previews.has(directory)) removeTemporaryDirectory(directory);
         }
       }
-      return { results, created: results.filter(r => r.ok).length, failed: results.filter(r => !r.ok).length, cancelled: state.cancelled, skipped: payloads.length - results.length };
+      return { results, created: results.filter(r => r.ok && !r.skipped).length, existing: results.filter(r => r.skipped).length, failed: results.filter(r => !r.ok).length, cancelled: state.cancelled, skipped: payloads.length - results.length };
     } finally { active = null; }
   }
   for (const action of ["analyze", "create", "batch", "lyrics", "preview", "search"]) {
     ipcMain.handle(`songsterr:${action}`, (event, payload) => invoke(event, action, payload));
   }
+  ipcMain.handle("songsterr:checkOutput", (_event, payload) => {
+    const value = outputPayload({ ...payload, skip_existing: true });
+    return { skipped: value.skipped === true, output_path: value.output_path };
+  });
   ipcMain.handle("songsterr:cancel", () => { if (active) active.cancelled = true; return { stopping: Boolean(active) }; });
   ipcMain.handle("songsterr:defaults", () => ({ output_dir: app.getPath("desktop") }));
   ipcMain.handle("songsterr:cover", async () => {

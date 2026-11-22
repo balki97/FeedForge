@@ -42,6 +42,7 @@ contextBridge.exposeInMainWorld("feedbackConverter", {
     preview: payload => ipcRenderer.invoke("songsterr:preview", payload),
     searchVideos: payload => ipcRenderer.invoke("songsterr:search", payload),
     create: payload => ipcRenderer.invoke("songsterr:create", payload),
+    checkOutput: payload => ipcRenderer.invoke("songsterr:checkOutput", payload),
     createBatch: payloads => ipcRenderer.invoke("songsterr:batch", payloads),
     findLyrics: payload => ipcRenderer.invoke("songsterr:lyrics", payload),
     importLrc: () => ipcRenderer.invoke("songsterr:lrc"),

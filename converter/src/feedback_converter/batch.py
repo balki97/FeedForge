@@ -64,6 +64,7 @@ def convert_many(
     source_root: Path | None = None,
     archive: bool = True,
     overwrite: bool = False,
+    skip_existing: bool = False,
     keep_workdir: bool = False,
     include_tones: bool = True,
     b_standard_to_7_string: bool = False,
@@ -88,7 +89,7 @@ def convert_many(
                 output_layout=output_layout,
                 source_root=resolved_source_root,
                 name_template=name_template,
-                overwrite=overwrite,
+                overwrite=overwrite or skip_existing,
                 reserved_outputs=reserved_outputs,
                 rs1_songs_psarc=support_songs_psarc if _is_rs1_compatibility_archive(input_path) else None,
             )
@@ -109,6 +110,7 @@ def convert_many(
                 source_root=resolved_source_root,
                 name_template=name_template,
                 output_plan=plan.to_dict(),
+                skip_existing=skip_existing,
             )
         except Exception as exc:  # noqa: BLE001
             items.append(BatchItem(input_path=input_path, error=str(exc)))
@@ -134,6 +136,7 @@ def plan_conversion_request(
     output_layout = str(request.get("outputLayout") or "flat")
     name_template = validate_name_template(str(request.get("nameTemplate") or "{source}"))
     overwrite = request.get("overwrite") is True
+    skip_existing = request.get("skipExisting") is True
     rs1_value = str(request.get("rs1SongsPsarc") or "").strip()
     rs1_songs_psarc = Path(rs1_value) if rs1_value else None
     worker_count = _planning_worker_count(request.get("workers"), len(raw_items))
@@ -246,7 +249,7 @@ def plan_conversion_request(
                 output_layout=output_layout,
                 source_root=source_roots[index],
                 name_template=name_template,
-                overwrite=overwrite,
+                overwrite=overwrite or skip_existing,
                 reserved_outputs=reserved_outputs,
             )
         except Exception as exc:  # noqa: BLE001

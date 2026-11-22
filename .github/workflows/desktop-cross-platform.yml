@@ -110,7 +110,8 @@ jobs:
           node --check desktop/electron/preload.cjs
           python -m pytest tests/test_gp5.py -q
           python -m pytest tests/test_songsterr_requests.py tests/test_songsterr_curl_environment.py -q
-          node --test tests/test_gp5_ipc.cjs
+          python -m pytest tests/test_skip_existing.py -q
+          node --test tests/test_gp5_ipc.cjs tests/test_songsterr_skip.cjs
           python -m compileall -q converter/src tools/start-demucs-server.py
           npm --prefix desktop run build
 
