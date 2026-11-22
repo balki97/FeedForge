@@ -34,6 +34,11 @@ Download your version from [Releases](https://github.com/balki97/FeedForge/relea
 Open a PSARC file or paste a Songsterr link, choose an output folder, and convert.
 You can also open existing FeedPaks in **Library & editor**.
 
+Songsterr may refuse FeedForge's automated requests with HTTP 403 even when a
+tab opens in a browser. FeedForge reports this as an access restriction; an app
+update cannot grant permission to download. Where your Songsterr account permits
+it, export a Guitar Pro file from Songsterr and import that file in FeedBack.
+
 To save all parts in one `.gp5`, select a FeedPak in **Library & editor**, then
 choose **Export all parts to GP5** under **Arrangements**. Each part becomes a
 separate track using the same tempo map. For a PSARC, convert it to a FeedPak first.

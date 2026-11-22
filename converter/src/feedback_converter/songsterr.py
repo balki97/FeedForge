@@ -35,6 +35,21 @@ _STATE_RE = re.compile(r'<script[^>]+id=["\']state["\'][^>]*>(.*?)</script>', re
 _PART_RE = re.compile(r"s\d+t(\d+)(?:\D|$)", re.I)
 
 
+class SongsterrAccessError(ValueError):
+    """The source denied the automated request."""
+
+
+def _check_songsterr_access(url, status):
+    host = urllib.parse.urlsplit(str(url)).hostname
+    if status == 403 and host in {"songsterr.com", "www.songsterr.com"}:
+        raise SongsterrAccessError(
+            "Songsterr refused this request (HTTP 403), so FeedForge could not read the tab. "
+            "The page may still open in a browser. Open it on Songsterr; if your account "
+            "permits downloading, export a Guitar Pro file and import it in FeedBack. "
+            "FeedForge cannot override Songsterr's access restrictions."
+        )
+
+
 def _verified_urlopen(request):
     try:
         return urllib.request.urlopen(request, timeout=30)
@@ -67,6 +82,7 @@ def _get_bytes(url):
         with _verified_urlopen(request) as response:
             data = response.read()
     except urllib.error.HTTPError as exc:
+        _check_songsterr_access(url, exc.code)
         if not 100 <= exc.code < 200:
             raise
         curl = shutil.which("curl.exe") or shutil.which("curl")
@@ -81,13 +97,16 @@ def _get_bytes(url):
             else:
                 curl_env.pop("LD_LIBRARY_PATH", None)
         result = subprocess.run(
-            [curl, "-L", "--fail", "--silent", "--show-error", str(url)],
+            [curl, "-L", "--fail", "--silent", "--show-error", "--write-out", "\n%{http_code}", str(url)],
             capture_output=True, timeout=30, env=curl_env,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
+        body, _, status = result.stdout.rpartition(b"\n")
+        if len(status) == 3 and status.isdigit():
+            _check_songsterr_access(url, int(status))
         if result.returncode:
             raise RuntimeError(result.stderr.decode(errors="replace")[-500:])
-        data = result.stdout
+        data = body
     return gzip.decompress(data) if data.startswith(b"\x1f\x8b") else data
 
 
