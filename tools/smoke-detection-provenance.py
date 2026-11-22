@@ -34,7 +34,8 @@ def main():
         source = temp / 'owned.psarc'
         source.write_bytes(PSARC().build({
             'songs/bin/generic/owned_lead.sng': sng,
-            'audio/full.wav': audio.getvalue(),
+            'audio/windows/123.wem': audio.getvalue(),
+            'audio/windows/song_owned.bnk': (123).to_bytes(4, 'little'),
         }))
         for preserve in (False, True):
             target = temp / ('exact.feedpak' if preserve else 'legacy.feedpak')

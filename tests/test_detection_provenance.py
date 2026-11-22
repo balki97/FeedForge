@@ -99,11 +99,12 @@ def test_normal_conversion_keeps_legacy_chord_count_until_exact_scoring_is_reque
         output.writeframes(b'\0\0' * 16000)
     source.write_bytes(converter.PSARC().build({
         'songs/bin/generic/owned_lead.sng': decoded_sng,
-        'audio/full.wav': audio.getvalue(),
+        'audio/windows/123.wem': audio.getvalue(),
+        'audio/windows/song_owned.bnk': (123).to_bytes(4, 'little'),
     }))
     output = tmp_path / ('exact.feedpak' if preserve else 'legacy.feedpak')
-    result = converter.convert_psarc(source, output, archive=False, include_tones=False,
-        preserve_detection_source=preserve)
+    result = converter.convert_psarc_songs(source, output, archive=False, include_tones=False,
+        preserve_detection_source=preserve)[0]
     arrangement = json.loads((output / 'arrangements/lead.json').read_text())
     assert result.validation.ok
     assert len(arrangement['chords']) == (2 if preserve else 1)
