@@ -156,6 +156,10 @@ jobs:
           $expected = node -p "require('./desktop/package.json').version"
           if ((& $converter --version) -ne "psarc2feedpak $expected") { throw 'Bundled converter version mismatch.' }
 
+      - name: Smoke-test bundled original scoring data
+        shell: bash
+        run: python tools/smoke-detection-provenance.py
+
       - name: Smoke-test bundled GP5 export
         shell: bash
         run: python tools/smoke-gp5.py

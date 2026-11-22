@@ -88,9 +88,8 @@ def original_sng(original_song):
 
 @pytest.mark.parametrize('preserve', [False, True])
 def test_normal_conversion_keeps_legacy_chord_count_until_exact_scoring_is_requested(
-        tmp_path, monkeypatch, original_sng, preserve):
+        tmp_path, original_sng, preserve):
     source = tmp_path / 'owned.psarc'
-    source.write_bytes(b'owned archive fixture')
     decoded_sng = original_sng
     audio = BytesIO()
     with wave.open(audio, 'wb') as output:
@@ -98,11 +97,13 @@ def test_normal_conversion_keeps_legacy_chord_count_until_exact_scoring_is_reque
         output.setsampwidth(2)
         output.setframerate(8000)
         output.writeframes(b'\0\0' * 16000)
-    monkeypatch.setattr(converter, '_copy_preview_audio', lambda *args: None)
+    source.write_bytes(converter.PSARC().build({
+        'songs/bin/generic/owned_lead.sng': decoded_sng,
+        'audio/full.wav': audio.getvalue(),
+    }))
     output = tmp_path / ('exact.feedpak' if preserve else 'legacy.feedpak')
     result = converter.convert_psarc(source, output, archive=False, include_tones=False,
-        preserve_detection_source=preserve,
-        _content={'songs/bin/generic/owned_lead.sng': decoded_sng, 'audio/full.wav': audio.getvalue()})
+        preserve_detection_source=preserve)
     arrangement = json.loads((output / 'arrangements/lead.json').read_text())
     assert result.validation.ok
     assert len(arrangement['chords']) == (2 if preserve else 1)
