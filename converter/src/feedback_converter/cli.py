@@ -133,6 +133,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Keep the intermediate .feedpak.work directory when writing a zip archive.",
     )
     parser.add_argument(
+        "--preserve-detection-source",
+        action="store_true",
+        help="Preserve exact original SNG scoring events for the experimental FeedTone companion host; simultaneous original chords may remain separate.",
+    )
+    parser.add_argument(
         "--no-tones",
         action="store_true",
         help="Do not export tone definitions or rig metadata.",
@@ -390,6 +395,7 @@ def main(argv: list[str] | None = None) -> int:
                 overwrite=args.overwrite,
                 keep_workdir=args.keep_workdir,
                 include_tones=not args.no_tones,
+                preserve_detection_source=args.preserve_detection_source,
                 b_standard_to_7_string=args.b_standard_to_7_string,
                 separate_stems=args.separate_stems,
                 demucs_url=args.demucs_url,
@@ -429,6 +435,7 @@ def main(argv: list[str] | None = None) -> int:
         overwrite=args.overwrite,
         keep_workdir=args.keep_workdir,
         include_tones=not args.no_tones,
+        preserve_detection_source=args.preserve_detection_source,
         b_standard_to_7_string=args.b_standard_to_7_string,
         separate_stems=args.separate_stems,
         demucs_url=args.demucs_url,
