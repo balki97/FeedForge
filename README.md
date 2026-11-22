@@ -34,6 +34,14 @@ Download your version from [Releases](https://github.com/balki97/FeedForge/relea
 Choose your source files or paste a Songsterr link, select an output folder, and convert.
 You can also open existing FeedPaks in **Library & editor**.
 
+## Experimental FeedTone conversion
+
+The CLI can preserve original SNG scoring data for the experimental FeedTone companion host.
+Run `psarc2feedpak original.psarc -o new.feedpak --preserve-detection-source` from this build.
+This retains original events, including simultaneous chord events, and requires the matching
+companion host for scoring. Standard conversion keeps its existing chord grouping. Reconvert
+from the original PSARC to recover source fields that an older FeedPak discarded.
+
 ## Help
 
 Join [Discord](https://discord.gg/9cUe6cacQN) or

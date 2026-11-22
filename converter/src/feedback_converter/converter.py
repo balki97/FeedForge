@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import mimetypes
@@ -35,6 +36,12 @@ from .output_naming import (
 )
 from .psarc_format.psarc import PSARC
 from .psarc_format.sng import Song
+from .detection_provenance import (
+    children_data as _native_children_data,
+    note_data as _native_note_data,
+    provenance as _native_provenance,
+    template_data as _native_template_data,
+)
 
 FEEDPAK_VERSION = "1.14.0"
 PREVIEW_DURATION_SECONDS = 30.0
@@ -280,6 +287,7 @@ def convert_psarc_songs(
     overwrite: bool = False,
     keep_workdir: bool = False,
     include_tones: bool = True,
+    preserve_detection_source: bool = False,
     b_standard_to_7_string: bool = False,
     separate_stems: bool = False,
     demucs_url: str | None = None,
@@ -329,6 +337,7 @@ def convert_psarc_songs(
                 overwrite=overwrite and not skip_existing,
                 keep_workdir=keep_workdir,
                 include_tones=include_tones,
+                preserve_detection_source=preserve_detection_source,
                 b_standard_to_7_string=b_standard_to_7_string,
                 separate_stems=separate_stems,
                 demucs_url=demucs_url,
@@ -646,6 +655,7 @@ def convert_psarc(
     overwrite: bool = False,
     keep_workdir: bool = False,
     include_tones: bool = True,
+    preserve_detection_source: bool = False,
     b_standard_to_7_string: bool = False,
     separate_stems: bool = False,
     demucs_url: str | None = None,
@@ -721,7 +731,10 @@ def convert_psarc(
 
         arr_id = _unique_id(_arrangement_id(path, metadata), used_ids)
         try:
-            arrangement = _song_to_arrangement(song, path, metadata, include_tones=include_tones)
+            arrangement = _song_to_arrangement(
+                song, path, metadata, include_tones=include_tones,
+                source_sha256=hashlib.sha256(data).hexdigest() if preserve_detection_source else None,
+            )
         except ValueError as exc:
             warnings.append(ConversionWarning(f"Skipped SNG {path}: {exc}"))
             continue
@@ -1634,10 +1647,18 @@ def _song_to_arrangement(
     metadata: dict[str, Any],
     *,
     include_tones: bool = True,
+    source_sha256: str | None = None,
 ) -> dict[str, Any]:
     tuning = [int(x) for x in list(song.metadata.tuning or [])]
     templates = [_template_to_feedpak(t) for t in song.chordTemplates]
-    chart = _song_chart_data(song, templates)
+    native_context = None
+    if source_sha256 is not None:
+        native_context = {"source": {"decodedSha256": source_sha256, "arrangement": source_path},
+                          "profile": {"mode": 2 if _arrangement_type(_arrangement_id(source_path, metadata)) == "bass" else 1, "tuning": tuning, "capo": max(0, int(song.metadata.capo or 0))}}
+        for index, template in enumerate(templates):
+            template["detectionNative"] = _native_provenance(template, "template", {"template": _native_template_data(song.chordTemplates[index])},
+                {**native_context["source"], "index": index}, native_context["profile"])
+    chart = _song_chart_data(song, templates, native_context=native_context)
     arrangement = {
         "name": _display_name(_arrangement_id(source_path, metadata)),
         "tuning": tuning,
@@ -1685,16 +1706,16 @@ def _highest_level(song: Any) -> Any:
     return max(levels, key=lambda level: int(level.difficulty))
 
 
-def _song_chart_data(song: Any, templates: list[dict[str, Any]]) -> dict[str, Any]:
+def _song_chart_data(song: Any, templates: list[dict[str, Any]], *, native_context=None) -> dict[str, Any]:
     level_payloads: dict[int, dict[str, Any]] = {}
     for level in sorted(song.levels, key=lambda item: int(item.difficulty)):
-        notes, chords = _notes_and_chords(song, level, templates)
+        notes, chords = _notes_and_chords(song, level, templates, native_context=native_context)
         level_payloads[int(level.difficulty)] = {
             "difficulty": int(level.difficulty),
             "notes": notes,
             "chords": chords,
             "anchors": [_anchor_to_feedpak(a) for a in level.anchors],
-            "handshapes": _handshapes_to_feedpak(level),
+            "handshapes": _handshapes_to_feedpak(level, preserve_source=native_context is not None),
         }
 
     phrases = _phrase_ladder_to_feedpak(song, level_payloads)
@@ -2193,25 +2214,34 @@ def _slice_by_time(
 
 
 def _notes_and_chords(
-    song: Any, level: Any, templates: list[dict[str, Any]]
+    song: Any, level: Any, templates: list[dict[str, Any]], *, native_context=None
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     notes: list[dict[str, Any]] = []
     chords: list[dict[str, Any]] = []
     seen_chords: set[tuple[float, int]] = set()
-    for note in sorted(level.notes, key=lambda n: float(n.time)):
+    for source_index, note in sorted(enumerate(level.notes), key=lambda pair: float(pair[1].time)):
         chord_id = int(note.chordId)
         if 0 <= chord_id < len(templates) and chord_id != UINT32_NONE:
             key = (round(float(note.time), 5), chord_id)
-            if key in seen_chords:
+            if key in seen_chords and native_context is None:
                 continue
             seen_chords.add(key)
             chord = {"t": _num(note.time), "id": chord_id}
             chord_notes = _chord_notes(song, note, chord_id)
             if chord_notes:
                 chord["notes"] = chord_notes
+            if native_context is not None:
+                child_id = int(note.chordNoteId)
+                child = _native_children_data(song.chordNotes[child_id]) if 0 <= child_id < len(song.chordNotes) else None
+                chord["detectionNative"] = _native_provenance(chord, "chord", {"note": _native_note_data(note), "children": child},
+                    {**native_context["source"], "difficulty": int(level.difficulty), "index": source_index}, native_context["profile"])
             chords.append(chord)
         else:
-            notes.append(_note_to_feedpak(note))
+            entry = _note_to_feedpak(note)
+            if native_context is not None:
+                entry["detectionNative"] = _native_provenance(entry, "note", {"note": _native_note_data(note), "children": None},
+                    {**native_context["source"], "difficulty": int(level.difficulty), "index": source_index}, native_context["profile"])
+            notes.append(entry)
     return notes, chords
 
 
@@ -2481,7 +2511,7 @@ def _anchor_to_feedpak(anchor: Any) -> dict[str, Any]:
     return out
 
 
-def _handshapes_to_feedpak(level: Any) -> list[dict[str, Any]]:
+def _handshapes_to_feedpak(level: Any, *, preserve_source: bool = False) -> list[dict[str, Any]]:
     shapes: list[dict[str, Any]] = []
     for group in level.fingerprints:
         for fp in group:
@@ -2490,8 +2520,8 @@ def _handshapes_to_feedpak(level: Any) -> list[dict[str, Any]]:
             shapes.append(
                 {
                     "chord_id": int(fp.chordId),
-                    "start_time": _num(fp.startTime),
-                    "end_time": _num(fp.endTime),
+                    "start_time": float(fp.startTime) if preserve_source else _num(fp.startTime),
+                    "end_time": float(fp.endTime) if preserve_source else _num(fp.endTime),
                 }
             )
     return shapes
